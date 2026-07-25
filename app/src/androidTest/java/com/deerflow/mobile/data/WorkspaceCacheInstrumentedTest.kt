@@ -181,7 +181,12 @@ class WorkspaceCacheInstrumentedTest {
         cache.saveRun(
             serverUrl,
             threadId,
-            RunState(RunStatus.Reconnecting, runId = "run-42", lastEventId = "event-9"),
+            RunState(
+                status = RunStatus.Reconnecting,
+                runId = "run-42",
+                lastEventId = "event-9",
+                clientMessageId = "client-42",
+            ),
         )
 
         val restored = cache.loadLatestActiveRun(serverUrl)
@@ -190,6 +195,7 @@ class WorkspaceCacheInstrumentedTest {
         assertEquals("Long research", restored?.title)
         assertEquals("run-42", restored?.run?.runId)
         assertEquals("event-9", restored?.run?.lastEventId)
+        assertEquals("client-42", restored?.run?.clientMessageId)
         cache.deleteThread(serverUrl, threadId)
     }
 

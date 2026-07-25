@@ -51,6 +51,7 @@ data class CachedRun(
     val threadId: String,
     val runId: String?,
     val lastEventId: String?,
+    val clientMessageId: String?,
     val status: String,
     val updatedAt: Long,
 )
@@ -192,7 +193,7 @@ abstract class WorkspaceDao {
         CachedAttachment::class,
         CachedWorkspaceMetadata::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class WorkspaceDatabase : RoomDatabase() {
@@ -206,7 +207,7 @@ abstract class WorkspaceDatabase : RoomDatabase() {
                 context.applicationContext,
                 WorkspaceDatabase::class.java,
                 "deerflow-workspace.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { instance = it }
         }
 
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -249,6 +250,12 @@ abstract class WorkspaceDatabase : RoomDatabase() {
         internal val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE messages ADD COLUMN payloadJson TEXT")
+            }
+        }
+
+        internal val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE runs ADD COLUMN clientMessageId TEXT")
             }
         }
     }
@@ -320,16 +327,36 @@ class WorkspaceCache(context: Context) {
 
     suspend fun saveRun(serverUrl: String, threadId: String, run: RunState) {
         if (run.status == RunStatus.Idle) dao.deleteRun(serverUrl, threadId)
-        else dao.saveRun(CachedRun(serverUrl, threadId, run.runId, run.lastEventId, run.status.name, System.currentTimeMillis()))
+        else dao.saveRun(
+            CachedRun(
+                serverUrl = serverUrl,
+                threadId = threadId,
+                runId = run.runId,
+                lastEventId = run.lastEventId,
+                clientMessageId = run.clientMessageId,
+                status = run.status.name,
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
     }
 
     suspend fun loadRun(serverUrl: String, threadId: String): RunState? = dao.loadRun(serverUrl, threadId)?.let {
-        RunState(RunStatus.valueOf(it.status), it.runId, it.lastEventId)
+        RunState(
+            status = RunStatus.valueOf(it.status),
+            runId = it.runId,
+            lastEventId = it.lastEventId,
+            clientMessageId = it.clientMessageId,
+        )
     }
 
     suspend fun loadLatestActiveRun(serverUrl: String): RecoverableRun? = dao.loadLatestActiveRun(serverUrl)?.let { cached ->
         val run = runCatching {
-            RunState(RunStatus.valueOf(cached.status), cached.runId, cached.lastEventId)
+            RunState(
+                status = RunStatus.valueOf(cached.status),
+                runId = cached.runId,
+                lastEventId = cached.lastEventId,
+                clientMessageId = cached.clientMessageId,
+            )
         }.getOrNull() ?: return@let null
         if (!run.active) return@let null
         RecoverableRun(

@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
+import android.text.format.Formatter
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,6 +34,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -94,6 +96,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -151,9 +154,7 @@ fun ChatScreen(
             ),
         )
     }
-    val listState = rememberLazyListState()
     val context = LocalContext.current
-    val messageGroups = remember(state.messages) { groupChatMessages(state.messages) }
 
     LaunchedEffect(state.composer.text) {
         if (editorValue.text != state.composer.text) {
@@ -161,13 +162,6 @@ fun ChatScreen(
                 text = state.composer.text,
                 selection = TextRange(state.composer.text.length),
             )
-        }
-    }
-
-    LaunchedEffect(messageGroups.size, state.messages.lastOrNull()?.text?.length) {
-        if (messageGroups.isNotEmpty()) {
-            delay(40)
-            listState.animateScrollToItem(messageGroups.lastIndex)
         }
     }
 
@@ -217,24 +211,17 @@ fun ChatScreen(
             when {
                 state.loadingChat -> LoadingIndicator(Modifier.size(32.dp))
                 state.messages.isEmpty() -> ChatWelcome(onSuggestion = viewModel::updateDraft)
-                else -> LazyColumn(
-                    state = listState,
+                else -> ConversationMessageList(
+                    conversationKey = state.selectedThread?.id,
+                    messages = state.messages,
+                    runActive = state.run.active,
+                    actionBusy = state.messageActionBusy,
+                    onHumanInput = viewModel::submitHumanInput,
+                    onCopy = { viewModel.showNotice(context.getString(R.string.copied_to_clipboard)) },
+                    onBranch = viewModel::branchConversation,
+                    onArtifact = viewModel::openArtifact,
                     modifier = Modifier.fillMaxSize().widthIn(max = 900.dp),
-                    contentPadding = PaddingValues(start = 16.dp, top = 20.dp, end = 16.dp, bottom = 72.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    itemsIndexed(messageGroups, key = { _, group -> group.key }) { _, group ->
-                        ChatMessageGroupItem(
-                            group = group,
-                            runActive = state.run.active,
-                            actionBusy = state.messageActionBusy,
-                            onHumanInput = viewModel::submitHumanInput,
-                            onCopy = { viewModel.showNotice(context.getString(R.string.copied_to_clipboard)) },
-                            onBranch = viewModel::branchConversation,
-                            onArtifact = viewModel::openArtifact,
-                        )
-                    }
-                }
+                )
             }
         }
         MessageComposer(
@@ -312,6 +299,85 @@ fun ChatScreen(
             },
         )
     }
+    state.artifactDownloadConfirmation?.let { pending ->
+        ArtifactDownloadConfirmationDialog(
+            pending = pending,
+            onDownload = viewModel::confirmArtifactDownload,
+            onCancel = viewModel::cancelArtifactDownload,
+        )
+    }
+    state.artifactDownloadProgress?.let { progress ->
+        ArtifactDownloadProgressDialog(
+            progress = progress,
+            onCancel = viewModel::cancelArtifactDownload,
+        )
+    }
+}
+
+@Composable
+internal fun ConversationMessageList(
+    conversationKey: String?,
+    messages: List<com.deerflow.mobile.data.ChatMessage>,
+    runActive: Boolean,
+    actionBusy: Boolean,
+    onHumanInput: (com.deerflow.mobile.data.HumanInputRequest, String, String?) -> Unit,
+    onCopy: (String) -> Unit,
+    onBranch: (String) -> Unit,
+    onArtifact: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    listState: LazyListState = rememberLazyListState(),
+) {
+    val messageGroups = remember(messages) { groupChatMessages(messages) }
+    var expandedProcessingGroups by remember(conversationKey) { mutableStateOf(emptySet<String>()) }
+    val autoFollowEnabled by rememberUpdatedState(
+        shouldAutoFollowConversation(messageGroups, runActive, expandedProcessingGroups),
+    )
+
+    LaunchedEffect(messageGroups.size, messages.lastOrNull()?.text?.length) {
+        if (messageGroups.isNotEmpty()) {
+            delay(40)
+            if (autoFollowEnabled) {
+                listState.animateScrollToItem(messageGroups.lastIndex)
+            }
+        }
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = modifier.testTag(UiTags.ConversationList),
+        contentPadding = PaddingValues(start = 16.dp, top = 20.dp, end = 16.dp, bottom = 72.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        itemsIndexed(messageGroups, key = { _, group -> group.key }) { _, group ->
+            ChatMessageGroupItem(
+                group = group,
+                runActive = runActive,
+                actionBusy = actionBusy,
+                onHumanInput = onHumanInput,
+                onCopy = onCopy,
+                onBranch = onBranch,
+                onArtifact = onArtifact,
+                processingStepsExpanded = group.key in expandedProcessingGroups,
+                onProcessingStepsExpandedChange = { groupKey, expanded ->
+                    expandedProcessingGroups = if (expanded) {
+                        expandedProcessingGroups + groupKey
+                    } else {
+                        expandedProcessingGroups - groupKey
+                    }
+                },
+            )
+        }
+    }
+}
+
+internal fun shouldAutoFollowConversation(
+    messageGroups: List<ChatMessageGroup>,
+    runActive: Boolean,
+    expandedProcessingGroups: Set<String>,
+): Boolean {
+    if (messageGroups.isEmpty() || !runActive) return messageGroups.isNotEmpty()
+    val latestProcessingKey = messageGroups.lastOrNull { it is ChatMessageGroup.Processing }?.key
+    return latestProcessingKey !in expandedProcessingGroups
 }
 
 @Composable
@@ -652,24 +718,29 @@ internal fun ArtifactPreviewDialog(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
             ) {
                 SelectionContainer {
-                    when {
-                        preview.text == null -> Text(preview.mimeType, modifier = Modifier.padding(16.dp))
-                        markdown -> MarkdownContent(preview.text, Modifier.padding(16.dp))
-                        language != null -> Column(
-                            Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(language, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (preview.textTruncated) {
                             Text(
+                                stringResource(R.string.artifact_preview_truncated),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        when {
+                            preview.text == null -> Text(preview.mimeType)
+                            markdown && !preview.textTruncated -> MarkdownContent(preview.text)
+                            language != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(language, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                Text(
+                                    preview.text,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                                )
+                            }
+                            else -> Text(
                                 preview.text,
                                 style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
                             )
                         }
-                        else -> Text(
-                            preview.text,
-                            modifier = Modifier.padding(16.dp),
-                            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                        )
                     }
                 }
             }
@@ -683,6 +754,68 @@ internal fun ArtifactPreviewDialog(
                 TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
             }
         },
+    )
+}
+
+@Composable
+private fun ArtifactDownloadConfirmationDialog(
+    pending: PendingArtifactDownload,
+    onDownload: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val context = LocalContext.current
+    val size = pending.probe.totalBytes?.let { Formatter.formatFileSize(context, it) }
+        ?: stringResource(R.string.artifact_size_unknown)
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text(stringResource(R.string.artifact_download_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(pending.probe.filename, style = MaterialTheme.typography.titleSmall)
+                Text(pending.probe.mimeType, style = MaterialTheme.typography.bodyMedium)
+                Text(size, style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.artifact_download_confirmation_body), style = MaterialTheme.typography.bodyMedium)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDownload) { Text(stringResource(R.string.download)) } },
+        dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) } },
+    )
+}
+
+@Composable
+private fun ArtifactDownloadProgressDialog(
+    progress: ArtifactDownloadProgress,
+    onCancel: () -> Unit,
+) {
+    val context = LocalContext.current
+    val size = Formatter.formatFileSize(context, progress.downloadedBytes)
+    val total = progress.totalBytes?.let { Formatter.formatFileSize(context, it) }
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text(stringResource(R.string.artifact_downloading_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(progress.filename, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    if (total == null) {
+                        stringResource(R.string.artifact_downloaded_unknown_total, size)
+                    } else {
+                        stringResource(R.string.artifact_downloaded_of_total, size, total)
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (progress.totalBytes == null || progress.totalBytes <= 0L) {
+                    LoadingIndicator(Modifier.size(24.dp))
+                } else {
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { (progress.downloadedBytes.toFloat() / progress.totalBytes).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -887,9 +1020,17 @@ private data class QuickActionSpec(
 
 @Composable
 internal fun AttachmentChip(file: PendingAttachment, onRemove: () -> Unit, onRetry: () -> Unit) {
+    var expanded by rememberSaveable(file.uri) { mutableStateOf(false) }
     AssistChip(
-        onClick = {},
-        label = { Text(file.filename, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        onClick = { expanded = !expanded },
+        label = {
+            Text(
+                file.filename,
+                maxLines = if (expanded) Int.MAX_VALUE else 1,
+                overflow = if (expanded) TextOverflow.Visible else TextOverflow.Ellipsis,
+                softWrap = expanded,
+            )
+        },
         leadingIcon = {
             when (file.status) {
                 AttachmentStatus.Uploading -> LoadingIndicator(Modifier.size(20.dp))
@@ -908,6 +1049,7 @@ internal fun AttachmentChip(file: PendingAttachment, onRemove: () -> Unit, onRet
                 }
             }
         },
+        modifier = Modifier.widthIn(max = 240.dp),
     )
 }
 

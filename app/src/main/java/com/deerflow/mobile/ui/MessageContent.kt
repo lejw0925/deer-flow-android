@@ -99,6 +99,8 @@ fun ChatMessageGroupItem(
     onCopy: (String) -> Unit = {},
     onBranch: (String) -> Unit = {},
     onArtifact: (String) -> Unit = {},
+    processingStepsExpanded: Boolean? = null,
+    onProcessingStepsExpandedChange: (String, Boolean) -> Unit = { _, _ -> },
 ) {
     when (group) {
         is ChatMessageGroup.Message -> MessageItem(
@@ -110,7 +112,13 @@ fun ChatMessageGroupItem(
             onBranch = onBranch,
             onArtifact = onArtifact,
         )
-        is ChatMessageGroup.Processing -> ProcessingMessageGroup(group, runActive, onArtifact)
+        is ChatMessageGroup.Processing -> ProcessingMessageGroup(
+            group = group,
+            runActive = runActive,
+            onArtifact = onArtifact,
+            expanded = processingStepsExpanded,
+            onExpandedChange = onProcessingStepsExpandedChange,
+        )
         is ChatMessageGroup.HumanInput -> HumanInputCard(
             request = group.request,
             response = group.response,
@@ -261,7 +269,13 @@ private fun MessageActionButton(
 }
 
 @Composable
-private fun ProcessingMessageGroup(group: ChatMessageGroup.Processing, runActive: Boolean, onArtifact: (String) -> Unit) {
+private fun ProcessingMessageGroup(
+    group: ChatMessageGroup.Processing,
+    runActive: Boolean,
+    onArtifact: (String) -> Unit,
+    expanded: Boolean?,
+    onExpandedChange: (String, Boolean) -> Unit,
+) {
     val steps = remember(group.messages) { processingSteps(group.messages) }
     val lastToolIndex = steps.indexOfLast { it is ProcessingStep.Tool }
     val aboveLastTool = steps.take(lastToolIndex.coerceAtLeast(0))
@@ -273,7 +287,8 @@ private fun ProcessingMessageGroup(group: ChatMessageGroup.Processing, runActive
         steps.filterIsInstance<ProcessingStep.Reasoning>().lastOrNull()
     }
     val finalReasoning = group.trailingReasoning?.text ?: stepReasoning?.text
-    var showPreviousSteps by rememberSaveable(group.key) { mutableStateOf(false) }
+    var savedShowPreviousSteps by rememberSaveable(group.key) { mutableStateOf(false) }
+    val showPreviousSteps = expanded ?: savedShowPreviousSteps
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -289,7 +304,11 @@ private fun ProcessingMessageGroup(group: ChatMessageGroup.Processing, runActive
                 ProcessingStepsToggle(
                     count = collapsibleAboveLastTool.size,
                     expanded = showPreviousSteps,
-                    onClick = { showPreviousSteps = !showPreviousSteps },
+                    onClick = {
+                        val next = !showPreviousSteps
+                        if (expanded == null) savedShowPreviousSteps = next
+                        onExpandedChange(group.key, next)
+                    },
                 )
             }
             val visibleAboveLastTool = if (showPreviousSteps) {
@@ -614,10 +633,11 @@ private fun MessageBlockView(block: MessageBlock, onArtifact: (String) -> Unit =
             )
             Text(block.title, modifier = Modifier.padding(start = 8.dp))
         }
-        is MessageBlock.Artifact -> AssistChip(
+        is MessageBlock.Artifact -> FileAttachmentChip(
+            filename = block.title,
             onClick = { onArtifact(block.path) },
-            label = { Text(block.title) },
-            leadingIcon = { Icon(Icons.Outlined.FolderOpen, contentDescription = null) },
+            leadingIcon = { Icon(Icons.Outlined.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp)) },
+            expandable = false,
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
         )
         is MessageBlock.Error -> Text(block.message, color = MaterialTheme.colorScheme.error)
@@ -639,13 +659,44 @@ private fun MessageAttachments(message: ChatMessage) {
     if (message.attachments.isEmpty()) return
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(message.attachments, key = { it.path ?: it.filename }) { file ->
-            AssistChip(
-                onClick = {},
-                label = { Text(file.filename, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                leadingIcon = { Icon(Icons.Outlined.Description, contentDescription = null, modifier = Modifier.size(18.dp)) },
+            FileAttachmentChip(
+                filename = file.filename,
+                leadingIcon = {
+                    Icon(Icons.Outlined.Description, contentDescription = null, modifier = Modifier.size(18.dp))
+                },
             )
         }
     }
+}
+
+@Composable
+internal fun FileAttachmentChip(
+    filename: String,
+    leadingIcon: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    expandable: Boolean = true,
+    onClick: (() -> Unit)? = null,
+) {
+    var expanded by rememberSaveable(filename) { mutableStateOf(false) }
+    val showFullName = expandable && expanded
+    AssistChip(
+        onClick = {
+            when {
+                expandable -> expanded = !expanded
+                onClick != null -> onClick()
+            }
+        },
+        label = {
+            Text(
+                filename,
+                maxLines = if (showFullName) Int.MAX_VALUE else 1,
+                overflow = if (showFullName) TextOverflow.Visible else TextOverflow.Ellipsis,
+                softWrap = showFullName,
+            )
+        },
+        leadingIcon = leadingIcon,
+        modifier = if (showFullName) modifier else modifier.widthIn(max = 220.dp),
+    )
 }
 
 @Composable

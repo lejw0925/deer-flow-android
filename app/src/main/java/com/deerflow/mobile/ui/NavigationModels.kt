@@ -52,6 +52,7 @@ object UiTags {
     const val TopSelectors = "top-selectors"
     const val ModelSelector = "model-selector"
     const val ModeSelector = "mode-selector"
+    const val ConversationList = "conversation-list"
     const val ProcessingCard = "processing-card"
     const val QuickCapabilities = "quick-capabilities"
     const val SkillsSheet = "skills-sheet"

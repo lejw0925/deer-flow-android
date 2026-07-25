@@ -197,7 +197,7 @@ class RunService : Service() {
             .setProgress(progress.percent)
             .setProgressIndeterminate(progress.indeterminate)
             .setStyledByProgress(true)
-            .setProgressTrackerIcon(progressTrackerIcon())
+            .apply { progressTrackerIcon()?.let { setProgressTrackerIcon(it) } }
             .addProgressSegment(Notification.ProgressStyle.Segment(100).setColor(notificationAccentColor))
         return Notification.Builder(this, CHANNEL_ID)
             // The small icon is what Android renders at the left of a Live Update status chip.
@@ -294,16 +294,13 @@ class RunService : Service() {
     )
 
     @RequiresApi(36)
-    private fun progressTrackerIcon(): Icon = Icon.createWithResource(
-        this,
-        when (progress.phase) {
-            RunProgress.Uploading -> android.R.drawable.stat_sys_upload
-            RunProgress.Reconnecting -> android.R.drawable.stat_notify_sync
-            RunProgress.Working, RunProgress.Responding -> android.R.drawable.stat_notify_sync_noanim
-            RunProgress.Finalizing, RunProgress.Completed -> android.R.drawable.stat_sys_upload_done
-            RunProgress.Preparing, RunProgress.Connecting -> android.R.drawable.stat_notify_sync
-        },
-    )
+    private fun progressTrackerIcon(): Icon? = when (progress.phase) {
+        RunProgress.Uploading -> Icon.createWithResource(this, android.R.drawable.stat_sys_upload)
+        RunProgress.Reconnecting -> Icon.createWithResource(this, android.R.drawable.stat_notify_sync)
+        RunProgress.Finalizing, RunProgress.Completed -> Icon.createWithResource(this, android.R.drawable.stat_sys_upload_done)
+        RunProgress.Preparing, RunProgress.Connecting -> Icon.createWithResource(this, android.R.drawable.stat_notify_sync)
+        RunProgress.Working, RunProgress.Responding -> null
+    }
 
     private fun statusChipSmallIconRes(): Int = when (progress.phase) {
         RunProgress.Uploading -> android.R.drawable.stat_sys_upload

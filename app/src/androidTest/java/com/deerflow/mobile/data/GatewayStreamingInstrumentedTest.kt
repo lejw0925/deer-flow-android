@@ -1,5 +1,8 @@
 package com.deerflow.mobile.data
 
+import androidx.test.core.app.ApplicationProvider
+import java.io.File
+import java.util.UUID
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -40,10 +43,23 @@ class GatewayStreamingInstrumentedTest {
         )
         assertTrue("Chunks should arrive over time", callbackTimes.last() - callbackTimes.first() >= 2_000_000_000L)
         val snapshot = api.threadState(thread.id)
-        assertEquals(listOf("mnt/user-data/outputs/report.md"), snapshot.artifacts)
-        val artifact = api.fetchArtifact(thread.id, snapshot.artifacts.single())
-        assertEquals("text/markdown", artifact.mimeType)
-        assertTrue(artifact.bytes.toString(Charsets.UTF_8).contains("Fixture report"))
+        assertEquals(
+            listOf(
+                "mnt/user-data/outputs/report.md",
+                "mnt/user-data/outputs/nine-mib.txt",
+                "mnt/user-data/outputs/eleven-mib.txt",
+                "mnt/user-data/outputs/two-hundred-one-mib.bin",
+                "mnt/user-data/outputs/unknown-size.txt",
+            ),
+            snapshot.artifacts,
+        )
+        val probe = api.probeArtifact(thread.id, snapshot.artifacts.first { it.endsWith("/report.md") })
+        assertEquals("text/markdown", probe.mimeType)
+        assertTrue(probe.totalBytes != null)
+        val directory = File(ApplicationProvider.getApplicationContext<android.content.Context>().cacheDir, "gateway-artifact-test-${UUID.randomUUID()}")
+        val artifact = api.downloadArtifact(thread.id, probe, directory)
+        assertTrue(artifact.file.readText().contains("Fixture report"))
+        directory.deleteRecursively()
     }
 
     @Test

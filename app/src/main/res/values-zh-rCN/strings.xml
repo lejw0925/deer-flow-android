@@ -110,6 +110,14 @@
     <string name="artifacts">文件</string>
     <string name="open">打开</string>
     <string name="save_copy">保存副本</string>
+    <string name="download">下载</string>
+    <string name="artifact_download_title">下载文件？</string>
+    <string name="artifact_downloading_title">正在下载文件</string>
+    <string name="artifact_download_confirmation_body">此文件可能会占用较多流量和存储空间。</string>
+    <string name="artifact_size_unknown">大小未知</string>
+    <string name="artifact_downloaded_of_total">已下载 %1$s，共 %2$s</string>
+    <string name="artifact_downloaded_unknown_total">已下载 %1$s</string>
+    <string name="artifact_preview_truncated">仅以纯文本显示前 256 KiB。</string>
     <string name="copy">复制</string>
     <string name="token_usage">Token · 输入 %1$s · 输出 %2$s · 合计 %3$s</string>
     <string name="thinking">正在思考</string>

@@ -1,5 +1,7 @@
 package com.deerflow.mobile.data
 
+import java.io.File
+
 class ThreadRepository(
     private val api: DeerFlowApi,
     private val cache: WorkspaceCache,
@@ -61,8 +63,15 @@ class ThreadRepository(
     suspend fun loadAttachments(threadId: String): List<PendingAttachment> =
         cache.loadAttachments(api.serverUrl, threadId)
 
-    suspend fun artifact(threadId: String, path: String): ArtifactPayload =
-        api.fetchArtifact(threadId, path)
+    suspend fun probeArtifact(threadId: String, path: String): ArtifactProbe =
+        api.probeArtifact(threadId, path)
+
+    suspend fun downloadArtifact(
+        threadId: String,
+        probe: ArtifactProbe,
+        directory: File,
+        onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit = { _, _ -> },
+    ): ArtifactDownload = api.downloadArtifact(threadId, probe, directory, onProgress)
 }
 
 class RunRepository(private val api: DeerFlowApi) {

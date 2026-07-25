@@ -13,6 +13,7 @@ import com.deerflow.mobile.data.AgentInfo
 import com.deerflow.mobile.data.AgentRunInfo
 import com.deerflow.mobile.data.AssistantTurn
 import com.deerflow.mobile.data.ApiException
+import com.deerflow.mobile.data.ArtifactProbe
 import com.deerflow.mobile.data.AttachmentStatus
 import com.deerflow.mobile.data.ChatMessage
 import com.deerflow.mobile.data.ChannelConnectResult
@@ -23,6 +24,7 @@ import com.deerflow.mobile.data.CacheStats
 import com.deerflow.mobile.data.ComposerState
 import com.deerflow.mobile.data.ConversationExportFormat
 import com.deerflow.mobile.data.DeerFlowApi
+import com.deerflow.mobile.data.GatewayRunStatus
 import com.deerflow.mobile.data.DeerFlowUser
 import com.deerflow.mobile.data.MessageAttachment
 import com.deerflow.mobile.data.MessageRole
@@ -64,9 +66,12 @@ import com.deerflow.mobile.run.RunService
 import java.io.IOException
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -75,6 +80,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 internal const val NEW_DRAFT_KEY = "__new__"
+private const val ARTIFACT_PROGRESS_UPDATE_BYTES = 128L * 1024L
 
 data class AppUiState(
     val serverUrl: String,
@@ -107,6 +113,8 @@ data class AppUiState(
     val todos: List<com.deerflow.mobile.data.TodoItem> = emptyList(),
     val artifacts: List<String> = emptyList(),
     val artifactBusy: Boolean = false,
+    val artifactDownloadConfirmation: PendingArtifactDownload? = null,
+    val artifactDownloadProgress: ArtifactDownloadProgress? = null,
     val artifactPreview: ArtifactPreviewState? = null,
     val composer: ComposerState = ComposerState(),
     /** Storage follows the conversation, while this key belongs to the editor session. */
@@ -147,6 +155,18 @@ data class ArtifactPreviewState(
     val mimeType: String,
     val text: String?,
     val localPath: String,
+    val textTruncated: Boolean = false,
+)
+
+data class PendingArtifactDownload(
+    val threadId: String,
+    val probe: ArtifactProbe,
+)
+
+data class ArtifactDownloadProgress(
+    val filename: String,
+    val downloadedBytes: Long,
+    val totalBytes: Long?,
 )
 
 private fun ChannelProviders.replaceChannelProvider(updated: ChannelProviderInfo): ChannelProviders = copy(
@@ -201,6 +221,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var draftJob: Job? = null
     private var attachmentJob: Job? = null
     private var threadLoadJob: Job? = null
+    private var artifactDownloadJob: Job? = null
+    @Volatile private var artifactOperationId = 0L
     private var pendingRunDestination: PendingRunDestination? = null
     private var pendingNewConversation = false
     private var runRecoveryAttemptedForServer: String? = null
@@ -386,6 +408,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun connectAndLogin(serverUrl: String, email: String, password: String) {
         val normalized = normalizeOrReport(serverUrl) ?: return
         disconnectRun()
+        cancelArtifactWork()
         conversationShortcuts.clear()
         api.updateServerUrl(normalized)
         persistSetting { setServerUrl(normalized) }
@@ -396,6 +419,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun saveServerUrl(value: String) {
         val normalized = normalizeOrReport(value) ?: return
         disconnectRun()
+        cancelArtifactWork()
         conversationShortcuts.clear()
         api.updateServerUrl(normalized)
         persistSetting { setServerUrl(normalized) }
@@ -471,6 +495,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun logout() {
         viewModelScope.launch {
             disconnectRun()
+            cancelArtifactWork()
             conversationShortcuts.clear()
             api.logout()
             val current = mutableState.value
@@ -798,6 +823,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createThread() {
         threadLoadJob?.cancel()
+        cancelArtifactWork()
         viewModelScope.launch {
             val assistant = mutableState.value.defaultAgentId
             val draft = threads.loadDraft(NEW_DRAFT_KEY)
@@ -808,6 +834,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     messages = emptyList(),
                     todos = emptyList(),
                     artifacts = emptyList(),
+                    artifactBusy = false,
+                    artifactDownloadConfirmation = null,
+                    artifactDownloadProgress = null,
                     artifactPreview = null,
                     composer = it.composer.copy(
                         text = draft,
@@ -828,6 +857,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun openThread(thread: ThreadSummary) {
         if (mutableState.value.selectedThread?.id == thread.id && mutableState.value.route == AppRoute.Conversation) return
         threadLoadJob?.cancel()
+        cancelArtifactWork()
         mutableState.update {
             it.copy(
                 route = AppRoute.Conversation,
@@ -835,6 +865,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 messages = emptyList(),
                 todos = emptyList(),
                 artifacts = emptyList(),
+                artifactBusy = false,
+                artifactDownloadConfirmation = null,
+                artifactDownloadProgress = null,
                 artifactPreview = null,
                 loadingChat = true,
                 draftStorageKey = thread.id,
@@ -889,8 +922,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closeConversation() {
         threadLoadJob?.cancel()
+        cancelArtifactWork()
         if (mutableState.value.run.active) {
-            mutableState.update { it.copy(route = AppRoute.Workspace, error = null) }
+            mutableState.update {
+                it.copy(
+                    route = AppRoute.Workspace,
+                    artifactBusy = false,
+                    artifactDownloadConfirmation = null,
+                    artifactDownloadProgress = null,
+                    artifactPreview = null,
+                    error = null,
+                )
+            }
             return
         }
         mutableState.update {
@@ -900,6 +943,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 messages = emptyList(),
                 todos = emptyList(),
                 artifacts = emptyList(),
+                artifactBusy = false,
+                artifactDownloadConfirmation = null,
+                artifactDownloadProgress = null,
                 artifactPreview = null,
                 composer = it.composer.copy(
                     text = "",
@@ -930,6 +976,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             mutableState.update { it.copy(error = "Stop the active run before deleting this conversation.") }
             return
         }
+        if (current.selectedThread?.id == thread.id) cancelArtifactWork()
         viewModelScope.launch {
             try {
                 threads.delete(thread.id)
@@ -940,6 +987,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         messages = if (it.selectedThread?.id == thread.id) emptyList() else it.messages,
                         todos = if (it.selectedThread?.id == thread.id) emptyList() else it.todos,
                         artifacts = if (it.selectedThread?.id == thread.id) emptyList() else it.artifacts,
+                        artifactBusy = if (it.selectedThread?.id == thread.id) false else it.artifactBusy,
+                        artifactDownloadConfirmation = if (it.selectedThread?.id == thread.id) null else it.artifactDownloadConfirmation,
+                        artifactDownloadProgress = if (it.selectedThread?.id == thread.id) null else it.artifactDownloadProgress,
+                        artifactPreview = if (it.selectedThread?.id == thread.id) null else it.artifactPreview,
                         route = if (it.selectedThread?.id == thread.id) AppRoute.Workspace else it.route,
                     )
                 }
@@ -1718,19 +1769,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun resumeRunIfNeeded(threadId: String) {
-        runCoordinator.state.value
+        val coordinated = runCoordinator.state.value
             ?.takeIf { it.serverUrl == api.serverUrl && it.threadId == threadId }
-            ?.let {
-                applyCoordinatedRunState(it)
-                if (it.run.active) return
+        if (coordinated != null) {
+            applyCoordinatedRunState(coordinated)
+            if (coordinated.run.active) return
         }
         val thread = mutableState.value.selectedThread?.takeIf { it.id == threadId } ?: return
         val saved = cache.loadRun(api.serverUrl, threadId)
         if (saved?.active == true) {
             mutableState.update { it.copy(run = saved.copy(status = RunStatus.Reconnecting)) }
-            if (!runCoordinator.resume(api.serverUrl, thread.id, thread.title, saved)) {
-                mutableState.update { it.copy(run = RunState()) }
-            }
+            runCoordinator.resume(api.serverUrl, thread.id, thread.title, saved)
+            runCoordinator.state.value
+                ?.takeIf { it.serverUrl == api.serverUrl && it.threadId == threadId }
+                ?.let(::applyCoordinatedRunState)
             return
         }
 
@@ -1743,6 +1795,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (active == null) {
+            if (coordinated?.run?.gatewayStatus != GatewayRunStatus.Unknown || coordinated?.error != null) return
             cache.saveRun(api.serverUrl, threadId, RunState())
             mutableState.update { current ->
                 if (current.selectedThread?.id == threadId && !runCoordinator.isActive(api.serverUrl, threadId)) {
@@ -1756,9 +1809,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val recovered = RunState(RunStatus.Reconnecting, runId = active.runId)
         cache.saveRun(api.serverUrl, threadId, recovered)
         mutableState.update { it.copy(run = recovered) }
-        if (!runCoordinator.resume(api.serverUrl, thread.id, thread.title, recovered)) {
-            mutableState.update { it.copy(run = RunState()) }
-        }
+        runCoordinator.resume(api.serverUrl, thread.id, thread.title, recovered)
+        runCoordinator.state.value
+            ?.takeIf { it.serverUrl == api.serverUrl && it.threadId == threadId }
+            ?.let(::applyCoordinatedRunState)
     }
 
     fun pauseTask(task: ScheduledTaskInfo) {
@@ -1837,7 +1891,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             mutableState.update { it.copy(error = "Stop the active run before clearing cached data.") }
             return
         }
+        val cancelledArtifactJob = cancelArtifactWork()
+        mutableState.update {
+            it.copy(
+                artifactBusy = false,
+                artifactDownloadConfirmation = null,
+                artifactDownloadProgress = null,
+                artifactPreview = null,
+            )
+        }
         viewModelScope.launch {
+            cancelledArtifactJob?.join()
             mutableState.update { it.copy(clearingCache = true) }
             try {
                 cache.clearAll()
@@ -1921,30 +1985,133 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val current = mutableState.value
         val thread = current.selectedThread ?: return
         if (path.isBlank() || current.artifactBusy) return
-        mutableState.update { it.copy(artifactBusy = true, artifactPreview = null, error = null) }
-        viewModelScope.launch(Dispatchers.IO) {
+        val operationId = nextArtifactOperation()
+        mutableState.update {
+            it.copy(
+                artifactBusy = true,
+                artifactDownloadConfirmation = null,
+                artifactDownloadProgress = null,
+                artifactPreview = null,
+                error = null,
+            )
+        }
+        artifactDownloadJob = viewModelScope.launch(Dispatchers.IO) {
             try {
-                val payload = threads.artifact(thread.id, path)
-                val directory = File(getApplication<Application>().cacheDir, "artifacts").apply { mkdirs() }
-                val safeName = payload.filename.replace(Regex("[^\\p{L}\\p{N}._-]+"), "-").ifBlank { "artifact" }
-                val file = File(directory, "${path.hashCode().toUInt()}-$safeName")
-                file.writeBytes(payload.bytes)
-                val text = if (isTextArtifact(payload.mimeType, payload.filename)) {
-                    payload.bytes.toString(Charsets.UTF_8)
+                val probe = threads.probeArtifact(thread.id, path)
+                currentCoroutineContext().ensureActive()
+                if (requiresArtifactDownloadConfirmation(probe.totalBytes)) {
+                    mutableState.update { latest ->
+                        if (!isCurrentArtifactOperation(operationId, latest, thread.id)) latest
+                        else latest.copy(
+                            artifactBusy = false,
+                            artifactDownloadConfirmation = PendingArtifactDownload(thread.id, probe),
+                        )
+                    }
                 } else {
-                    null
+                    downloadArtifact(thread.id, probe, operationId)
                 }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
                 mutableState.update { latest ->
-                    if (latest.selectedThread?.id != thread.id) latest.copy(artifactBusy = false)
+                    if (isCurrentArtifactOperation(operationId, latest, thread.id)) {
+                        latest.copy(
+                            artifactBusy = false,
+                            artifactDownloadConfirmation = null,
+                            artifactDownloadProgress = null,
+                            error = error.userMessage("Could not inspect this artifact."),
+                        )
+                    } else {
+                        latest
+                    }
+                }
+            }
+        }
+    }
+
+    fun confirmArtifactDownload() {
+        val pending = mutableState.value.artifactDownloadConfirmation ?: return
+        if (mutableState.value.selectedThread?.id != pending.threadId) return
+        val operationId = nextArtifactOperation()
+        mutableState.update {
+            it.copy(
+                artifactBusy = true,
+                artifactDownloadConfirmation = null,
+                artifactDownloadProgress = ArtifactDownloadProgress(pending.probe.filename, 0L, pending.probe.totalBytes),
+                error = null,
+            )
+        }
+        artifactDownloadJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                downloadArtifact(pending.threadId, pending.probe, operationId)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                mutableState.update { latest ->
+                    if (isCurrentArtifactOperation(operationId, latest, pending.threadId)) {
+                        latest.copy(
+                            artifactBusy = false,
+                            artifactDownloadProgress = null,
+                            error = error.userMessage("Could not download this artifact."),
+                        )
+                    } else {
+                        latest
+                    }
+                }
+            }
+        }
+    }
+
+    fun cancelArtifactDownload() {
+        cancelArtifactWork()
+        mutableState.update {
+            it.copy(
+                artifactBusy = false,
+                artifactDownloadConfirmation = null,
+                artifactDownloadProgress = null,
+            )
+        }
+    }
+
+    private suspend fun downloadArtifact(threadId: String, probe: ArtifactProbe, operationId: Long) {
+        val directory = File(getApplication<Application>().cacheDir, "artifacts")
+        var lastReportedBytes = 0L
+        val download = threads.downloadArtifact(threadId, probe, directory) { downloadedBytes, totalBytes ->
+            val shouldReport = downloadedBytes == 0L ||
+                downloadedBytes - lastReportedBytes >= ARTIFACT_PROGRESS_UPDATE_BYTES ||
+                (totalBytes != null && downloadedBytes >= totalBytes)
+            if (shouldReport) {
+                lastReportedBytes = downloadedBytes
+                mutableState.update { latest ->
+                    if (!isCurrentArtifactOperation(operationId, latest, threadId)) latest
                     else latest.copy(
-                        artifactBusy = false,
-                        artifactPreview = ArtifactPreviewState(path, payload.filename, payload.mimeType, text, file.absolutePath),
+                        artifactDownloadProgress = ArtifactDownloadProgress(probe.filename, downloadedBytes, totalBytes),
                     )
                 }
-            } catch (error: Exception) {
-                mutableState.update {
-                    it.copy(artifactBusy = false, error = error.userMessage("Could not open this artifact."))
-                }
+            }
+        }
+        currentCoroutineContext().ensureActive()
+        val text = if (isTextArtifact(download.probe.mimeType, download.probe.filename)) {
+            readArtifactTextPreview(download.file)
+        } else {
+            null
+        }
+        mutableState.update { latest ->
+            if (!isCurrentArtifactOperation(operationId, latest, threadId)) {
+                latest
+            } else {
+                latest.copy(
+                    artifactBusy = false,
+                    artifactDownloadProgress = null,
+                    artifactPreview = ArtifactPreviewState(
+                        path = probe.path,
+                        filename = download.probe.filename,
+                        mimeType = download.probe.mimeType,
+                        text = text?.text,
+                        localPath = download.file.absolutePath,
+                        textTruncated = text?.truncated == true,
+                    ),
+                )
             }
         }
     }
@@ -1967,6 +2134,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.update { it.copy(artifactPreview = null) }
     }
 
+    override fun onCleared() {
+        cancelArtifactWork()
+        super.onCleared()
+    }
+
     fun reportArtifactOpenFailure() {
         mutableState.update { it.copy(error = "No installed app can open this artifact.") }
     }
@@ -1978,15 +2150,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun isTextArtifact(mimeType: String, filename: String): Boolean {
-        if (mimeType in setOf("text/html", "application/xhtml+xml", "image/svg+xml")) return false
-        if (mimeType.startsWith("text/") || mimeType in setOf("application/json", "application/xml", "application/javascript")) return true
-        return filename.substringAfterLast('.', "").lowercase() in setOf(
-            "md", "markdown", "txt", "json", "yaml", "yml", "toml", "csv", "tsv",
-            "kt", "kts", "java", "py", "js", "ts", "tsx", "jsx", "css", "xml", "sh", "sql",
-            "go", "rs", "rb", "php", "c", "h", "cpp", "hpp",
-        )
+    private fun nextArtifactOperation(): Long {
+        artifactDownloadJob?.cancel()
+        return ++artifactOperationId
     }
+
+    private fun cancelArtifactWork(): Job? {
+        artifactOperationId += 1
+        val job = artifactDownloadJob
+        job?.cancel()
+        artifactDownloadJob = null
+        return job
+    }
+
+    private fun isCurrentArtifactOperation(operationId: Long, state: AppUiState, threadId: String): Boolean =
+        operationId == artifactOperationId && state.selectedThread?.id == threadId
 
     private fun toUploadSource(file: PendingAttachment): UploadSource {
         val resolver = getApplication<Application>().contentResolver

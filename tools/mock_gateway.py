@@ -53,6 +53,15 @@ THREADS: dict[str, dict] = {
 }
 RUNS: dict[str, dict] = {}
 STREAM_DELAY = 1.5
+ARTIFACT_REQUESTS: dict[str, dict[str, int]] = {}
+MEBIBYTE = 1024 * 1024
+ARTIFACT_FIXTURES = {
+    "report.md": (b"# Fixture report\n\nAndroid artifact preview works.\n", "text/markdown; charset=utf-8", True),
+    "nine-mib.txt": (b"A" * (9 * MEBIBYTE), "text/plain; charset=utf-8", True),
+    "eleven-mib.txt": (b"B" * (11 * MEBIBYTE), "text/plain; charset=utf-8", True),
+    "two-hundred-one-mib.bin": (b"", "application/octet-stream", True),
+    "unknown-size.txt": (b"Unknown size fixture\n", "text/plain; charset=utf-8", False),
+}
 AGENT_RUNS = [
     {
         "run_id": "fixture-research-run-success",
@@ -308,12 +317,42 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def write_bytes(self, body: bytes, content_type: str) -> None:
-        self.send_response(200)
+    def write_bytes(self, body: bytes, content_type: str, headers: dict[str, str] | None = None, include_length: bool = True, status: int = 200) -> None:
+        self.send_response(status)
         self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
+        if include_length:
+            self.send_header("Content-Length", str(len(body)))
+        else:
+            self.send_header("Connection", "close")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
+        if not include_length:
+            self.close_connection = True
+
+    def write_artifact(self, artifact_path: str) -> None:
+        fixture = ARTIFACT_FIXTURES.get(artifact_path)
+        if fixture is None:
+            self.write_json({"detail": "Artifact not found"}, status=404)
+            return
+        body, content_type, reports_length = fixture
+        if artifact_path == "two-hundred-one-mib.bin":
+            # Header-only rejection coverage: clients must stop before requesting the complete body.
+            total = 201 * MEBIBYTE
+            body = b"\0"
+        else:
+            total = len(body)
+        request_kind = "probe" if self.headers.get("Range") == "bytes=0-0" else "download"
+        counts = ARTIFACT_REQUESTS.setdefault(artifact_path, {"probe": 0, "download": 0})
+        counts[request_kind] += 1
+        print(f"[mock-gateway] artifact {artifact_path} {request_kind} count={counts[request_kind]}", flush=True)
+        headers = {"Content-Disposition": f'attachment; filename="{artifact_path}"'}
+        if request_kind == "probe":
+            headers["Content-Range"] = f"bytes 0-0/{total}" if reports_length else "bytes 0-0/*"
+            self.write_bytes(body[:1], content_type, headers=headers, status=206)
+            return
+        self.write_bytes(body, content_type, headers=headers, include_length=reports_length)
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -392,10 +431,29 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self.write_json(list(TASKS.values()))
         elif path == "/api/memory":
             self.write_json(MEMORY)
+        elif path == "/__artifact_requests":
+            self.write_json(ARTIFACT_REQUESTS)
         elif path.startswith("/api/threads/") and path.endswith("/state"):
             thread_id = path.split("/")[3]
             thread = THREADS.get(thread_id, {"title": "New conversation", "messages": [], "todos": [], "artifacts": []})
             self.write_json({"values": {"title": thread["title"], "messages": thread["messages"], "todos": thread.get("todos", []), "artifacts": thread.get("artifacts", [])}})
+        elif path.startswith("/api/threads/") and "/runs/" in path and path.count("/") == 5:
+            parts = path.split("/")
+            thread_id, run_id = parts[3], parts[5]
+            # The instrumentation suite seeds this process-restart fixture directly in Room.
+            # Model it as a still-running Gateway record so recovery exercises GET run then join.
+            if run_id == "fixture-recovered-run":
+                RUNS.setdefault(run_id, {"thread_id": thread_id, "status": "running"})
+            run = RUNS.get(run_id)
+            if run is None or run.get("thread_id") != thread_id:
+                self.write_json({"detail": "Run not found"}, status=404)
+            else:
+                self.write_json({
+                    "run_id": run_id,
+                    "thread_id": thread_id,
+                    "status": run.get("status", "success"),
+                    "stop_reason": run.get("stop_reason"),
+                })
         elif path.startswith("/api/threads/") and path.endswith("/runs"):
             thread_id = path.split("/")[3]
             self.write_json([
@@ -408,10 +466,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self.stream_existing_run(parts[3], parts[5])
         elif path.startswith("/api/threads/") and "/artifacts/" in path:
             artifact_path = path.split("/artifacts/", 1)[1]
-            if artifact_path.endswith("report.md"):
-                self.write_bytes(b"# Fixture report\n\nAndroid artifact preview works.\n", "text/markdown; charset=utf-8")
-            else:
-                self.write_json({"detail": "Artifact not found"}, status=404)
+            self.write_artifact(artifact_path)
         else:
             self.write_json({"detail": "Not found"}, status=404)
 
@@ -751,7 +806,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
             updated_at="2026-07-19T10:05:00+08:00",
             messages=thread["messages"] + [assistant] + ([tool_result] if tool_result else []),
             todos=[{"content": "Validate Android fixture", "status": "completed"}],
-            artifacts=["mnt/user-data/outputs/report.md"],
+            artifacts=[
+                "mnt/user-data/outputs/report.md",
+                "mnt/user-data/outputs/nine-mib.txt",
+                "mnt/user-data/outputs/eleven-mib.txt",
+                "mnt/user-data/outputs/two-hundred-one-mib.bin",
+                "mnt/user-data/outputs/unknown-size.txt",
+            ],
         )
 
         answer_chunks = [

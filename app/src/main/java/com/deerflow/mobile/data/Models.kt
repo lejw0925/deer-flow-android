@@ -1,5 +1,7 @@
 package com.deerflow.mobile.data
 
+import java.io.File
+
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -181,11 +183,41 @@ data class RunOptions(
 
 enum class RunStatus { Idle, Connecting, Streaming, Reconnecting, Stopping, Failed }
 
+/** The Gateway's persisted lifecycle is authoritative when an SSE connection is interrupted. */
+enum class GatewayRunStatus {
+    Pending,
+    Running,
+    Success,
+    Error,
+    Timeout,
+    Interrupted,
+    Unknown;
+
+    val active: Boolean get() = this == Pending || this == Running
+    val terminal: Boolean get() = this in setOf(Success, Error, Timeout, Interrupted)
+
+    companion object {
+        fun fromWire(value: String?): GatewayRunStatus = when (value?.lowercase()) {
+            "pending", "queued" -> Pending
+            "running" -> Running
+            "success", "completed" -> Success
+            "error", "failed" -> Error
+            "timeout", "timed_out" -> Timeout
+            "interrupted", "cancelled", "canceled" -> Interrupted
+            else -> Unknown
+        }
+    }
+}
+
 data class RunState(
     val status: RunStatus = RunStatus.Idle,
     val runId: String? = null,
     val lastEventId: String? = null,
     val reconnectAttempt: Int = 0,
+    /** Stable request identity used to discover a run after the initial response is lost. */
+    val clientMessageId: String? = null,
+    /** Retained after the local active-run row is cleared so the UI can show the real outcome. */
+    val gatewayStatus: GatewayRunStatus = GatewayRunStatus.Unknown,
 ) {
     val active: Boolean get() = status in setOf(RunStatus.Connecting, RunStatus.Streaming, RunStatus.Reconnecting, RunStatus.Stopping)
 }
@@ -352,13 +384,46 @@ data class UploadedFileInfo(
 
 data class GatewayRunInfo(
     val runId: String,
-    val status: String,
+    val status: GatewayRunStatus,
+    val stopReason: String? = null,
 )
 
-data class ArtifactPayload(
+sealed interface StreamResult {
+    /** The server sent the SSE `end` event, or recovery found a terminal run. */
+    data class TerminalEnd(
+        val runId: String?,
+        val lastEventId: String?,
+        val gatewayStatus: GatewayRunStatus = GatewayRunStatus.Unknown,
+    ) : StreamResult
+
+    /** The run may still be executing and must retain its persisted resume coordinates. */
+    data class RetryableDisconnect(
+        val runId: String?,
+        val lastEventId: String?,
+        val reconnectAttempt: Int,
+    ) : StreamResult
+
+    /** The stream request reached the Gateway but the Gateway rejected or could not serve it. */
+    data class HttpFailure(
+        val statusCode: Int,
+        val message: String,
+        val runId: String?,
+        val lastEventId: String?,
+    ) : StreamResult
+}
+
+data class ArtifactProbe(
+    val path: String,
     val filename: String,
     val mimeType: String,
-    val bytes: ByteArray,
+    /** Null when the Gateway cannot report a total byte count during the Range probe. */
+    val totalBytes: Long?,
+)
+
+data class ArtifactDownload(
+    val probe: ArtifactProbe,
+    val file: File,
+    val bytesDownloaded: Long,
 )
 
 data class RegeneratePreparation(

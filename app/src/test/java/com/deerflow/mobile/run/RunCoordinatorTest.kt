@@ -1,6 +1,7 @@
 package com.deerflow.mobile.run
 
 import com.deerflow.mobile.data.ChatMessage
+import com.deerflow.mobile.data.GatewayRunStatus
 import com.deerflow.mobile.data.MessageBlock
 import com.deerflow.mobile.data.MessageRole
 import com.deerflow.mobile.data.RunState
@@ -439,7 +440,7 @@ class RunCoordinatorTest {
     }
 
     @Test
-    fun `finished run becomes idle and clears streaming flags`() {
+    fun `finished marker keeps active run coordinates until terminal state is confirmed`() {
         val streaming = initial.copy(
             run = RunState(RunStatus.Streaming, runId = "run-1", lastEventId = "event-9"),
             serverMessages = listOf(ChatMessage("ai-1", MessageRole.Assistant, "Done", isStreaming = true)),
@@ -447,23 +448,51 @@ class RunCoordinatorTest {
 
         val finished = reduceRunState(streaming, StreamUpdate.Finished)
 
-        assertFalse(finished.run.active)
-        assertEquals(RunStatus.Idle, finished.run.status)
+        assertTrue(finished.run.active)
+        assertEquals(RunStatus.Streaming, finished.run.status)
+        assertEquals("run-1", finished.run.runId)
+        assertEquals("event-9", finished.run.lastEventId)
         assertFalse(finished.messages.single().isStreaming)
     }
 
     @Test
-    fun `finished marker does not erase a stream failure`() {
-        val failed = initial.copy(
-            run = RunState(RunStatus.Failed, runId = "run-1"),
-            error = "Gateway rejected the run",
+    fun `sse error and finished marker keep the run reconnectable until a terminal preflight`() {
+        val streaming = initial.copy(
+            run = RunState(RunStatus.Streaming, runId = "run-1"),
+            error = null,
             serverMessages = listOf(ChatMessage("ai-1", MessageRole.Assistant, "Partial", isStreaming = true)),
         )
 
+        val failed = reduceRunState(streaming, StreamUpdate.Failure("Gateway rejected the run"))
         val finished = reduceRunState(failed, StreamUpdate.Finished)
 
-        assertEquals(RunStatus.Failed, finished.run.status)
+        assertTrue(finished.run.active)
+        assertEquals(RunStatus.Reconnecting, finished.run.status)
         assertEquals("Gateway rejected the run", finished.error)
         assertFalse(finished.messages.single().isStreaming)
+    }
+
+    @Test
+    fun `terminal gateway outcomes clear persistence state but retain the outcome for the ui`() {
+        val current = initial.copy(
+            run = RunState(RunStatus.Reconnecting, runId = "run-1"),
+            serverMessages = listOf(ChatMessage("ai-1", MessageRole.Assistant, "Partial", isStreaming = true)),
+        )
+        val snapshot = ThreadSnapshot("Research", listOf(ChatMessage("ai-1", MessageRole.Assistant, "Final")))
+
+        val success = completeWithSnapshot(current, snapshot, GatewayRunStatus.Success)
+        val error = completeWithSnapshot(current, snapshot, GatewayRunStatus.Error, "Provider unavailable")
+        val timeout = completeWithSnapshot(current, snapshot, GatewayRunStatus.Timeout, "Deadline elapsed")
+        val interrupted = completeWithSnapshot(current, snapshot, GatewayRunStatus.Interrupted, "Stopped")
+
+        assertFalse(success.run.active)
+        assertEquals(RunStatus.Idle, success.run.status)
+        assertEquals(GatewayRunStatus.Success, success.run.gatewayStatus)
+        assertEquals(GatewayRunStatus.Error, error.run.gatewayStatus)
+        assertEquals("Provider unavailable", error.error)
+        assertEquals(GatewayRunStatus.Timeout, timeout.run.gatewayStatus)
+        assertEquals("Deadline elapsed", timeout.error)
+        assertEquals(GatewayRunStatus.Interrupted, interrupted.run.gatewayStatus)
+        assertEquals("Stopped", interrupted.error)
     }
 }

@@ -1,6 +1,7 @@
 package com.deerflow.mobile.data
 
 import java.io.Closeable
+import java.io.ByteArrayInputStream
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
@@ -35,7 +36,7 @@ class DeerFlowApiStreamingTest {
         )
         try {
             val updates = mutableListOf<StreamUpdate>()
-            withTimeout(10_000) {
+            val result = withTimeout(10_000) {
                 DeerFlowApi(server.url, NoopSessionCookieStore).streamMessage(
                     threadId = "thread-1",
                     message = "Reconnect this run",
@@ -43,6 +44,10 @@ class DeerFlowApiStreamingTest {
                 ) { updates += it }
             }
 
+            assertEquals(
+                StreamResult.TerminalEnd(runId = "run-1", lastEventId = "event-4"),
+                result,
+            )
             assertEquals(2, server.requests.size)
             assertEquals("event-2", server.requests[1].headers["last-event-id"])
             assertEquals(
@@ -61,21 +66,21 @@ class DeerFlowApiStreamingTest {
     }
 
     @Test
-    fun recoversAnInitialResponseLossFromCompletedThreadState() = runBlocking {
+    fun initialResponseLossWithOnlyTheUserMessageStaysRetryable() = runBlocking {
         val server = ScriptedSseServer(
             listOf(
                 ScriptedResponse(closeWithoutResponse = true),
                 ScriptedResponse(contentType = "application/json", body = "[]"),
-                ScriptedResponse(
-                    contentType = "application/json",
-                    body = """{"values":{"title":"Recovered","messages":[{"type":"human","id":"client-message-1","content":"Recover this run"}]}}""",
-                ),
             ),
         )
         try {
             val updates = mutableListOf<StreamUpdate>()
-            withTimeout(5_000) {
-                DeerFlowApi(server.url, NoopSessionCookieStore).streamMessage(
+            val result = withTimeout(5_000) {
+                DeerFlowApi(
+                    server.url,
+                    NoopSessionCookieStore,
+                    StreamReconnectPolicy(maxInitialRecoveryAttempts = 1, reconnectDelayMs = 0),
+                ).streamMessage(
                     threadId = "thread-1",
                     message = "Recover this run",
                     options = RunOptions(),
@@ -83,13 +88,12 @@ class DeerFlowApiStreamingTest {
                 ) { updates += it }
             }
 
-            assertEquals(3, server.requests.size)
+            assertEquals(StreamResult.RetryableDisconnect(null, null, 1), result)
+            assertEquals(2, server.requests.size)
             assertEquals("POST", server.requests[0].method)
             assertEquals("/api/threads/thread-1/runs/stream", server.requests[0].path)
             assertEquals("GET", server.requests[1].method)
             assertEquals("/api/threads/thread-1/runs", server.requests[1].path)
-            assertEquals("GET", server.requests[2].method)
-            assertEquals("/api/threads/thread-1/state", server.requests[2].path)
             assertEquals(listOf(1), updates.filterIsInstance<StreamUpdate.Reconnecting>().map { it.attempt })
         } finally {
             server.close()
@@ -97,30 +101,56 @@ class DeerFlowApiStreamingTest {
     }
 
     @Test
-    fun convertsHttpErrorPayloadIntoApiException() = runBlocking {
+    fun initialResponseLossWithTerminalRunReturnsTerminalEnd() = runBlocking {
         val server = ScriptedSseServer(
             listOf(
+                ScriptedResponse(closeWithoutResponse = true),
                 ScriptedResponse(
-                    statusCode = 409,
                     contentType = "application/json",
-                    body = "{\"detail\":\"This conversation is already running.\"}",
+                    body = """[{"run_id":"run-1","status":"timeout","stop_reason":"Gateway deadline elapsed"}]""",
                 ),
             ),
         )
         try {
-            var caught: ApiException? = null
-            try {
-                DeerFlowApi(server.url, NoopSessionCookieStore).streamMessage(
-                    threadId = "thread-1",
-                    message = "Conflict",
-                    options = RunOptions(),
-                ) { }
-            } catch (error: ApiException) {
-                caught = error
+            val result = DeerFlowApi(
+                server.url,
+                NoopSessionCookieStore,
+                StreamReconnectPolicy(reconnectDelayMs = 0),
+            ).streamMessage(
+                threadId = "thread-1",
+                message = "Recover terminal run",
+                options = RunOptions(),
+            ) { }
+
+            assertEquals(
+                StreamResult.TerminalEnd("run-1", null, GatewayRunStatus.Timeout),
+                result,
+            )
+            assertEquals(2, server.requests.size)
+            assertEquals("/api/threads/thread-1/runs", server.requests[1].path)
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test
+    fun classifiesStreamHttpFailuresWithoutCompletingTheRun() = runBlocking {
+        val server = ScriptedSseServer(
+            listOf(
+                ScriptedResponse(statusCode = 404, contentType = "application/json", body = "{\"detail\":\"gone\"}"),
+                ScriptedResponse(statusCode = 409, contentType = "application/json", body = "{\"detail\":\"other worker\"}"),
+                ScriptedResponse(statusCode = 500, contentType = "application/json", body = "{\"detail\":\"unavailable\"}"),
+            ),
+        )
+        try {
+            val api = DeerFlowApi(server.url, NoopSessionCookieStore)
+            val statuses = listOf(404, 409, 500).map { _ ->
+                val result = api.streamMessage("thread-1", "Conflict", RunOptions()) { }
+                assertTrue(result is StreamResult.HttpFailure)
+                (result as StreamResult.HttpFailure).statusCode
             }
 
-            assertEquals(409, caught?.statusCode)
-            assertEquals("This conversation is already running.", caught?.message)
+            assertEquals(listOf(404, 409, 500), statuses)
         } finally {
             server.close()
         }
@@ -534,6 +564,8 @@ class DeerFlowApiStreamingTest {
                 List(modes.length()) { modes.getString(it) }
             })
             assertFalse(payload.getBoolean("stream_subgraphs"))
+            assertTrue(payload.getBoolean("stream_resumable"))
+            assertEquals("continue", payload.getString("on_disconnect"))
             assertFalse(request.headers["accept-encoding"].equals("identity", ignoreCase = true))
 
             val patches = updates.filterIsInstance<StreamUpdate.Patch>().map { it.value }
@@ -569,6 +601,101 @@ class DeerFlowApiStreamingTest {
 
             assertEquals(2, server.requests.size)
             assertEquals("run-1", server.requests[1].path.substringAfter("/runs/").substringBefore('/'))
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test
+    fun exhaustedEofRecoveryReturnsRetryableDisconnectWithoutFinished() = runBlocking {
+        val server = ScriptedSseServer(
+            listOf(
+                sse("event: metadata\nid: event-1\ndata: {\"run_id\":\"run-1\"}"),
+                ScriptedResponse(),
+            ),
+        )
+        try {
+            val updates = mutableListOf<StreamUpdate>()
+            val result = DeerFlowApi(
+                server.url,
+                NoopSessionCookieStore,
+                StreamReconnectPolicy(maxUnexpectedEofReconnects = 1, reconnectDelayMs = 0),
+            ).streamMessage(
+                threadId = "thread-1",
+                message = "Keep recovering",
+                options = RunOptions(),
+            ) { updates += it }
+
+            assertEquals(StreamResult.RetryableDisconnect("run-1", "event-1", 1), result)
+            assertEquals(2, server.requests.size)
+            assertEquals("event-1", server.requests[1].headers["last-event-id"])
+            assertFalse(updates.any { it == StreamUpdate.Finished })
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test
+    fun resumeByteSliceKeepsTheLastEventIdForTheNextJoin() = runBlocking {
+        val largeChunk = "x".repeat(270 * 1024)
+        val server = ScriptedSseServer(
+            listOf(
+                sse("event: metadata\nid: initial\ndata: {\"run_id\":\"run-1\"}"),
+                sse(
+                    "event: messages-tuple\nid: event-2\ndata: {\"type\":\"ai\",\"id\":\"ai-1\",\"content\":\"$largeChunk\"}",
+                ),
+                sse("event: end\nid: event-3\ndata: null"),
+            ),
+        )
+        try {
+            val result = withTimeout(10_000) {
+                DeerFlowApi(
+                    server.url,
+                    NoopSessionCookieStore,
+                    StreamReconnectPolicy(reconnectDelayMs = 0, maxResumeBytes = 256L * 1024L),
+                ).streamMessage("thread-1", "Slice the replay", RunOptions()) { }
+            }
+
+            assertTrue(result is StreamResult.TerminalEnd)
+            assertEquals(3, server.requests.size)
+            // The byte limit can land in the middle of event-2. Resume from the last fully
+            // decoded event so the complete frame is replayed and processed exactly once.
+            assertEquals("initial", server.requests[2].headers["last-event-id"])
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test
+    fun resumeTimeSliceStopsTheCurrentConnectionBeforeReadingAnotherFrame() {
+        val result = DeerFlowApi("http://127.0.0.1", NoopSessionCookieStore).readEventStream(
+            input = ByteArrayInputStream("event: end\ndata: null\n\n".toByteArray(StandardCharsets.UTF_8)),
+            maxBytes = null,
+            maxDurationMs = -1,
+            onEvent = { true },
+        )
+
+        assertEquals(StreamEndReason.ResumeTimeLimit, result.reason)
+    }
+
+    @Test
+    fun getRunParsesTerminalStatusAndStopReason() = runBlocking {
+        val server = ScriptedSseServer(
+            listOf(
+                ScriptedResponse(
+                    contentType = "application/json",
+                    body = """{"run_id":"run-1","thread_id":"thread-1","status":"interrupted","stop_reason":"Stopped by user"}""",
+                ),
+            ),
+        )
+        try {
+            val run = DeerFlowApi(server.url, NoopSessionCookieStore).getRun("thread-1", "run-1")
+
+            assertEquals("run-1", run.runId)
+            assertEquals(GatewayRunStatus.Interrupted, run.status)
+            assertEquals("Stopped by user", run.stopReason)
+            assertEquals("GET", server.requests.single().method)
+            assertEquals("/api/threads/thread-1/runs/run-1", server.requests.single().path)
         } finally {
             server.close()
         }

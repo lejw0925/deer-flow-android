@@ -110,6 +110,14 @@
     <string name="artifacts">Artifacts</string>
     <string name="open">Open</string>
     <string name="save_copy">Save copy</string>
+    <string name="download">Download</string>
+    <string name="artifact_download_title">Download artifact?</string>
+    <string name="artifact_downloading_title">Downloading artifact</string>
+    <string name="artifact_download_confirmation_body">This file may use a significant amount of data and storage.</string>
+    <string name="artifact_size_unknown">Size unknown</string>
+    <string name="artifact_downloaded_of_total">%1$s of %2$s</string>
+    <string name="artifact_downloaded_unknown_total">%1$s downloaded</string>
+    <string name="artifact_preview_truncated">Showing the first 256 KiB as plain text.</string>
     <string name="copy">Copy</string>
     <string name="token_usage">Tokens · In %1$s · Out %2$s · Total %3$s</string>
     <string name="thinking">Thinking</string>

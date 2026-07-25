@@ -1,12 +1,16 @@
 package com.deerflow.mobile.data
 
 import java.io.BufferedReader
+import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
+import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URLEncoder
+import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -14,7 +18,10 @@ import android.util.Log
 import com.deerflow.mobile.BuildConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.Interceptor
@@ -45,6 +52,84 @@ class ApiException(
     val statusCode: Int,
     override val message: String,
 ) : Exception(message)
+
+internal const val MAX_ARTIFACT_DOWNLOAD_BYTES = 200L * 1024 * 1024
+private const val MAX_ARTIFACT_ERROR_BODY_BYTES = 64 * 1024
+
+private fun artifactDownloadLimitError(): ApiException =
+    ApiException(413, "This artifact exceeds the 200 MiB Android download limit.")
+
+private fun artifactProbe(response: okhttp3.Response, path: String, totalBytes: Long?): ArtifactProbe = ArtifactProbe(
+    path = path,
+    filename = contentDispositionFilename(response.header("Content-Disposition"))
+        ?: path.substringAfterLast('/').ifBlank { "artifact" },
+    mimeType = response.header("Content-Type")?.substringBefore(';')?.trim().orEmpty()
+        .ifBlank { "application/octet-stream" },
+    totalBytes = totalBytes,
+)
+
+private fun contentDispositionFilename(value: String?): String? {
+    val parts = value.orEmpty().split(';').map(String::trim)
+    val encodedValue = parts.firstOrNull { it.startsWith("filename*=", ignoreCase = true) }
+        ?.substringAfter('=')
+    val encoded = encodedValue?.let { it.substringAfter("''", missingDelimiterValue = it) }
+        ?.takeIf { it.isNotBlank() }
+    if (encoded != null) {
+        return runCatching {
+            URLDecoder.decode(encoded.replace("+", "%2B"), StandardCharsets.UTF_8.name())
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+    return parts.firstOrNull { it.startsWith("filename=", ignoreCase = true) }
+        ?.substringAfter('=')
+        ?.trim()
+        ?.removeSurrounding("\"")
+        ?.takeIf { it.isNotBlank() }
+}
+
+private data class ContentRange(
+    val start: Long,
+    val end: Long,
+    val totalBytes: Long?,
+)
+
+private val CONTENT_RANGE_PATTERN = Regex(
+    "^bytes\\s+(\\d+)-(\\d+)/(\\d+|\\*)$",
+    RegexOption.IGNORE_CASE,
+)
+
+private fun contentRange(value: String?): ContentRange? {
+    val match = CONTENT_RANGE_PATTERN.matchEntire(value?.trim().orEmpty()) ?: return null
+    val start = match.groupValues[1].toLongOrNull() ?: return null
+    val end = match.groupValues[2].toLongOrNull() ?: return null
+    val totalValue = match.groupValues[3]
+    val totalBytes = if (totalValue == "*") null else totalValue.toLongOrNull() ?: return null
+    if (end < start || (totalBytes != null && totalBytes <= end)) return null
+    return ContentRange(start, end, totalBytes)
+}
+
+private fun contentRangeTotal(value: String?): Long? = contentRange(value)?.totalBytes
+
+private fun artifactErrorPayload(body: ResponseBody?): String {
+    if (body == null) return ""
+    val output = ByteArrayOutputStream()
+    body.byteStream().use { input ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var remaining = MAX_ARTIFACT_ERROR_BODY_BYTES
+        while (remaining > 0) {
+            val count = input.read(buffer, 0, minOf(buffer.size, remaining))
+            if (count < 0) break
+            if (count == 0) continue
+            output.write(buffer, 0, count)
+            remaining -= count
+        }
+    }
+    return String(output.toByteArray(), Charsets.UTF_8)
+}
+
+private fun cacheSafeArtifactFilename(filename: String): String = filename
+    .substringAfterLast('/')
+    .replace(Regex("[^\\p{L}\\p{N}._-]+"), "-")
+    .ifBlank { "artifact" }
 
 /** Decode every top-level node write from an `updates` event in wire order. */
 internal fun parseUpdatePatches(raw: String): List<StreamPatch> {
@@ -103,14 +188,42 @@ private interface GatewayService {
 }
 
 private sealed interface InitialRunRecovery {
-    data class Active(val runId: String) : InitialRunRecovery
-    data object Completed : InitialRunRecovery
+    data class Active(val run: GatewayRunInfo) : InitialRunRecovery
+    data class Terminal(val run: GatewayRunInfo) : InitialRunRecovery
+    data object Unknown : InitialRunRecovery
+}
+
+/** Testable bounds for a resumable stream connection; production uses Gateway-compatible defaults. */
+internal data class StreamReconnectPolicy(
+    val maxUnexpectedEofReconnects: Int = 1,
+    val maxNetworkReconnects: Int = 4,
+    val maxInitialRecoveryAttempts: Int = 4,
+    val reconnectDelayMs: Long = 700L,
+    val maxResumeBytes: Long = 256L * 1024L,
+    val maxResumeDurationMs: Long = 30_000L,
+)
+
+private fun JSONObject.toGatewayRunInfo(): GatewayRunInfo? {
+    val runId = optString("run_id").takeIf { it.isNotBlank() } ?: return null
+    return GatewayRunInfo(
+        runId = runId,
+        status = GatewayRunStatus.fromWire(optString("status")),
+        stopReason = optString("stop_reason").ifBlank { optString("error") }.takeIf { it.isNotBlank() },
+    )
 }
 
 class DeerFlowApi(
     serverUrl: String,
     private val cookies: SessionCookieStore,
 ) {
+    internal constructor(
+        serverUrl: String,
+        cookies: SessionCookieStore,
+        streamReconnectPolicy: StreamReconnectPolicy,
+    ) : this(serverUrl, cookies) {
+        this.streamReconnectPolicy = streamReconnectPolicy
+    }
+
     @Volatile
     var serverUrl: String = normalizeServerUrl(serverUrl)
         private set
@@ -128,6 +241,7 @@ class DeerFlowApi(
         .create(GatewayService::class.java)
 
     @Volatile private var activeCall: Call? = null
+    private var streamReconnectPolicy = StreamReconnectPolicy()
 
     fun updateServerUrl(value: String) {
         serverUrl = normalizeServerUrl(value)
@@ -471,27 +585,99 @@ class DeerFlowApi(
         }
     }
 
-    suspend fun fetchArtifact(threadId: String, path: String): ArtifactPayload = withContext(Dispatchers.IO) {
-        val encodedPath = path.trimStart('/').split('/').joinToString("/") { pathSegment(it) }
+    suspend fun probeArtifact(threadId: String, path: String): ArtifactProbe = withContext(Dispatchers.IO) {
         val call = client.newCall(
             Request.Builder()
-                .url(url("/api/threads/${pathSegment(threadId)}/artifacts/$encodedPath"))
+                .url(artifactUrl(threadId, path))
+                .header("Range", "bytes=0-0")
                 .get()
                 .build(),
         )
-        call.execute().use { response ->
-            val body = response.body
-            if (!response.isSuccessful) throw apiError(response.code, body?.string().orEmpty())
-            val contentLength = body?.contentLength() ?: -1L
-            if (contentLength > MAX_ARTIFACT_BYTES) throw ApiException(413, "This artifact is too large to preview on Android.")
-            val bytes = body?.bytes() ?: byteArrayOf()
-            if (bytes.size > MAX_ARTIFACT_BYTES) throw ApiException(413, "This artifact is too large to preview on Android.")
-            ArtifactPayload(
-                filename = path.substringAfterLast('/').ifBlank { "artifact" },
-                mimeType = response.header("Content-Type")?.substringBefore(';')?.trim().orEmpty()
-                    .ifBlank { "application/octet-stream" },
-                bytes = bytes,
-            )
+        val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
+            if (cause is CancellationException) call.cancel()
+        }
+        try {
+            call.execute().use { response ->
+                val body = response.body
+                if (!response.isSuccessful) throw apiError(response.code, artifactErrorPayload(body))
+                // A successful Range response without Content-Range has not proven a total size.
+                // Some servers ignore Range entirely and return a full 200 response; its Content-Length is usable.
+                val totalBytes = contentRangeTotal(response.header("Content-Range"))
+                    ?: body?.contentLength()?.takeIf { response.code == HttpURLConnection.HTTP_OK && it >= 0L }
+                if (totalBytes != null && totalBytes > MAX_ARTIFACT_DOWNLOAD_BYTES) throw artifactDownloadLimitError()
+                artifactProbe(response, path, totalBytes)
+            }
+        } finally {
+            cancellationHandle?.dispose()
+        }
+    }
+
+    suspend fun downloadArtifact(
+        threadId: String,
+        probe: ArtifactProbe,
+        directory: File,
+        onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit = { _, _ -> },
+    ): ArtifactDownload = withContext(Dispatchers.IO) {
+        if (probe.totalBytes != null && probe.totalBytes > MAX_ARTIFACT_DOWNLOAD_BYTES) throw artifactDownloadLimitError()
+        if (!directory.exists() && !directory.mkdirs()) throw IOException("Could not create the artifact cache directory.")
+
+        val safeFilename = cacheSafeArtifactFilename(probe.filename)
+        val transferId = UUID.randomUUID().toString()
+        val completedFile = File(directory, "$transferId-$safeFilename")
+        val partFile = File(directory, ".${completedFile.name}.part")
+        val call = client.newCall(
+            Request.Builder()
+                .url(artifactUrl(threadId, probe.path))
+                .get()
+                .build(),
+        )
+        val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
+            if (cause is CancellationException) call.cancel()
+        }
+        var completed = false
+        try {
+            call.execute().use { response ->
+                val body = response.body
+                if (!response.isSuccessful) throw apiError(response.code, artifactErrorPayload(body))
+                if (response.code != HttpURLConnection.HTTP_OK) {
+                    throw IOException("Artifact download did not return a complete response.")
+                }
+                val contentLength = body?.contentLength() ?: -1L
+                if (contentLength > MAX_ARTIFACT_DOWNLOAD_BYTES) throw artifactDownloadLimitError()
+                val responseTotal = contentRangeTotal(response.header("Content-Range"))
+                val totalBytes = probe.totalBytes ?: responseTotal ?: contentLength.takeIf { it >= 0L }
+                if (totalBytes != null && totalBytes > MAX_ARTIFACT_DOWNLOAD_BYTES) throw artifactDownloadLimitError()
+                if (probe.totalBytes != null && responseTotal != null && probe.totalBytes != responseTotal) {
+                    throw IOException("Artifact size changed before the download started.")
+                }
+                if (probe.totalBytes != null && contentLength >= 0L && probe.totalBytes != contentLength) {
+                    throw IOException("Artifact size changed before the download started.")
+                }
+
+                onProgress(0L, totalBytes)
+                val bytesDownloaded = body?.byteStream()?.use { input ->
+                    partFile.outputStream().buffered().use { output ->
+                        copyArtifactStream(input, output, expectedLength = contentLength) { downloadedBytes ->
+                            onProgress(downloadedBytes, totalBytes)
+                        }
+                    }
+                } ?: throw IOException("The artifact download returned no response body.")
+                currentCoroutineContext().ensureActive()
+                if (totalBytes != null && bytesDownloaded != totalBytes) {
+                    throw IOException("Artifact download ended before the expected size.")
+                }
+                // The unique destination and part file share a cache directory, so this is atomic.
+                if (!partFile.renameTo(completedFile)) throw IOException("Could not finalize the artifact download.")
+                completed = true
+                ArtifactDownload(
+                    probe = artifactProbe(response, probe.path, totalBytes),
+                    file = completedFile,
+                    bytesDownloaded = bytesDownloaded,
+                )
+            }
+        } finally {
+            if (!completed) partFile.delete()
+            cancellationHandle?.dispose()
         }
     }
 
@@ -505,38 +691,55 @@ class DeerFlowApi(
         humanInputResponse: HumanInputResponse? = null,
         regenerate: RegeneratePreparation? = null,
         onUpdate: (StreamUpdate) -> Unit,
-    ) = withContext(Dispatchers.IO) {
+    ): StreamResult = withContext(Dispatchers.IO) {
         var runId = resume?.runId
         var lastEventId = resume?.lastEventId
-        var attempt = 0
-        var initial = runId == null
-        var recoveringInitialRun = false
-        var initialFailure: IOException? = null
+        var reconnectAttempt = resume?.reconnectAttempt ?: 0
+        var initial = resume == null
+        // A persisted run without an id means the initial response was lost. Retrying the POST
+        // would create a second run, so discover the original run before sending anything else.
+        var recoveringInitialRun = !initial && runId == null
+        var initialRecoveryAttempts = 0
+        var eofReconnects = 0
         val deliveredEventIds = linkedSetOf<String>().apply {
             resume?.lastEventId?.let(::add)
         }
         while (true) {
             if (recoveringInitialRun) {
-                when (val recovered = recoverInitialRun(threadId, clientMessageId)) {
+                when (val recovered = recoverInitialRun(threadId)) {
                     is InitialRunRecovery.Active -> {
-                        runId = recovered.runId
+                        runId = recovered.run.runId
                         initial = false
                         recoveringInitialRun = false
+                        initialRecoveryAttempts = 0
+                        eofReconnects = 0
                         onUpdate(StreamUpdate.Started(runId))
                     }
-                    InitialRunRecovery.Completed -> return@withContext
-                    null -> {
-                        if (attempt >= MAX_INITIAL_RUN_RECOVERY_ATTEMPTS) {
-                            throw requireNotNull(initialFailure)
+                    is InitialRunRecovery.Terminal -> {
+                        return@withContext StreamResult.TerminalEnd(
+                            runId = recovered.run.runId,
+                            lastEventId = lastEventId,
+                            gatewayStatus = recovered.run.status,
+                        )
+                    }
+                    InitialRunRecovery.Unknown -> {
+                        initialRecoveryAttempts += 1
+                        reconnectAttempt += 1
+                        onUpdate(StreamUpdate.Reconnecting(reconnectAttempt))
+                        if (initialRecoveryAttempts >= streamReconnectPolicy.maxInitialRecoveryAttempts) {
+                            return@withContext StreamResult.RetryableDisconnect(
+                                runId = runId,
+                                lastEventId = lastEventId,
+                                reconnectAttempt = reconnectAttempt,
+                            )
                         }
-                        attempt += 1
-                        onUpdate(StreamUpdate.Reconnecting(attempt))
-                        delay(RECONNECT_DELAY_MS * attempt)
+                        delay(reconnectDelay(reconnectAttempt))
                         continue
                     }
                 }
             }
-            val request = if (initial) {
+            val initialRequest = initial
+            val request = if (initialRequest) {
                 buildInitialStreamRequest(threadId, message, options, clientMessageId, files, humanInputResponse, regenerate)
             } else {
                 buildResumeStreamRequest(threadId, requireNotNull(runId), lastEventId)
@@ -544,29 +747,39 @@ class DeerFlowApi(
             val call = streamClient.newCall(request)
             activeCall = call
             try {
+                var httpFailure: StreamResult.HttpFailure? = null
+                var streamResult: StreamReadResult? = null
                 call.execute().use { response ->
                     val payload = response.body
                     if (!response.isSuccessful) {
-                        throw apiError(response.code, payload?.string().orEmpty())
+                        val error = apiError(response.code, payload?.string().orEmpty())
+                        httpFailure = StreamResult.HttpFailure(
+                            statusCode = error.statusCode,
+                            message = error.message,
+                            runId = runId,
+                            lastEventId = lastEventId,
+                        )
+                        return@use
                     }
                     StreamDiagnostics.log(
                         threadId = threadId,
                         runId = runId,
-                        reconnectAttempt = attempt,
+                        reconnectAttempt = reconnectAttempt,
                         cursor = lastEventId,
                         responseEncoding = response.header("Content-Encoding"),
                         receivedBytes = 0,
                         endReason = "opened",
                     )
-                    if (initial) {
+                    if (initialRequest) {
                         runId = response.header("Content-Location")?.substringAfterLast('/')
                         onUpdate(StreamUpdate.Started(runId))
+                        initial = false
                     }
-                    val streamResult = payload?.byteStream()?.let { input ->
+                    streamResult = payload?.byteStream()?.let { input ->
                         readEventStream(
                             input = input,
-                            maxBytes = if (initial) null else MAX_RESUME_BYTES,
-                            maxDurationMs = if (initial) null else MAX_RESUME_DURATION_MS,
+                            maxBytes = if (initialRequest) null else streamReconnectPolicy.maxResumeBytes,
+                            maxDurationMs = if (initialRequest) null else streamReconnectPolicy.maxResumeDurationMs,
                         ) { event ->
                             event.id?.let { eventId ->
                                 if (!deliveredEventIds.add(eventId)) return@readEventStream false
@@ -584,59 +797,127 @@ class DeerFlowApi(
                     StreamDiagnostics.log(
                         threadId = threadId,
                         runId = runId,
-                        reconnectAttempt = attempt,
+                        reconnectAttempt = reconnectAttempt,
                         cursor = lastEventId,
                         responseEncoding = response.header("Content-Encoding"),
-                        receivedBytes = streamResult.bytesRead,
-                        endReason = streamResult.reason.name,
+                        receivedBytes = streamResult?.bytesRead ?: 0,
+                        endReason = streamResult?.reason?.name ?: "missing",
                     )
-                    if (streamResult.reason != StreamEndReason.UnexpectedEof) return@withContext
                 }
-                if (runId == null || attempt >= MAX_UNEXPECTED_EOF_RECONNECTS) return@withContext
+                httpFailure?.let { return@withContext it }
+                when (streamResult?.reason ?: StreamEndReason.UnexpectedEof) {
+                    StreamEndReason.EndEvent -> {
+                        return@withContext StreamResult.TerminalEnd(
+                            runId = runId,
+                            lastEventId = lastEventId,
+                        )
+                    }
+                    StreamEndReason.ResumeByteLimit,
+                    StreamEndReason.ResumeTimeLimit
+                    -> {
+                        if (runId == null) {
+                            initial = false
+                            recoveringInitialRun = true
+                            continue
+                        }
+                        // A bounded resume connection is a hand-off, not a failed run. Keep the
+                        // same cursor and retry budget while joining the next stream slice.
+                        eofReconnects = 0
+                        initial = false
+                        onUpdate(StreamUpdate.Reconnecting(reconnectAttempt))
+                        continue
+                    }
+                    StreamEndReason.UnexpectedEof -> {
+                        if (runId == null) {
+                            initial = false
+                            recoveringInitialRun = true
+                            continue
+                        }
+                        if (eofReconnects >= streamReconnectPolicy.maxUnexpectedEofReconnects) {
+                            return@withContext StreamResult.RetryableDisconnect(
+                                runId = runId,
+                                lastEventId = lastEventId,
+                                reconnectAttempt = reconnectAttempt,
+                            )
+                        }
+                        eofReconnects += 1
+                        reconnectAttempt += 1
+                        initial = false
+                        onUpdate(StreamUpdate.Reconnecting(reconnectAttempt))
+                        delay(reconnectDelay(reconnectAttempt))
+                    }
+                }
             } catch (error: IOException) {
                 if (call.isCanceled()) throw CancellationException("Stream cancelled", error)
-                if (initial && runId == null) {
+                if (runId == null) {
+                    initial = false
                     recoveringInitialRun = true
-                    initialFailure = error
-                    attempt = 1
-                    onUpdate(StreamUpdate.Reconnecting(attempt))
-                    delay(RECONNECT_DELAY_MS * attempt)
                     continue
                 }
-                if (runId == null || attempt >= MAX_NETWORK_RECONNECTS) throw error
+                if (eofReconnects >= streamReconnectPolicy.maxNetworkReconnects) {
+                    return@withContext StreamResult.RetryableDisconnect(
+                        runId = runId,
+                        lastEventId = lastEventId,
+                        reconnectAttempt = reconnectAttempt,
+                    )
+                }
+                eofReconnects += 1
+                reconnectAttempt += 1
+                initial = false
+                onUpdate(StreamUpdate.Reconnecting(reconnectAttempt))
+                delay(reconnectDelay(reconnectAttempt))
             } finally {
                 if (activeCall === call) activeCall = null
             }
-            initial = false
-            attempt += 1
-            onUpdate(StreamUpdate.Reconnecting(attempt))
-            delay(RECONNECT_DELAY_MS * attempt)
         }
+        error("Stream loop exited unexpectedly.")
     }
 
-    private suspend fun recoverInitialRun(threadId: String, clientMessageId: String): InitialRunRecovery? {
-        val activeRun = runCatching { latestActiveRun(threadId) }.getOrNull()
-        if (activeRun != null) return InitialRunRecovery.Active(activeRun.runId)
-
-        val snapshot = runCatching { threadState(threadId) }.getOrNull() ?: return null
-        return if (snapshot.messages.any { it.id == clientMessageId }) InitialRunRecovery.Completed else null
+    private suspend fun recoverInitialRun(threadId: String): InitialRunRecovery {
+        // The run list carries the authoritative lifecycle. A state snapshot containing the
+        // optimistic user message only proves that the POST may have reached the server; it does
+        // not prove the run completed and must not clear the local resume record.
+        val run = try {
+            latestRun(threadId)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            null
+        } ?: return InitialRunRecovery.Unknown
+        return when {
+            run.status.active -> InitialRunRecovery.Active(run)
+            run.status.terminal -> InitialRunRecovery.Terminal(run)
+            else -> InitialRunRecovery.Unknown
+        }
     }
 
     suspend fun cancelRun(threadId: String, runId: String) {
         request("POST", "/api/threads/${pathSegment(threadId)}/runs/${pathSegment(runId)}/cancel?wait=false&action=interrupt", "")
     }
 
-    suspend fun latestActiveRun(threadId: String): GatewayRunInfo? {
+    suspend fun getRun(threadId: String, runId: String): GatewayRunInfo {
+        val payload = JSONObject(
+            request("GET", "/api/threads/${pathSegment(threadId)}/runs/${pathSegment(runId)}"),
+        )
+        return payload.toGatewayRunInfo() ?: throw ApiException(502, "The Gateway returned an invalid run record.")
+    }
+
+    suspend fun latestRun(threadId: String): GatewayRunInfo? = listRuns(threadId).firstOrNull()
+
+    suspend fun latestActiveRun(threadId: String): GatewayRunInfo? =
+        listRuns(threadId).firstOrNull { it.status.active }
+
+    private suspend fun listRuns(threadId: String): List<GatewayRunInfo> {
         val payload = JSONArray(request("GET", "/api/threads/${pathSegment(threadId)}/runs"))
         return (0 until payload.length())
             .asSequence()
             .mapNotNull { index -> payload.optJSONObject(index) }
-            .mapNotNull { item ->
-                val runId = item.optString("run_id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                GatewayRunInfo(runId, item.optString("status"))
-            }
-            .firstOrNull { it.status == "pending" || it.status == "running" }
+            .mapNotNull(JSONObject::toGatewayRunInfo)
+            .toList()
     }
+
+    private fun reconnectDelay(attempt: Int): Long =
+        streamReconnectPolicy.reconnectDelayMs * attempt.coerceIn(1, MAX_RECONNECT_DELAY_MULTIPLIER)
 
     fun cancelActiveStream() {
         activeCall?.cancel()
@@ -743,7 +1024,7 @@ class DeerFlowApi(
             .apply { lastEventId?.let { header("Last-Event-ID", it) } }
             .build()
 
-    private fun readEventStream(
+    internal fun readEventStream(
         input: InputStream,
         maxBytes: Long?,
         maxDurationMs: Long?,
@@ -948,6 +1229,10 @@ class DeerFlowApi(
 
     private fun formEncode(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.name())
     private fun pathSegment(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.name())
+    private fun artifactUrl(threadId: String, path: String): String {
+        val encodedPath = path.trimStart('/').split('/').joinToString("/") { pathSegment(it) }
+        return url("/api/threads/${pathSegment(threadId)}/artifacts/$encodedPath?download=true")
+    }
     private fun url(path: String): String = "$serverUrl$path"
 
     private fun apiError(status: Int, payload: String): ApiException {
@@ -997,20 +1282,40 @@ class DeerFlowApi(
     companion object {
         private val STATE_CHANGING_METHODS = setOf("POST", "PUT", "PATCH", "DELETE")
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaTypeOrNull()
-        private const val MAX_UNEXPECTED_EOF_RECONNECTS = 1
-        // 700 ms linear backoff gives a transient network switch about seven seconds to recover.
-        private const val MAX_NETWORK_RECONNECTS = 4
-        private const val MAX_INITIAL_RUN_RECOVERY_ATTEMPTS = 4
-        private const val RECONNECT_DELAY_MS = 700L
-        private const val MAX_RESUME_BYTES = 256L * 1024L
-        private const val MAX_RESUME_DURATION_MS = 30_000L
-        private const val MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
+        private const val MAX_RECONNECT_DELAY_MULTIPLIER = 8
     }
 }
 
-private enum class StreamEndReason { EndEvent, UnexpectedEof, ResumeByteLimit, ResumeTimeLimit }
+internal suspend fun copyArtifactStream(
+    input: InputStream,
+    output: OutputStream,
+    expectedLength: Long,
+    maxBytes: Long = MAX_ARTIFACT_DOWNLOAD_BYTES,
+    onBytesWritten: (Long) -> Unit = {},
+): Long {
+    if (expectedLength > maxBytes) throw artifactDownloadLimitError()
+    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+    var bytesWritten = 0L
+    while (true) {
+        currentCoroutineContext().ensureActive()
+        val count = input.read(buffer)
+        if (count < 0) break
+        if (count == 0) continue
+        if (count.toLong() > maxBytes - bytesWritten) throw artifactDownloadLimitError()
+        output.write(buffer, 0, count)
+        bytesWritten += count
+        onBytesWritten(bytesWritten)
+    }
+    output.flush()
+    if (expectedLength >= 0L && bytesWritten != expectedLength) {
+        throw IOException("Artifact download ended before the declared Content-Length.")
+    }
+    return bytesWritten
+}
 
-private data class StreamReadResult(val reason: StreamEndReason, val bytesRead: Long)
+internal enum class StreamEndReason { EndEvent, UnexpectedEof, ResumeByteLimit, ResumeTimeLimit }
+
+internal data class StreamReadResult(val reason: StreamEndReason, val bytesRead: Long)
 
 private class CountingInputStream(input: InputStream) : FilterInputStream(input) {
     var bytesRead: Long = 0

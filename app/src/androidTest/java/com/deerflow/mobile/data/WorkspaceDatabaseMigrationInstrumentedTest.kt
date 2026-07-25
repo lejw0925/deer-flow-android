@@ -167,7 +167,42 @@ class WorkspaceDatabaseMigrationInstrumentedTest {
     }
 
     @Test
-    fun migrationFrom1To4RunsTheCompleteProductionChain() {
+    fun migrationFrom4To5PreservesRunCoordinatesAndAddsClientMessageId() {
+        val databaseName = "workspace-migration-${UUID.randomUUID()}.db"
+        val serverUrl = "https://migration.example.test"
+        val threadId = "thread-v4"
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+
+        try {
+            helper.createDatabase(databaseName, 4).apply {
+                execSQL(
+                    "INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?)",
+                    arrayOf(serverUrl, threadId, "run-v4", "event-v4", RunStatus.Reconnecting.name, 1_753_000_000_005L),
+                )
+                close()
+            }
+
+            val migrated = helper.runMigrationsAndValidate(
+                databaseName,
+                5,
+                true,
+                WorkspaceDatabase.MIGRATION_4_5,
+            )
+            try {
+                assertEquals("run-v4", migrated.singleString("SELECT runId FROM runs"))
+                assertEquals("event-v4", migrated.singleString("SELECT lastEventId FROM runs"))
+                assertEquals(null, migrated.singleNullableString("SELECT clientMessageId FROM runs"))
+                assertTrue(migrated.hasColumns("runs", RUN_COLUMNS))
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun migrationFrom1To5RunsTheCompleteProductionChain() {
         val databaseName = "workspace-migration-${UUID.randomUUID()}.db"
         val context = InstrumentationRegistry.getInstrumentation().targetContext
 
@@ -200,11 +235,12 @@ class WorkspaceDatabaseMigrationInstrumentedTest {
 
             val migrated = helper.runMigrationsAndValidate(
                 databaseName,
-                4,
+                5,
                 true,
                 WorkspaceDatabase.MIGRATION_1_2,
                 WorkspaceDatabase.MIGRATION_2_3,
                 WorkspaceDatabase.MIGRATION_3_4,
+                WorkspaceDatabase.MIGRATION_4_5,
             )
             try {
                 assertEquals("Chain migration", migrated.singleString("SELECT title FROM threads"))
@@ -213,6 +249,7 @@ class WorkspaceDatabaseMigrationInstrumentedTest {
                 assertTrue(migrated.hasColumns("attachments", ATTACHMENT_COLUMNS))
                 assertTrue(migrated.hasColumns("workspace_metadata", METADATA_COLUMNS))
                 assertTrue(migrated.hasColumns("messages", MESSAGE_COLUMNS))
+                assertTrue(migrated.hasColumns("runs", RUN_COLUMNS))
             } finally {
                 migrated.close()
             }
@@ -264,6 +301,15 @@ class WorkspaceDatabaseMigrationInstrumentedTest {
             "role",
             "text",
             "payloadJson",
+        )
+        val RUN_COLUMNS = setOf(
+            "serverUrl",
+            "threadId",
+            "runId",
+            "lastEventId",
+            "clientMessageId",
+            "status",
+            "updatedAt",
         )
     }
 }

@@ -6,6 +6,8 @@ import com.deerflow.mobile.data.ApiException
 import com.deerflow.mobile.data.ChatMessage
 import com.deerflow.mobile.data.confirmsPendingUserMessage
 import com.deerflow.mobile.data.DeerFlowApi
+import com.deerflow.mobile.data.GatewayRunInfo
+import com.deerflow.mobile.data.GatewayRunStatus
 import com.deerflow.mobile.data.HumanInputResponse
 import com.deerflow.mobile.data.RegeneratePreparation
 import com.deerflow.mobile.data.RunOptions
@@ -13,6 +15,7 @@ import com.deerflow.mobile.data.RunState
 import com.deerflow.mobile.data.RunStatus
 import com.deerflow.mobile.data.SettingsStore
 import com.deerflow.mobile.data.StreamUpdate
+import com.deerflow.mobile.data.StreamResult
 import com.deerflow.mobile.data.ThreadSnapshot
 import com.deerflow.mobile.data.TodoItem
 import com.deerflow.mobile.data.UploadedFileInfo
@@ -22,7 +25,6 @@ import com.deerflow.mobile.data.mergeStreamChunk
 import com.deerflow.mobile.data.mergeStreamPatch
 import com.deerflow.mobile.data.mergeStreamSnapshot
 import com.deerflow.mobile.data.projectVisibleMessages
-import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -69,6 +71,13 @@ data class CoordinatedRunState(
     /** The UI sees canonical server history plus a single unconfirmed outgoing message. */
     val messages: List<ChatMessage>
         get() = projectVisibleMessages(serverMessages, pendingUserMessage, pendingUserIndex)
+}
+
+private sealed interface ResumePreflight {
+    data class Active(val run: GatewayRunInfo) : ResumePreflight
+    data class Terminal(val run: GatewayRunInfo) : ResumePreflight
+    data object Missing : ResumePreflight
+    data object Unknown : ResumePreflight
 }
 
 /** Holds the newest merged text state until the next UI publication window. */
@@ -122,7 +131,10 @@ class RunCoordinator private constructor(context: Context) {
             serverUrl = request.serverUrl,
             threadId = request.threadId,
             title = request.title,
-            run = RunState(RunStatus.Connecting),
+            run = RunState(
+                status = RunStatus.Connecting,
+                clientMessageId = request.clientMessageId,
+            ),
             serverMessages = serverMessages,
             pendingUserMessage = pending,
             pendingUserIndex = pending?.let { request.initialMessages.indexOf(it) },
@@ -147,39 +159,59 @@ class RunCoordinator private constructor(context: Context) {
         }
 
         val api = DeerFlowApi(serverUrl, WebViewSessionCookieStore())
-        val resumable = resolveResumableRun(api, threadId, saved)
-        if (resumable == null) {
-            val snapshot = runCatching { api.threadState(threadId) }.getOrNull()
-            cache.saveRun(serverUrl, threadId, RunState())
-            snapshot?.let {
-                cache.saveMessages(serverUrl, threadId, it.messages)
-                mutableState.value = CoordinatedRunState(
-                    serverUrl = serverUrl,
-                    threadId = threadId,
-                    title = it.title,
-                    run = RunState(),
-                    serverMessages = it.messages,
-                    todos = it.todos,
-                    artifacts = it.artifacts,
-                )
-            }
-            return@withLock false
-        }
-
         val request = CoordinatedRunRequest(
             serverUrl = serverUrl,
             threadId = threadId,
             title = title,
             message = "",
             options = RunOptions(),
+            clientMessageId = saved.clientMessageId ?: java.util.UUID.randomUUID().toString(),
             initialMessages = cache.loadMessages(serverUrl, threadId),
         )
+        val initial = CoordinatedRunState(
+            serverUrl = serverUrl,
+            threadId = threadId,
+            title = title,
+            run = saved.copy(status = RunStatus.Reconnecting),
+            serverMessages = request.initialMessages,
+        )
+        // Publish a recovery owner before the terminal preflight. A terminal response must still
+        // be able to clear the Room row when this process has no prior in-memory coordinator.
         clearPendingChunks()
+        mutableState.value = initial
+        val resumable = when (val preflight = preflightRun(api, threadId, saved)) {
+            is ResumePreflight.Active -> resumableRun(saved, preflight.run.runId)?.copy(
+                status = RunStatus.Reconnecting,
+                gatewayStatus = preflight.run.status,
+            ) ?: saved.copy(
+                status = RunStatus.Reconnecting,
+                runId = preflight.run.runId,
+                lastEventId = null,
+                gatewayStatus = preflight.run.status,
+            )
+            is ResumePreflight.Terminal -> {
+                finishTerminal(
+                    api = api,
+                    request = request,
+                    current = initial,
+                    gatewayStatus = preflight.run.status,
+                    stopReason = preflight.run.stopReason,
+                    updateService = false,
+                )
+                return@withLock false
+            }
+            ResumePreflight.Missing -> {
+                finishMissingRun(api, request, initial)
+                return@withLock false
+            }
+            ResumePreflight.Unknown -> saved.copy(status = RunStatus.Reconnecting)
+        }
+
         val reconnecting = CoordinatedRunState(
             serverUrl = serverUrl,
             threadId = threadId,
             title = title,
-            run = resumable.copy(status = RunStatus.Reconnecting),
+            run = resumable,
             serverMessages = request.initialMessages,
         )
         mutableState.value = reconnecting
@@ -266,68 +298,256 @@ class RunCoordinator private constructor(context: Context) {
         streamJob = scope.launch {
             val owningJob = coroutineContext[Job]
             try {
-                RunService.update(
-                    appContext,
-                    if (resume == null) RunProgress.Connecting else RunProgress.Reconnecting,
-                    request.title,
-                )
-                api.streamMessage(
-                    threadId = request.threadId,
-                    message = request.message,
-                    options = request.options,
-                    clientMessageId = request.clientMessageId,
-                    files = request.files,
-                    resume = resume,
-                    humanInputResponse = request.humanInputResponse,
-                    regenerate = request.regenerate,
-                    onUpdate = { update -> applyStreamUpdate(request, update) },
-                )
-                flushPendingChunks(request.serverUrl, request.threadId)
-                val previous = mutableState.value ?: return@launch
-                if (previous.serverUrl != request.serverUrl || previous.threadId != request.threadId) return@launch
-                val snapshot = awaitTerminalSnapshot(api, request, previous)
-                if (
-                    previous.run.status == RunStatus.Failed &&
-                    !snapshotCompletesClientMessage(snapshot, request.clientMessageId)
-                ) {
-                    persist(previous)
-                    return@launch
-                }
-                val completed = completeWithSnapshot(previous, snapshot)
-                logUnconfirmedPending(previous, completed)
-                persistAndPublish(completed, clearRun = true)
-                RunService.complete(appContext, completed.title)
-            } catch (_: CancellationException) {
-                // Explicit stop or server change owns the visible terminal state.
-            } catch (error: Exception) {
-                flushPendingChunks(request.serverUrl, request.threadId)
-                val previous = mutableState.value ?: return@launch
-                if (previous.serverUrl != request.serverUrl || previous.threadId != request.threadId) return@launch
-                if (resume != null && error.isTerminalResumeError()) {
-                    val snapshot = runCatching { api.threadState(request.threadId) }.getOrNull()
-                    if (snapshot != null) {
-                        val completed = completeWithSnapshot(previous, snapshot)
-                        logUnconfirmedPending(previous, completed)
-                        persistAndPublish(completed, clearRun = true)
-                        RunService.complete(appContext, completed.title)
-                        return@launch
+                var resumeState = resume
+                while (true) {
+                    when (val preflight = resumeState?.let { preflightRun(api, request.threadId, it) }) {
+                        is ResumePreflight.Active -> {
+                            val existing = resumeState ?: return@launch
+                            val activeRun = resumableRun(existing, preflight.run.runId)?.copy(
+                                status = RunStatus.Reconnecting,
+                                gatewayStatus = preflight.run.status,
+                            ) ?: existing.copy(
+                                status = RunStatus.Reconnecting,
+                                runId = preflight.run.runId,
+                                lastEventId = null,
+                                gatewayStatus = preflight.run.status,
+                            )
+                            resumeState = retainReconnecting(request, activeRun)
+                        }
+                        is ResumePreflight.Terminal -> {
+                            val current = currentRunState(request) ?: return@launch
+                            finishTerminal(
+                                api = api,
+                                request = request,
+                                current = current,
+                                gatewayStatus = preflight.run.status,
+                                stopReason = preflight.run.stopReason,
+                            )
+                            return@launch
+                        }
+                        ResumePreflight.Missing -> {
+                            val current = currentRunState(request) ?: return@launch
+                            finishMissingRun(api, request, current)
+                            return@launch
+                        }
+                        ResumePreflight.Unknown,
+                        null -> Unit
+                    }
+
+                    RunService.update(
+                        appContext,
+                        if (resumeState == null) RunProgress.Connecting else RunProgress.Reconnecting,
+                        request.title,
+                    )
+                    val result = try {
+                        api.streamMessage(
+                            threadId = request.threadId,
+                            message = request.message,
+                            options = request.options,
+                            clientMessageId = request.clientMessageId,
+                            files = request.files,
+                            resume = resumeState,
+                            humanInputResponse = request.humanInputResponse,
+                            regenerate = request.regenerate,
+                            onUpdate = { update -> applyStreamUpdate(request, update) },
+                        )
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        flushPendingChunks(request.serverUrl, request.threadId)
+                        val current = currentRunState(request) ?: return@launch
+                        resumeState = retainReconnecting(
+                            request,
+                            current.run.copy(
+                                status = RunStatus.Reconnecting,
+                                reconnectAttempt = current.run.reconnectAttempt + 1,
+                            ),
+                        )
+                        delay(reconnectDelay(resumeState?.reconnectAttempt ?: 1))
+                        continue
+                    }
+
+                    flushPendingChunks(request.serverUrl, request.threadId)
+                    val current = currentRunState(request) ?: return@launch
+                    when (result) {
+                        is StreamResult.TerminalEnd -> {
+                            val serverRun = result.runId?.let { runId ->
+                                try {
+                                    api.getRun(request.threadId, runId)
+                                } catch (error: CancellationException) {
+                                    throw error
+                                } catch (_: Exception) {
+                                    null
+                                }
+                            }
+                            val gatewayStatus = serverRun?.status?.takeIf { it.terminal }
+                                ?: result.gatewayStatus.takeIf { it.terminal }
+                                ?: current.error?.let { GatewayRunStatus.Error }
+                                ?: GatewayRunStatus.Unknown
+                            finishTerminal(
+                                api = api,
+                                request = request,
+                                current = current,
+                                gatewayStatus = gatewayStatus,
+                                stopReason = serverRun?.stopReason,
+                            )
+                            return@launch
+                        }
+                        is StreamResult.RetryableDisconnect -> {
+                            val reconnecting = current.run.copy(
+                                status = RunStatus.Reconnecting,
+                                runId = result.runId ?: current.run.runId,
+                                lastEventId = result.lastEventId ?: current.run.lastEventId,
+                                reconnectAttempt = maxOf(current.run.reconnectAttempt, result.reconnectAttempt, 1),
+                            )
+                            resumeState = retainReconnecting(request, reconnecting)
+                            delay(reconnectDelay(resumeState?.reconnectAttempt ?: 1))
+                        }
+                        is StreamResult.HttpFailure -> {
+                            if (result.statusCode == 404) {
+                                finishMissingRun(api, request, current)
+                                return@launch
+                            }
+                            val reconnecting = current.run.copy(
+                                status = RunStatus.Reconnecting,
+                                runId = result.runId ?: current.run.runId,
+                                lastEventId = result.lastEventId ?: current.run.lastEventId,
+                                reconnectAttempt = current.run.reconnectAttempt + 1,
+                            )
+                            // A 409 can be a different worker owning the stream. Its run status is
+                            // polled before the next join rather than being treated as terminal.
+                            resumeState = retainReconnecting(request, reconnecting)
+                            delay(reconnectDelay(resumeState?.reconnectAttempt ?: 1))
+                        }
                     }
                 }
-                val message = error.userMessage(request.serverUrl, "The run stopped unexpectedly.")
-                val failed = previous.copy(
-                    run = RunState(RunStatus.Failed),
-                    serverMessages = (request.failureMessages ?: previous.serverMessages).map { it.copy(isStreaming = false) },
-                    error = message,
-                    revision = previous.revision + 1,
-                )
-                persistAndPublish(failed)
-                RunService.fail(appContext, message, failed.title)
+            } catch (_: CancellationException) {
+                // Explicit stop or server change owns the visible terminal state.
             } finally {
                 if (streamJob === owningJob) streamJob = null
                 if (activeApi === api) activeApi = null
             }
         }
     }
+
+    private fun currentRunState(request: CoordinatedRunRequest): CoordinatedRunState? =
+        mutableState.value?.takeIf {
+            it.serverUrl == request.serverUrl && it.threadId == request.threadId
+        }
+
+    private suspend fun preflightRun(
+        api: DeerFlowApi,
+        threadId: String,
+        saved: RunState,
+    ): ResumePreflight {
+        val knownRunId = saved.runId
+        if (!knownRunId.isNullOrBlank()) {
+            val run = try {
+                api.getRun(threadId, knownRunId)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: ApiException) {
+                return if (error.statusCode == 404) ResumePreflight.Missing else ResumePreflight.Unknown
+            } catch (_: Exception) {
+                return ResumePreflight.Unknown
+            }
+            return run.toResumePreflight()
+        }
+
+        val latest = try {
+            api.latestRun(threadId)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            null
+        } ?: return ResumePreflight.Unknown
+        return latest.toResumePreflight()
+    }
+
+    private fun GatewayRunInfo.toResumePreflight(): ResumePreflight = when {
+        status.active -> ResumePreflight.Active(this)
+        status.terminal -> ResumePreflight.Terminal(this)
+        else -> ResumePreflight.Unknown
+    }
+
+    private suspend fun retainReconnecting(
+        request: CoordinatedRunRequest,
+        run: RunState,
+    ): RunState? {
+        val current = currentRunState(request) ?: return null
+        val retained = run.copy(
+            status = RunStatus.Reconnecting,
+            clientMessageId = run.clientMessageId ?: current.run.clientMessageId,
+        )
+        val next = current.copy(run = retained, revision = current.revision + 1)
+        persistAndPublish(next)
+        RunService.update(appContext, runProgressUpdate(RunProgress.Reconnecting, next.todos), next.title)
+        return retained
+    }
+
+    private suspend fun finishTerminal(
+        api: DeerFlowApi,
+        request: CoordinatedRunRequest,
+        current: CoordinatedRunState,
+        gatewayStatus: GatewayRunStatus,
+        stopReason: String?,
+        updateService: Boolean = true,
+    ) {
+        val snapshot = try {
+            awaitTerminalSnapshot(api, request, current, updateService = updateService)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            null
+        }
+        val terminalError = terminalErrorMessage(gatewayStatus, stopReason, current.error)
+        val completed = snapshot?.let {
+            completeWithSnapshot(current, it, gatewayStatus, terminalError)
+        } ?: completeWithoutSnapshot(current, gatewayStatus, terminalError)
+        logUnconfirmedPending(current, completed)
+        persistAndPublish(completed, clearRun = true)
+        when (gatewayStatus) {
+            GatewayRunStatus.Error,
+            GatewayRunStatus.Timeout,
+            GatewayRunStatus.Interrupted,
+            -> RunService.fail(appContext, terminalError ?: "The run failed.", completed.title)
+            else -> RunService.complete(appContext, completed.title)
+        }
+    }
+
+    private suspend fun finishMissingRun(
+        api: DeerFlowApi,
+        request: CoordinatedRunRequest,
+        current: CoordinatedRunState,
+    ) {
+        val snapshot = try {
+            api.threadState(request.threadId)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            null
+        }
+        val completed = snapshot?.let {
+            completeWithSnapshot(current, it, GatewayRunStatus.Unknown, null)
+        } ?: completeWithoutSnapshot(current, GatewayRunStatus.Unknown, null)
+        logUnconfirmedPending(current, completed)
+        persistAndPublish(completed, clearRun = true)
+        RunService.complete(appContext, completed.title)
+    }
+
+    private fun terminalErrorMessage(
+        gatewayStatus: GatewayRunStatus,
+        stopReason: String?,
+        streamedError: String?,
+    ): String? = when (gatewayStatus) {
+        GatewayRunStatus.Error -> stopReason ?: streamedError ?: "The run failed."
+        GatewayRunStatus.Timeout -> stopReason ?: streamedError ?: "The run timed out."
+        GatewayRunStatus.Interrupted -> stopReason ?: streamedError ?: "The run was interrupted."
+        else -> null
+    }
+
+    private fun reconnectDelay(attempt: Int): Long =
+        RECONNECT_DELAY_MS * attempt.coerceIn(1, MAX_RECONNECT_DELAY_MULTIPLIER)
 
     private fun applyStreamUpdate(request: CoordinatedRunRequest, update: StreamUpdate) {
         if (update is StreamUpdate.MessageChunk) {
@@ -339,19 +559,17 @@ class RunCoordinator private constructor(context: Context) {
         val current = mutableState.value ?: return
         if (current.serverUrl != request.serverUrl || current.threadId != request.threadId) return
         val next = reduceRunState(current, update)
-        // launchStream publishes Idle after the final snapshot and Room cleanup commit together.
-        val deferSuccessfulFinish = update == StreamUpdate.Finished && current.run.status != RunStatus.Failed
-        if (!deferSuccessfulFinish) {
-            mutableState.value = next
-            scope.launch { persist(next) }
-        }
+        // `end` and SSE error frames are transport observations. The stream owner clears the
+        // active Room row only after it receives TerminalEnd or a terminal run preflight.
+        mutableState.value = next
+        scope.launch { persist(next) }
 
         when (update) {
             is StreamUpdate.Started -> RunService.update(appContext, runProgressUpdate(RunProgress.Working, next.todos), next.title)
             is StreamUpdate.Reconnecting -> RunService.update(appContext, runProgressUpdate(RunProgress.Reconnecting, next.todos), next.title)
             is StreamUpdate.Patch -> RunService.update(appContext, runProgressUpdate(RunProgress.Working, next.todos), next.title)
             StreamUpdate.Finished -> Unit
-            is StreamUpdate.Failure -> RunService.fail(appContext, update.message, next.title)
+            is StreamUpdate.Failure -> RunService.update(appContext, runProgressUpdate(RunProgress.Reconnecting, next.todos), next.title)
             is StreamUpdate.EventId -> Unit
             is StreamUpdate.MessageChunk -> error("Message chunks are buffered above")
         }
@@ -415,8 +633,9 @@ class RunCoordinator private constructor(context: Context) {
         api: DeerFlowApi,
         request: CoordinatedRunRequest,
         initial: CoordinatedRunState,
+        updateService: Boolean = true,
     ): ThreadSnapshot {
-        RunService.update(appContext, RunProgress.Finalizing, initial.title)
+        if (updateService) RunService.update(appContext, RunProgress.Finalizing, initial.title)
         // Let the Gateway commit its final checkpoint before consuming the normal one-shot state read.
         delay(TERMINAL_STATE_INITIAL_DELAY_MS)
         var snapshot = api.threadState(request.threadId)
@@ -437,10 +656,6 @@ class RunCoordinator private constructor(context: Context) {
         }
         Log.w("RunCoordinator", "Terminal state remained incomplete after ${TERMINAL_STATE_RETRY_DELAYS_MS.size} retries for ${request.threadId}.")
         return snapshot
-    }
-
-    private suspend fun resolveResumableRun(api: DeerFlowApi, threadId: String, saved: RunState): RunState? {
-        return resumableRun(saved, api.latestActiveRun(threadId)?.runId)
     }
 
     private suspend fun persist(state: CoordinatedRunState, clearRun: Boolean = false) {
@@ -466,16 +681,12 @@ class RunCoordinator private constructor(context: Context) {
         }
     }
 
-    private fun Exception.userMessage(serverUrl: String, fallback: String): String = when (this) {
-        is ApiException -> message
-        is IOException -> "$fallback Check $serverUrl."
-        else -> message?.takeIf { it.isNotBlank() } ?: fallback
-    }
-
     companion object {
         private const val CHUNK_UI_PUBLISH_INTERVAL_MS = 80L
         private const val TERMINAL_STATE_INITIAL_DELAY_MS = 1_000L
         private val TERMINAL_STATE_RETRY_DELAYS_MS = longArrayOf(500L, 1_000L, 2_000L)
+        private const val RECONNECT_DELAY_MS = 700L
+        private const val MAX_RECONNECT_DELAY_MULTIPLIER = 8
 
         @Volatile private var instance: RunCoordinator? = null
 
@@ -485,7 +696,12 @@ class RunCoordinator private constructor(context: Context) {
     }
 }
 
-internal fun completeWithSnapshot(current: CoordinatedRunState, snapshot: ThreadSnapshot): CoordinatedRunState {
+internal fun completeWithSnapshot(
+    current: CoordinatedRunState,
+    snapshot: ThreadSnapshot,
+    gatewayStatus: GatewayRunStatus = GatewayRunStatus.Unknown,
+    terminalError: String? = null,
+): CoordinatedRunState {
     val serverMessages = mergeStreamSnapshot(current.serverMessages, snapshot)
         .map { it.copy(isStreaming = false) }
     val confirmed = current.pendingUserMessage?.let { pending ->
@@ -493,15 +709,27 @@ internal fun completeWithSnapshot(current: CoordinatedRunState, snapshot: Thread
     } != false
     return current.copy(
         title = if (snapshot.hasTitle) snapshot.title else current.title,
-        run = RunState(),
+        run = RunState(gatewayStatus = gatewayStatus),
         serverMessages = serverMessages,
         pendingUserMessage = current.pendingUserMessage?.takeIf { !confirmed },
         pendingUserIndex = current.pendingUserIndex.takeIf { !confirmed },
         todos = if (snapshot.hasTodos) snapshot.todos else current.todos,
         artifacts = if (snapshot.hasArtifacts) snapshot.artifacts else current.artifacts,
+        error = terminalError,
         revision = current.revision + 1,
     )
 }
+
+internal fun completeWithoutSnapshot(
+    current: CoordinatedRunState,
+    gatewayStatus: GatewayRunStatus,
+    terminalError: String?,
+): CoordinatedRunState = current.copy(
+    run = RunState(gatewayStatus = gatewayStatus),
+    serverMessages = current.serverMessages.map { it.copy(isStreaming = false) },
+    error = terminalError,
+    revision = current.revision + 1,
+)
 
 /** True when the completed state still ends at a tool/reasoning step rather than an answer. */
 internal fun terminalSnapshotNeedsRetry(current: CoordinatedRunState, snapshot: ThreadSnapshot): Boolean {
@@ -569,9 +797,6 @@ internal fun resumableRun(saved: RunState, activeRunId: String?): RunState? = wh
     else -> null
 }
 
-private fun Exception.isTerminalResumeError(): Boolean =
-    this is ApiException && statusCode in setOf(404, 409)
-
 internal fun reduceRunState(current: CoordinatedRunState, update: StreamUpdate): CoordinatedRunState {
     val revision = current.revision + 1
     return when (update) {
@@ -584,7 +809,10 @@ internal fun reduceRunState(current: CoordinatedRunState, update: StreamUpdate):
             revision = revision,
         )
         is StreamUpdate.Reconnecting -> current.copy(
-            run = current.run.copy(status = RunStatus.Reconnecting, reconnectAttempt = update.attempt),
+            run = current.run.copy(
+                status = RunStatus.Reconnecting,
+                reconnectAttempt = maxOf(current.run.reconnectAttempt, update.attempt),
+            ),
             revision = revision,
         )
         is StreamUpdate.MessageChunk -> current.copy(
@@ -616,13 +844,11 @@ internal fun reduceRunState(current: CoordinatedRunState, update: StreamUpdate):
             )
         }
         is StreamUpdate.Failure -> current.copy(
-            run = RunState(RunStatus.Failed),
-            serverMessages = current.serverMessages.map { it.copy(isStreaming = false) },
+            run = current.run.copy(status = RunStatus.Reconnecting),
             error = update.message,
             revision = revision,
         )
         StreamUpdate.Finished -> current.copy(
-            run = if (current.run.status == RunStatus.Failed) current.run else RunState(),
             serverMessages = current.serverMessages.map { it.copy(isStreaming = false) },
             revision = revision,
         )
