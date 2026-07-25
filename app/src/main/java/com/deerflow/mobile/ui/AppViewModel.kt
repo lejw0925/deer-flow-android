@@ -1549,7 +1549,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val pending = composer.attachments
         mutableState.update {
             it.copy(
-                run = RunState(RunStatus.Connecting),
+                run = RunState(RunStatus.Connecting, startedAtEpochMs = System.currentTimeMillis()),
                 composer = it.composer.copy(uploading = pending.isNotEmpty()),
                 error = null,
             )
@@ -1667,7 +1667,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             optionId = optionId,
         )
         val message = "For your clarification \"${request.question}\", my answer is: $answer"
-        mutableState.update { it.copy(run = RunState(RunStatus.Connecting), error = null) }
+        mutableState.update {
+            it.copy(run = RunState(RunStatus.Connecting, startedAtEpochMs = System.currentTimeMillis()), error = null)
+        }
         viewModelScope.launch {
             runCoordinator.start(
                 CoordinatedRunRequest(
@@ -1729,7 +1731,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 mutableState.update {
                     it.copy(
                         messages = originalMessages.take(turn.firstMessageIndex),
-                        run = RunState(RunStatus.Connecting),
+                        run = RunState(RunStatus.Connecting, startedAtEpochMs = System.currentTimeMillis()),
                         messageActionBusy = false,
                     )
                 }
@@ -1811,7 +1813,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
             return
         }
-        val recovered = RunState(RunStatus.Reconnecting, runId = active.runId)
+        val recovered = RunState(
+            RunStatus.Reconnecting,
+            runId = active.runId,
+            startedAtEpochMs = System.currentTimeMillis(),
+        )
         cache.saveRun(api.serverUrl, threadId, recovered)
         mutableState.update { it.copy(run = recovered) }
         runCoordinator.resume(api.serverUrl, thread.id, thread.title, recovered)

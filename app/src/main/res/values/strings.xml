@@ -57,6 +57,12 @@
     <string name="run_completed">Completed</string>
     <string name="run_stopping">Stopping</string>
     <string name="run_failed">Run failed</string>
+    <string name="run_activity_working">Working…</string>
+    <string name="run_duration_less_than_second">&lt;1s</string>
+    <string name="run_duration_hours">%1$dh</string>
+    <string name="run_duration_minutes">%1$dm</string>
+    <string name="run_duration_seconds">%1$ds</string>
+    <string name="run_activity_elapsed">(%1$s)</string>
     <string name="chat_welcome">What should DeerFlow work on?</string>
     <string name="suggestion_research">Research a topic and give me a source-backed brief</string>
     <string name="suggestion_plan">Turn a goal into a concrete execution plan</string>

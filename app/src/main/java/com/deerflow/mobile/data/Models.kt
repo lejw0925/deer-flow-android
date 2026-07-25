@@ -218,9 +218,14 @@ data class RunState(
     val clientMessageId: String? = null,
     /** Retained after the local active-run row is cleared so the UI can show the real outcome. */
     val gatewayStatus: GatewayRunStatus = GatewayRunStatus.Unknown,
+    /** Wall-clock start of the current local active run; null when idle. */
+    val startedAtEpochMs: Long? = null,
 ) {
     val active: Boolean get() = status in setOf(RunStatus.Connecting, RunStatus.Streaming, RunStatus.Reconnecting, RunStatus.Stopping)
 }
+
+fun RunState.ensureStartedAt(now: Long = System.currentTimeMillis()): RunState =
+    if (startedAtEpochMs != null) this else copy(startedAtEpochMs = now)
 
 data class PendingAttachment(
     val uri: String,

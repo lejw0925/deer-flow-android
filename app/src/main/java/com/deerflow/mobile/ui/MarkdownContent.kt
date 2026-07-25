@@ -87,8 +87,9 @@ private fun MarkdownBlock(node: Node, onArtifact: (String) -> Unit) {
                 3 -> MaterialTheme.typography.titleMedium
                 else -> MaterialTheme.typography.titleSmall
             }.copy(fontWeight = FontWeight.SemiBold),
+            onArtifact = onArtifact,
         )
-        is Paragraph -> MarkdownInline(node, MaterialTheme.typography.bodyLarge, onArtifact)
+        is Paragraph -> MarkdownParagraph(node, onArtifact)
         is FencedCodeBlock -> MarkdownCode(node.literal, node.info.takeIf { it.isNotBlank() })
         is IndentedCodeBlock -> MarkdownCode(node.literal, null)
         is BlockQuote -> Row(Modifier.fillMaxWidth()) {
@@ -101,7 +102,45 @@ private fun MarkdownBlock(node: Node, onArtifact: (String) -> Unit) {
         is OrderedList -> MarkdownList(node, ordered = true, start = node.markerStartNumber, onArtifact = onArtifact)
         is TableBlock -> MarkdownTable(node, onArtifact)
         is ThematicBreak -> HorizontalDivider()
+        is Image -> MarkdownMessageImage(node.destination, node.title, onArtifact)
         else -> node.children().forEach { MarkdownBlock(it, onArtifact) }
+    }
+}
+
+@Composable
+private fun MarkdownParagraph(paragraph: Paragraph, onArtifact: (String) -> Unit) {
+    val children = paragraph.children().toList()
+    if (children.none { it is Image }) {
+        MarkdownInline(paragraph, MaterialTheme.typography.bodyLarge, onArtifact)
+        return
+    }
+    // Split paragraph around images so they render as block media like the web client.
+    val segments = mutableListOf<MutableList<Node>>()
+    var current = mutableListOf<Node>()
+    fun flush() {
+        if (current.isNotEmpty()) {
+            segments += current
+            current = mutableListOf()
+        }
+    }
+    children.forEach { child ->
+        if (child is Image) {
+            flush()
+            segments += mutableListOf(child)
+        } else {
+            current += child
+        }
+    }
+    flush()
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        segments.forEach { segment ->
+            val only = segment.singleOrNull()
+            if (only is Image) {
+                MarkdownMessageImage(only.destination, only.title, onArtifact)
+            } else {
+                MarkdownInlineNodes(segment, MaterialTheme.typography.bodyLarge, onArtifact)
+            }
+        }
     }
 }
 
@@ -170,11 +209,20 @@ private fun MarkdownCode(code: String, language: String?) {
 @Suppress("DEPRECATION")
 @Composable
 private fun MarkdownInline(node: Node, style: TextStyle, onArtifact: (String) -> Unit = {}) {
+    MarkdownInlineNodes(node.children().toList(), style, onArtifact)
+}
+
+@Suppress("DEPRECATION")
+@Composable
+private fun MarkdownInlineNodes(nodes: List<Node>, style: TextStyle, onArtifact: (String) -> Unit = {}) {
     val primary = MaterialTheme.colorScheme.primary
     val codeBackground = MaterialTheme.colorScheme.surfaceVariant
-    val value = remember(node, primary, codeBackground) {
-        buildAnnotatedString { appendInlineChildren(node, primary, codeBackground) }
+    val value = remember(nodes, primary, codeBackground) {
+        buildAnnotatedString {
+            nodes.forEach { appendInlineNode(it, primary, codeBackground) }
+        }
     }
+    if (value.isEmpty()) return
     val uriHandler = LocalUriHandler.current
     ClickableText(
         text = value,
@@ -188,42 +236,50 @@ private fun MarkdownInline(node: Node, style: TextStyle, onArtifact: (String) ->
     )
 }
 
-private fun String.isArtifactPath(): Boolean = startsWith("/mnt/") || startsWith("mnt/") || startsWith("sandbox:/mnt/")
+internal fun markdownImageLabel(title: String?, destination: String?): String {
+    val label = title?.takeIf { it.isNotBlank() } ?: destination.orEmpty()
+    return label
+}
 
-private fun AnnotatedString.Builder.appendInlineChildren(node: Node, primary: Color, codeBackground: Color) {
-    node.children().forEach { child ->
-        when (child) {
-            is MarkdownTextNode -> append(child.literal)
-            is Code -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeBackground)) { append(child.literal) }
-            is Emphasis -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { appendInlineChildren(child, primary, codeBackground) }
-            is StrongEmphasis -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { appendInlineChildren(child, primary, codeBackground) }
-            is Strikethrough -> withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { appendInlineChildren(child, primary, codeBackground) }
-            is Link -> {
-                val citation = child.citationSource()
-                if (citation != null) {
-                    withStyle(
-                        SpanStyle(
-                            color = primary,
-                            background = primary.copy(alpha = 0.14f),
-                            fontWeight = FontWeight.Medium,
-                        ),
-                    ) {
-                        append(" ${citation.title} ")
-                    }
-                } else {
-                    pushStringAnnotation("URL", child.destination)
-                    withStyle(SpanStyle(color = primary, textDecoration = TextDecoration.Underline)) {
-                        appendInlineChildren(child, primary, codeBackground)
-                    }
-                    pop()
-                }
-            }
-            is Image -> append(child.title.ifBlank { child.destination })
-            is SoftLineBreak -> append(' ')
-            is HardLineBreak -> append('\n')
-            is HtmlInline -> append(child.literal)
-            else -> appendInlineChildren(child, primary, codeBackground)
+private fun AnnotatedString.Builder.appendInlineNode(child: Node, primary: Color, codeBackground: Color) {
+    when (child) {
+        is MarkdownTextNode -> append(child.literal)
+        is Code -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = codeBackground)) { append(child.literal) }
+        is Emphasis -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
+            child.children().forEach { appendInlineNode(it, primary, codeBackground) }
         }
+        is StrongEmphasis -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+            child.children().forEach { appendInlineNode(it, primary, codeBackground) }
+        }
+        is Strikethrough -> withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) {
+            child.children().forEach { appendInlineNode(it, primary, codeBackground) }
+        }
+        is Link -> {
+            val citation = child.citationSource()
+            if (citation != null) {
+                withStyle(
+                    SpanStyle(
+                        color = primary,
+                        background = primary.copy(alpha = 0.14f),
+                        fontWeight = FontWeight.Medium,
+                    ),
+                ) {
+                    append(" ${citation.title} ")
+                }
+            } else {
+                pushStringAnnotation("URL", child.destination)
+                withStyle(SpanStyle(color = primary, textDecoration = TextDecoration.Underline)) {
+                    child.children().forEach { appendInlineNode(it, primary, codeBackground) }
+                }
+                pop()
+            }
+        }
+        // Images are rendered as block media by MarkdownParagraph / MarkdownBlock.
+        is Image -> Unit
+        is SoftLineBreak -> append(' ')
+        is HardLineBreak -> append('\n')
+        is HtmlInline -> append(child.literal)
+        else -> child.children().forEach { appendInlineNode(it, primary, codeBackground) }
     }
 }
 

@@ -94,9 +94,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -212,18 +213,30 @@ fun ChatScreen(
             when {
                 state.loadingChat -> LoadingIndicator(Modifier.size(32.dp))
                 state.messages.isEmpty() -> ChatWelcome(onSuggestion = viewModel::updateDraft)
-                else -> ConversationMessageList(
-                    conversationKey = state.selectedThread?.id,
-                    messages = state.messages,
-                    runActive = state.run.active,
-                    actionBusy = state.messageActionBusy,
-                    onHumanInput = viewModel::submitHumanInput,
-                    onCopy = { viewModel.showNotice(context.getString(R.string.copied_to_clipboard)) },
-                    onBranch = viewModel::branchConversation,
-                    onArtifact = viewModel::openArtifact,
-                    modifier = Modifier.fillMaxSize().widthIn(max = 900.dp),
-                )
+                else -> ProvideMarkdownImageContext(
+                    MarkdownImageContext(
+                        serverUrl = state.serverUrl,
+                        threadId = state.selectedThread?.id.orEmpty(),
+                        artifactPaths = state.artifacts,
+                        onOpenArtifact = viewModel::openArtifact,
+                    ),
+                ) {
+                    ConversationMessageList(
+                        conversationKey = state.selectedThread?.id,
+                        messages = state.messages,
+                        runActive = state.run.active,
+                        actionBusy = state.messageActionBusy,
+                        onHumanInput = viewModel::submitHumanInput,
+                        onCopy = { viewModel.showNotice(context.getString(R.string.copied_to_clipboard)) },
+                        onBranch = viewModel::branchConversation,
+                        onArtifact = viewModel::openArtifact,
+                        modifier = Modifier.fillMaxSize().widthIn(max = 900.dp),
+                    )
+                }
             }
+        }
+        if (state.run.active && state.selectedThread != null) {
+            RunActivityRow(startedAtEpochMs = state.run.startedAtEpochMs)
         }
         MessageComposer(
             state = state,
@@ -323,18 +336,55 @@ internal fun ConversationMessageList(
     val messageGroups = remember(messages) { groupChatMessages(messages) }
     var expandedProcessingGroups by remember(conversationKey) { mutableStateOf(emptySet<String>()) }
     var initialPositionRestored by remember(conversationKey) { mutableStateOf(false) }
+    var userPinnedToBottom by remember(conversationKey) { mutableStateOf(true) }
+    var programmaticScroll by remember { mutableStateOf(false) }
     val autoFollowEnabled by rememberUpdatedState(
-        shouldAutoFollowConversation(messageGroups, runActive, expandedProcessingGroups),
+        shouldAutoFollowConversation(
+            messageGroups = messageGroups,
+            runActive = runActive,
+            expandedProcessingGroups = expandedProcessingGroups,
+            userPinnedToBottom = userPinnedToBottom,
+        ),
     )
 
-    LaunchedEffect(conversationKey, messageGroups.size, messages.lastOrNull()?.text?.length) {
-        if (messageGroups.isNotEmpty()) {
-            if (!initialPositionRestored) {
-                listState.scrollToItem(messageGroups.lastIndex)
+    LaunchedEffect(listState, conversationKey) {
+        snapshotFlow {
+            Triple(
+                listState.isScrollInProgress,
+                listState.conversationNearBottom(),
+                programmaticScroll,
+            )
+        }.collect { (scrolling, nearBottom, programmatic) ->
+            // Ignore layout noise while we drive the list; growth during stream must not unpin.
+            if (programmatic) return@collect
+            when {
+                nearBottom -> userPinnedToBottom = true
+                // Only unpin from a settled user scroll away from bottom (not content growth).
+                !scrolling && !nearBottom -> userPinnedToBottom = false
+            }
+        }
+    }
+
+    LaunchedEffect(conversationKey, messageGroups.size, messages.lastOrNull()?.text?.length, userPinnedToBottom) {
+        if (messageGroups.isEmpty()) return@LaunchedEffect
+        if (!initialPositionRestored) {
+            programmaticScroll = true
+            try {
+                listState.scrollToConversationEnd(messageGroups.lastIndex, animated = false)
+                userPinnedToBottom = true
                 initialPositionRestored = true
-            } else if (autoFollowEnabled) {
-                delay(40)
-                listState.animateScrollToItem(messageGroups.lastIndex)
+            } finally {
+                programmaticScroll = false
+            }
+        } else if (autoFollowEnabled) {
+            delay(40)
+            programmaticScroll = true
+            try {
+                // Streaming follow keeps animation; scrollToConversationEnd avoids top-align flash.
+                listState.scrollToConversationEnd(messageGroups.lastIndex, animated = true)
+                userPinnedToBottom = true
+            } finally {
+                programmaticScroll = false
             }
         }
     }
@@ -371,10 +421,82 @@ internal fun shouldAutoFollowConversation(
     messageGroups: List<ChatMessageGroup>,
     runActive: Boolean,
     expandedProcessingGroups: Set<String>,
+    userPinnedToBottom: Boolean = true,
 ): Boolean {
-    if (messageGroups.isEmpty() || !runActive) return messageGroups.isNotEmpty()
+    if (!userPinnedToBottom || messageGroups.isEmpty()) return false
+    if (!runActive) return true
     val latestProcessingKey = messageGroups.lastOrNull { it is ChatMessageGroup.Processing }?.key
     return latestProcessingKey !in expandedProcessingGroups
+}
+
+internal fun isConversationNearBottom(
+    totalItems: Int,
+    lastVisibleIndex: Int,
+    lastVisibleOffset: Int,
+    lastVisibleSize: Int,
+    viewportEndOffset: Int,
+    canScrollForward: Boolean,
+    thresholdPx: Int = CONVERSATION_BOTTOM_THRESHOLD_PX,
+): Boolean {
+    if (totalItems <= 0) return true
+    // Primary signal: LazyList reports no further forward scroll (accounts for contentPadding).
+    if (!canScrollForward) return true
+    if (lastVisibleIndex < totalItems - 1) return false
+    val distanceFromBottom = (lastVisibleOffset + lastVisibleSize) - viewportEndOffset
+    return distanceFromBottom <= thresholdPx
+}
+
+internal fun conversationScrollOffsetForBottom(itemSize: Int, viewportSize: Int): Int =
+    (itemSize - viewportSize).coerceAtLeast(0)
+
+private const val CONVERSATION_BOTTOM_THRESHOLD_PX = 240
+
+private fun LazyListState.conversationNearBottom(thresholdPx: Int = CONVERSATION_BOTTOM_THRESHOLD_PX): Boolean {
+    val info = layoutInfo
+    if (info.totalItemsCount <= 0) return true
+    if (!canScrollForward) return true
+    val lastVisible = info.visibleItemsInfo.lastOrNull() ?: return true
+    return isConversationNearBottom(
+        totalItems = info.totalItemsCount,
+        lastVisibleIndex = lastVisible.index,
+        lastVisibleOffset = lastVisible.offset,
+        lastVisibleSize = lastVisible.size,
+        viewportEndOffset = info.viewportEndOffset,
+        canScrollForward = canScrollForward,
+        thresholdPx = thresholdPx,
+    )
+}
+
+/**
+ * Jump to the conversation end without a visible top-align flash.
+ * Prefer a single scrollToItem with a bottom-pinning offset when item size is known.
+ */
+private suspend fun LazyListState.scrollToConversationEnd(lastIndex: Int, animated: Boolean = false) {
+    if (lastIndex < 0) return
+    val viewportSize = (layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset).coerceAtLeast(0)
+    val known = layoutInfo.visibleItemsInfo.firstOrNull { it.index == lastIndex }
+    val targetOffset = if (known != null) {
+        conversationScrollOffsetForBottom(known.size, viewportSize)
+    } else {
+        // Last item not laid out yet: one jump with a large offset (LazyList clamps).
+        // Avoid scrollOffset=0 first, which pins the item top and flashes for tall bubbles.
+        Int.MAX_VALUE / 4
+    }
+    if (animated && known != null) {
+        animateScrollToItem(lastIndex, scrollOffset = targetOffset)
+    } else {
+        scrollToItem(lastIndex, scrollOffset = targetOffset)
+    }
+    // Correct after layout if the first jump used a fallback offset on a short last item.
+    val after = layoutInfo
+    val item = after.visibleItemsInfo.firstOrNull { it.index == lastIndex } ?: return
+    val corrected = conversationScrollOffsetForBottom(
+        itemSize = item.size,
+        viewportSize = (after.viewportEndOffset - after.viewportStartOffset).coerceAtLeast(0),
+    )
+    if (corrected != targetOffset && firstVisibleItemIndex == lastIndex) {
+        scrollToItem(lastIndex, scrollOffset = corrected)
+    }
 }
 
 @Composable

@@ -13,6 +13,7 @@ import com.deerflow.mobile.data.RegeneratePreparation
 import com.deerflow.mobile.data.RunOptions
 import com.deerflow.mobile.data.RunState
 import com.deerflow.mobile.data.RunStatus
+import com.deerflow.mobile.data.ensureStartedAt
 import com.deerflow.mobile.data.SettingsStore
 import com.deerflow.mobile.data.StreamUpdate
 import com.deerflow.mobile.data.StreamResult
@@ -134,6 +135,7 @@ class RunCoordinator private constructor(context: Context) {
             run = RunState(
                 status = RunStatus.Connecting,
                 clientMessageId = request.clientMessageId,
+                startedAtEpochMs = System.currentTimeMillis(),
             ),
             serverMessages = serverMessages,
             pendingUserMessage = pending,
@@ -172,7 +174,7 @@ class RunCoordinator private constructor(context: Context) {
             serverUrl = serverUrl,
             threadId = threadId,
             title = title,
-            run = saved.copy(status = RunStatus.Reconnecting),
+            run = saved.copy(status = RunStatus.Reconnecting).ensureStartedAt(),
             serverMessages = request.initialMessages,
         )
         // Publish a recovery owner before the terminal preflight. A terminal response must still
@@ -180,15 +182,17 @@ class RunCoordinator private constructor(context: Context) {
         clearPendingChunks()
         mutableState.value = initial
         val resumable = when (val preflight = preflightRun(api, threadId, saved)) {
-            is ResumePreflight.Active -> resumableRun(saved, preflight.run.runId)?.copy(
-                status = RunStatus.Reconnecting,
-                gatewayStatus = preflight.run.status,
-            ) ?: saved.copy(
-                status = RunStatus.Reconnecting,
-                runId = preflight.run.runId,
-                lastEventId = null,
-                gatewayStatus = preflight.run.status,
-            )
+            is ResumePreflight.Active -> (
+                resumableRun(saved, preflight.run.runId)?.copy(
+                    status = RunStatus.Reconnecting,
+                    gatewayStatus = preflight.run.status,
+                ) ?: saved.copy(
+                    status = RunStatus.Reconnecting,
+                    runId = preflight.run.runId,
+                    lastEventId = null,
+                    gatewayStatus = preflight.run.status,
+                )
+            ).ensureStartedAt()
             is ResumePreflight.Terminal -> {
                 finishTerminal(
                     api = api,
@@ -204,7 +208,7 @@ class RunCoordinator private constructor(context: Context) {
                 finishMissingRun(api, request, initial)
                 return@withLock false
             }
-            ResumePreflight.Unknown -> saved.copy(status = RunStatus.Reconnecting)
+            ResumePreflight.Unknown -> saved.copy(status = RunStatus.Reconnecting).ensureStartedAt()
         }
 
         val reconnecting = CoordinatedRunState(
@@ -478,7 +482,8 @@ class RunCoordinator private constructor(context: Context) {
         val retained = run.copy(
             status = RunStatus.Reconnecting,
             clientMessageId = run.clientMessageId ?: current.run.clientMessageId,
-        )
+            startedAtEpochMs = run.startedAtEpochMs ?: current.run.startedAtEpochMs,
+        ).ensureStartedAt()
         val next = current.copy(run = retained, revision = current.revision + 1)
         persistAndPublish(next)
         RunService.update(appContext, runProgressUpdate(RunProgress.Reconnecting, next.todos), next.title)
