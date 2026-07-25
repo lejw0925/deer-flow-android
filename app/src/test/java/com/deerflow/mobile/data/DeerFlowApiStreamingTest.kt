@@ -492,6 +492,59 @@ class DeerFlowApiStreamingTest {
     }
 
     @Test
+    fun decodesCustomSubagentLifecycleEvents() = runBlocking {
+        val server = ScriptedSseServer(
+            listOf(
+                sse(
+                    "event: custom\nid: task-start\ndata: {\"type\":\"task_started\",\"task_id\":\"task-1\",\"description\":\"Inspect the API\",\"model_name\":\"deerflow-pro\"}",
+                    "event: custom\nid: task-ai\ndata: {\"type\":\"task_running\",\"task_id\":\"task-1\",\"message_index\":1,\"model_name\":\"deerflow-pro\",\"message\":{\"type\":\"ai\",\"content\":[\"Read docs\",{\"text\":\"then compare contracts\"}],\"tool_calls\":[{\"name\":\"web_search\"}]}}",
+                    "event: custom\nid: task-tool\ndata: {\"type\":\"task_running\",\"task_id\":\"task-1\",\"message_index\":2,\"message\":{\"type\":\"tool\",\"name\":\"web_search\",\"content\":\"Found docs\"}}",
+                    "event: custom\nid: task-complete\ndata: {\"type\":\"task_completed\",\"task_id\":\"task-1\",\"result\":\"Contract verified\",\"model_name\":\"deerflow-pro\"}",
+                    "event: custom\nid: task-cancelled\ndata: {\"type\":\"task_cancelled\",\"task_id\":\"task-2\",\"error\":\"Stopped by user\"}",
+                    "event: end\nid: end-1\ndata: null",
+                ),
+            ),
+        )
+        try {
+            val updates = mutableListOf<StreamUpdate>()
+            DeerFlowApi(server.url, NoopSessionCookieStore).streamMessage(
+                threadId = "thread-1",
+                message = "Track a subagent",
+                options = RunOptions(),
+            ) { updates += it }
+
+            val progress = updates.filterIsInstance<StreamUpdate.SubagentProgress>()
+            assertEquals(5, progress.size)
+            assertEquals("Inspect the API", progress[0].description)
+            assertEquals("deerflow-pro", progress[0].modelName)
+            assertEquals(
+                MessageBlock.SubtaskStep(
+                    messageIndex = 1,
+                    kind = "ai",
+                    text = "Read docs\nthen compare contracts",
+                    toolCalls = listOf("web_search"),
+                ),
+                progress[1].step,
+            )
+            assertEquals(
+                MessageBlock.SubtaskStep(
+                    messageIndex = 2,
+                    kind = "tool",
+                    text = "Found docs",
+                    toolName = "web_search",
+                ),
+                progress[2].step,
+            )
+            assertEquals(MessageBlock.SubtaskStatus.Completed, progress[3].status)
+            assertEquals("Contract verified", progress[3].result)
+            assertEquals(MessageBlock.SubtaskStatus.Failed, progress[4].status)
+            assertEquals("Stopped by user", progress[4].error)
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test
     fun streamRequestUsesOnlyTheSelectedModelsSupportedOptions() = runBlocking {
         val server = ScriptedSseServer(
             listOf(
@@ -560,7 +613,7 @@ class DeerFlowApiStreamingTest {
             val request = server.requests.single()
             val payload = JSONObject(request.body)
             assertEquals("client-message-1", payload.getJSONObject("input").getJSONArray("messages").getJSONObject(0).getString("id"))
-            assertEquals(listOf("messages-tuple", "updates"), payload.getJSONArray("stream_mode").let { modes ->
+            assertEquals(listOf("messages-tuple", "updates", "custom"), payload.getJSONArray("stream_mode").let { modes ->
                 List(modes.length()) { modes.getString(it) }
             })
             assertFalse(payload.getBoolean("stream_subgraphs"))

@@ -158,6 +158,7 @@ dependencies {
     implementation("org.commonmark:commonmark:0.29.0")
     implementation("org.commonmark:commonmark-ext-gfm-strikethrough:0.29.0")
     implementation("org.commonmark:commonmark-ext-gfm-tables:0.29.0")
+    implementation("io.github.erweixin:ratex-android:0.1.13")
     ksp("androidx.room:room-compiler:2.6.1")
 
     testImplementation("junit:junit:4.13.2")

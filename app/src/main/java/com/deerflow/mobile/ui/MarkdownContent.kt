@@ -1,5 +1,6 @@
 package com.deerflow.mobile.ui
 
+import android.view.ViewGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.horizontalScroll
@@ -19,9 +21,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -33,7 +40,9 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.deerflow.mobile.R
+import io.ratex.RaTeXView
 import java.net.URI
 import org.commonmark.ext.gfm.strikethrough.Strikethrough
 import org.commonmark.ext.gfm.strikethrough.StrikethroughExtension
@@ -60,10 +69,12 @@ import org.commonmark.node.SoftLineBreak
 import org.commonmark.node.StrongEmphasis
 import org.commonmark.node.Text as MarkdownTextNode
 import org.commonmark.node.ThematicBreak
+import org.commonmark.parser.IncludeSourceSpans
 import org.commonmark.parser.Parser
 
 private val markdownParser = Parser.builder()
     .extensions(listOf(StrikethroughExtension.create(), TablesExtension.create()))
+    .includeSourceSpans(IncludeSourceSpans.BLOCKS)
     .build()
 
 @Composable
@@ -71,13 +82,13 @@ fun MarkdownContent(markdown: String, modifier: Modifier = Modifier, onArtifact:
     val document = remember(markdown) { markdownParser.parse(markdown) }
     val citations = remember(markdown) { document.citationSources() }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        document.children().forEach { MarkdownBlock(it, onArtifact) }
+        document.children().forEach { MarkdownBlock(it, markdown, onArtifact) }
         CitationSources(citations)
     }
 }
 
 @Composable
-private fun MarkdownBlock(node: Node, onArtifact: (String) -> Unit) {
+private fun MarkdownBlock(node: Node, markdown: String, onArtifact: (String) -> Unit) {
     when (node) {
         is Heading -> MarkdownInline(
             node,
@@ -89,26 +100,30 @@ private fun MarkdownBlock(node: Node, onArtifact: (String) -> Unit) {
             }.copy(fontWeight = FontWeight.SemiBold),
             onArtifact = onArtifact,
         )
-        is Paragraph -> MarkdownParagraph(node, onArtifact)
+        is Paragraph -> MarkdownParagraph(node, markdown, onArtifact)
         is FencedCodeBlock -> MarkdownCode(node.literal, node.info.takeIf { it.isNotBlank() })
         is IndentedCodeBlock -> MarkdownCode(node.literal, null)
         is BlockQuote -> Row(Modifier.fillMaxWidth()) {
             Box(Modifier.width(3.dp).height(48.dp).background(MaterialTheme.colorScheme.primary))
             Column(Modifier.padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                node.children().forEach { MarkdownBlock(it, onArtifact) }
+                node.children().forEach { MarkdownBlock(it, markdown, onArtifact) }
             }
         }
-        is BulletList -> MarkdownList(node, ordered = false, onArtifact = onArtifact)
-        is OrderedList -> MarkdownList(node, ordered = true, start = node.markerStartNumber, onArtifact = onArtifact)
+        is BulletList -> MarkdownList(node, markdown, ordered = false, onArtifact = onArtifact)
+        is OrderedList -> MarkdownList(node, markdown, ordered = true, start = node.markerStartNumber, onArtifact = onArtifact)
         is TableBlock -> MarkdownTable(node, onArtifact)
         is ThematicBreak -> HorizontalDivider()
         is Image -> MarkdownMessageImage(node.destination, node.title, onArtifact)
-        else -> node.children().forEach { MarkdownBlock(it, onArtifact) }
+        else -> node.children().forEach { MarkdownBlock(it, markdown, onArtifact) }
     }
 }
 
 @Composable
-private fun MarkdownParagraph(paragraph: Paragraph, onArtifact: (String) -> Unit) {
+private fun MarkdownParagraph(paragraph: Paragraph, markdown: String, onArtifact: (String) -> Unit) {
+    displayMathFormula(paragraph, markdown)?.let { formula ->
+        MarkdownMathBlock(formula)
+        return
+    }
     val children = paragraph.children().toList()
     if (children.none { it is Image }) {
         MarkdownInline(paragraph, MaterialTheme.typography.bodyLarge, onArtifact)
@@ -145,7 +160,99 @@ private fun MarkdownParagraph(paragraph: Paragraph, onArtifact: (String) -> Unit
 }
 
 @Composable
-private fun MarkdownList(node: Node, ordered: Boolean, start: Int = 1, onArtifact: (String) -> Unit) {
+private fun MarkdownMathBlock(latex: String) {
+    val context = LocalContext.current
+    val color = MaterialTheme.colorScheme.onSurface.toArgb()
+    val fontSizeDp = MaterialTheme.typography.bodyLarge.fontSize.value
+    val scroll = rememberScrollState()
+    var invalidFormula by remember(latex) { mutableStateOf(false) }
+    if (invalidFormula) {
+        MarkdownCode(latex, "latex")
+        return
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(scroll),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        AndroidView(
+            factory = {
+                val mathView = RaTeXView(context)
+                mathView.layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+                mathView.contentDescription = latex
+                mathView.displayMode = true
+                mathView.fontSize = fontSizeDp
+                mathView.color = color
+                mathView.onError = { invalidFormula = true }
+                mathView.latex = latex
+                mathView
+            },
+            update = { view ->
+                view.displayMode = true
+                view.fontSize = fontSizeDp
+                view.color = color
+                view.latex = latex
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        )
+    }
+}
+
+internal fun displayMathFormula(paragraph: Paragraph, markdown: String? = null): String? {
+    val source = markdown?.let { paragraphSource(paragraph, it) }
+    if (source != null) return displayMathSource(source)
+    return displayMathFormulaFromNodes(paragraph)
+}
+
+private fun paragraphSource(paragraph: Paragraph, markdown: String): String? {
+    val spans = paragraph.sourceSpans
+    if (spans.isEmpty()) return null
+    val parts = mutableListOf<String>()
+    for (span in spans) {
+        val start = span.inputIndex
+        val length = span.length
+        if (start < 0 || length < 0 || start > markdown.length || length > markdown.length - start) return null
+        parts += markdown.substring(start, start + length)
+    }
+    return parts.joinToString(separator = "\n")
+}
+
+private fun displayMathFormulaFromNodes(paragraph: Paragraph): String? {
+    val source = buildString {
+        paragraph.children().forEach { child ->
+            when (child) {
+                is MarkdownTextNode -> append(child.literal)
+                is SoftLineBreak, is HardLineBreak -> append('\n')
+                else -> return null
+            }
+        }
+    }
+    return displayMathSource(source)
+}
+
+internal fun displayMathSource(source: String): String? {
+    val trimmed = source.trim()
+    val delimiters = when {
+        trimmed.startsWith("$$") && trimmed.endsWith("$$") -> "$$" to "$$"
+        trimmed.startsWith("\\[") && trimmed.endsWith("\\]") -> "\\[" to "\\]"
+        else -> return null
+    }
+    if (trimmed.length <= delimiters.first.length + delimiters.second.length) return null
+    return trimmed
+        .substring(delimiters.first.length, trimmed.length - delimiters.second.length)
+        .trim()
+        .takeIf(String::isNotEmpty)
+}
+
+@Composable
+private fun MarkdownList(node: Node, markdown: String, ordered: Boolean, start: Int = 1, onArtifact: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         node.children().filterIsInstance<ListItem>().forEachIndexed { index, item ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
@@ -155,7 +262,7 @@ private fun MarkdownList(node: Node, ordered: Boolean, start: Int = 1, onArtifac
                     modifier = Modifier.width(28.dp),
                 )
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    item.children().forEach { MarkdownBlock(it, onArtifact) }
+                    item.children().forEach { MarkdownBlock(it, markdown, onArtifact) }
                 }
             }
         }

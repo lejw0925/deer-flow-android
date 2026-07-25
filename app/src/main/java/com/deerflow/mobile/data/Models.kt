@@ -49,6 +49,14 @@ sealed interface MessageBlock {
         val failed: Boolean = false,
     ) : MessageBlock
     enum class SubtaskStatus { InProgress, Completed, Failed }
+    data class SubtaskStep(
+        val messageIndex: Int,
+        val kind: String,
+        val text: String = "",
+        val toolName: String? = null,
+        val toolCalls: List<String> = emptyList(),
+        val truncated: Boolean = false,
+    )
     data class Subtask(
         val callId: String,
         val subagentType: String,
@@ -58,6 +66,7 @@ sealed interface MessageBlock {
         val result: String? = null,
         val error: String? = null,
         val modelName: String? = null,
+        val steps: List<SubtaskStep> = emptyList(),
     ) : MessageBlock
     data class HumanInput(
         val request: HumanInputRequest,
@@ -452,6 +461,15 @@ sealed interface StreamUpdate {
     data class Reconnecting(val attempt: Int) : StreamUpdate
     data class MessageChunk(val value: ChatMessage) : StreamUpdate
     data class Patch(val value: StreamPatch) : StreamUpdate
+    data class SubagentProgress(
+        val taskId: String,
+        val step: MessageBlock.SubtaskStep? = null,
+        val status: MessageBlock.SubtaskStatus? = null,
+        val result: String? = null,
+        val error: String? = null,
+        val modelName: String? = null,
+        val description: String? = null,
+    ) : StreamUpdate
     data class Failure(val message: String) : StreamUpdate
     data object Finished : StreamUpdate
 }

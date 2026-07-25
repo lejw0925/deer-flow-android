@@ -22,6 +22,7 @@ import com.deerflow.mobile.data.TodoItem
 import com.deerflow.mobile.data.UploadedFileInfo
 import com.deerflow.mobile.data.WebViewSessionCookieStore
 import com.deerflow.mobile.data.WorkspaceCache
+import com.deerflow.mobile.data.applySubagentProgress
 import com.deerflow.mobile.data.mergeStreamChunk
 import com.deerflow.mobile.data.mergeStreamPatch
 import com.deerflow.mobile.data.mergeStreamSnapshot
@@ -66,6 +67,8 @@ data class CoordinatedRunState(
     val pendingUserIndex: Int? = null,
     val todos: List<TodoItem> = emptyList(),
     val artifacts: List<String> = emptyList(),
+    /** Latest tool name observed on the stream (for Live Update icons). */
+    val latestToolName: String? = null,
     val error: String? = null,
     val revision: Long = 0,
 ) {
@@ -486,7 +489,11 @@ class RunCoordinator private constructor(context: Context) {
         ).ensureStartedAt()
         val next = current.copy(run = retained, revision = current.revision + 1)
         persistAndPublish(next)
-        RunService.update(appContext, runProgressUpdate(RunProgress.Reconnecting, next.todos), next.title)
+        RunService.update(
+            appContext,
+            runProgressUpdate(RunProgress.Reconnecting, next.todos, next.latestToolName),
+            next.title,
+        )
         return retained
     }
 
@@ -570,11 +577,37 @@ class RunCoordinator private constructor(context: Context) {
         scope.launch { persist(next) }
 
         when (update) {
-            is StreamUpdate.Started -> RunService.update(appContext, runProgressUpdate(RunProgress.Working, next.todos), next.title)
-            is StreamUpdate.Reconnecting -> RunService.update(appContext, runProgressUpdate(RunProgress.Reconnecting, next.todos), next.title)
-            is StreamUpdate.Patch -> RunService.update(appContext, runProgressUpdate(RunProgress.Working, next.todos), next.title)
+            is StreamUpdate.Started -> RunService.update(
+                appContext,
+                runProgressUpdate(RunProgress.Working, next.todos, next.latestToolName),
+                next.title,
+            )
+            is StreamUpdate.Reconnecting -> RunService.update(
+                appContext,
+                runProgressUpdate(RunProgress.Reconnecting, next.todos, next.latestToolName),
+                next.title,
+            )
+            is StreamUpdate.Patch -> RunService.update(
+                appContext,
+                runProgressUpdate(RunProgress.Working, next.todos, next.latestToolName),
+                next.title,
+            )
+            is StreamUpdate.SubagentProgress -> {
+                val toolName = update.step?.toolName
+                    ?: update.step?.toolCalls?.firstOrNull()
+                    ?: next.latestToolName
+                RunService.update(
+                    appContext,
+                    runProgressUpdate(RunProgress.Working, next.todos, toolName),
+                    next.title,
+                )
+            }
             StreamUpdate.Finished -> Unit
-            is StreamUpdate.Failure -> RunService.update(appContext, runProgressUpdate(RunProgress.Reconnecting, next.todos), next.title)
+            is StreamUpdate.Failure -> RunService.update(
+                appContext,
+                runProgressUpdate(RunProgress.Reconnecting, next.todos, next.latestToolName),
+                next.title,
+            )
             is StreamUpdate.EventId -> Unit
             is StreamUpdate.MessageChunk -> error("Message chunks are buffered above")
         }
@@ -614,7 +647,11 @@ class RunCoordinator private constructor(context: Context) {
         if (cancelScheduledJob) scheduledJob?.cancel()
         next?.let { state ->
             scope.launch { persist(state) }
-            RunService.update(appContext, runProgressUpdate(RunProgress.Responding, state.todos), state.title)
+            RunService.update(
+                appContext,
+                runProgressUpdate(RunProgress.Responding, state.todos, state.latestToolName),
+                state.title,
+            )
         }
     }
 
@@ -820,24 +857,38 @@ internal fun reduceRunState(current: CoordinatedRunState, update: StreamUpdate):
             ),
             revision = revision,
         )
-        is StreamUpdate.MessageChunk -> current.copy(
-            run = current.run.copy(status = RunStatus.Streaming),
-            serverMessages = mergeStreamChunk(current.serverMessages, update.value),
-            pendingUserMessage = current.pendingUserMessage?.takeUnless { pending ->
-                confirmsPendingUserMessage(pending, update.value)
-            },
-            pendingUserIndex = current.pendingUserIndex.takeUnless {
-                current.pendingUserMessage?.let { pending ->
+        is StreamUpdate.MessageChunk -> {
+            val toolName = update.value.blocks
+                .filterIsInstance<com.deerflow.mobile.data.MessageBlock.ToolCall>()
+                .lastOrNull()
+                ?.name
+                ?.takeIf { it.isNotBlank() && it != "task" }
+            current.copy(
+                run = current.run.copy(status = RunStatus.Streaming),
+                serverMessages = mergeStreamChunk(current.serverMessages, update.value),
+                pendingUserMessage = current.pendingUserMessage?.takeUnless { pending ->
                     confirmsPendingUserMessage(pending, update.value)
-                } == true
-            },
-            revision = revision,
-        )
+                },
+                pendingUserIndex = current.pendingUserIndex.takeUnless {
+                    current.pendingUserMessage?.let { pending ->
+                        confirmsPendingUserMessage(pending, update.value)
+                    } == true
+                },
+                latestToolName = toolName ?: current.latestToolName,
+                revision = revision,
+            )
+        }
         is StreamUpdate.Patch -> {
             val serverMessages = mergeStreamPatch(current.serverMessages, update.value)
             val pending = current.pendingUserMessage?.takeUnless { pending ->
                 serverMessages.any { server -> confirmsPendingUserMessage(pending, server) }
             }
+            val toolName = serverMessages
+                .asReversed()
+                .flatMap { it.blocks }
+                .filterIsInstance<com.deerflow.mobile.data.MessageBlock.ToolCall>()
+                .firstOrNull { it.name.isNotBlank() && it.name != "task" }
+                ?.name
             current.copy(
                 title = update.value.title ?: current.title,
                 serverMessages = serverMessages,
@@ -845,6 +896,16 @@ internal fun reduceRunState(current: CoordinatedRunState, update: StreamUpdate):
                 pendingUserIndex = current.pendingUserIndex.takeIf { pending != null },
                 todos = update.value.todos ?: current.todos,
                 artifacts = mergeArtifacts(current.artifacts, update.value.artifacts),
+                latestToolName = toolName ?: current.latestToolName,
+                revision = revision,
+            )
+        }
+        is StreamUpdate.SubagentProgress -> {
+            val toolName = update.step?.toolName
+                ?: update.step?.toolCalls?.firstOrNull()
+            current.copy(
+                serverMessages = applySubagentProgress(current.serverMessages, update),
+                latestToolName = toolName ?: current.latestToolName,
                 revision = revision,
             )
         }

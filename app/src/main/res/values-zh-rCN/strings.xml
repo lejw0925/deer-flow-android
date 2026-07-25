@@ -110,6 +110,7 @@
     <string name="copied_to_clipboard">已复制到剪贴板</string>
     <string name="conversation_branch_created">已创建会话分支</string>
     <string name="subtask_running">正在运行子任务</string>
+    <string name="subtask_running_step">正在执行：%1$s</string>
     <string name="subtask_completed">子任务已完成</string>
     <string name="subtask_failed">子任务失败</string>
     <string name="todo_progress">任务进度：已完成 %1$d/%2$d</string>

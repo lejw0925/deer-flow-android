@@ -110,6 +110,7 @@
     <string name="copied_to_clipboard">Copied to clipboard</string>
     <string name="conversation_branch_created">Created a conversation branch</string>
     <string name="subtask_running">Running subtask</string>
+    <string name="subtask_running_step">Running: %1$s</string>
     <string name="subtask_completed">Subtask completed</string>
     <string name="subtask_failed">Subtask failed</string>
     <string name="todo_progress">Todo progress: %1$d/%2$d complete</string>

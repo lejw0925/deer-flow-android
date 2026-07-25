@@ -1020,7 +1020,7 @@ class DeerFlowApi(
         val body = JSONObject()
             .put("assistant_id", options.assistantId)
             .put("input", regenerate?.let { JSONObject(it.inputJson) } ?: JSONObject().put("messages", JSONArray().put(human)))
-            .put("stream_mode", JSONArray().put("messages-tuple").put("updates"))
+            .put("stream_mode", JSONArray().put("messages-tuple").put("updates").put("custom"))
             .put("stream_subgraphs", false)
             .put("stream_resumable", true)
             .put("on_disconnect", "continue")
@@ -1092,6 +1092,7 @@ class DeerFlowApi(
                 }
             }
             "updates" -> parseUpdatePatches(event.data).forEach { onUpdate(StreamUpdate.Patch(it)) }
+            "custom" -> parseCustomStreamUpdate(event.data)?.let(onUpdate)
             "error" -> {
                 val payload = parseJson(event.data)
                 val message = when (payload) {
@@ -1106,6 +1107,84 @@ class DeerFlowApi(
             }
         }
         return false
+    }
+
+    private fun parseCustomStreamUpdate(raw: String): StreamUpdate? {
+        val payload = parseJson(raw) as? JSONObject ?: return null
+        val type = payload.optString("type")
+        val taskId = payload.optString("task_id").ifBlank { return null }
+        return when (type) {
+            "task_started" -> StreamUpdate.SubagentProgress(
+                taskId = taskId,
+                description = payload.optString("description").takeIf { it.isNotBlank() },
+                modelName = payload.optString("model_name").takeIf { it.isNotBlank() },
+            )
+            "task_running" -> {
+                val message = payload.optJSONObject("message") ?: JSONObject()
+                val messageIndex = payload.optInt("message_index", 0)
+                val kind = if (message.optString("type") == "tool") "tool" else "ai"
+                val text = messageContentText(message)
+                val toolName = message.optString("name").takeIf { it.isNotBlank() }
+                val toolCalls = buildList {
+                    val calls = message.optJSONArray("tool_calls")
+                    if (calls != null) {
+                        for (index in 0 until calls.length()) {
+                            val call = calls.optJSONObject(index) ?: continue
+                            val name = call.optString("name")
+                            if (name.isNotBlank()) add(name)
+                        }
+                    }
+                }
+                StreamUpdate.SubagentProgress(
+                    taskId = taskId,
+                    step = MessageBlock.SubtaskStep(
+                        messageIndex = messageIndex,
+                        kind = kind,
+                        text = text,
+                        toolName = toolName,
+                        toolCalls = toolCalls,
+                    ),
+                    modelName = payload.optString("model_name").takeIf { it.isNotBlank() },
+                )
+            }
+            "task_completed" -> StreamUpdate.SubagentProgress(
+                taskId = taskId,
+                status = MessageBlock.SubtaskStatus.Completed,
+                result = payload.optString("result").takeIf { it.isNotBlank() },
+                modelName = payload.optString("model_name").takeIf { it.isNotBlank() },
+            )
+            "task_failed", "task_cancelled", "task_timed_out" -> StreamUpdate.SubagentProgress(
+                taskId = taskId,
+                status = MessageBlock.SubtaskStatus.Failed,
+                error = payload.optString("error").ifBlank {
+                    payload.optString("result")
+                }.takeIf { it.isNotBlank() },
+                modelName = payload.optString("model_name").takeIf { it.isNotBlank() },
+            )
+            else -> null
+        }
+    }
+
+    private fun messageContentText(message: JSONObject): String {
+        val content = message.opt("content") ?: return ""
+        return when (content) {
+            is String -> content
+            is JSONArray -> buildString {
+                for (index in 0 until content.length()) {
+                    when (val part = content.opt(index)) {
+                        is String -> append(part)
+                        is JSONObject -> {
+                            val text = part.optString("text")
+                            if (text.isNotBlank()) {
+                                if (isNotEmpty()) append('\n')
+                                append(text)
+                            }
+                        }
+                    }
+                }
+            }
+            else -> content.toString()
+        }
     }
 
     private fun parseModels(raw: String): List<ModelInfo> {

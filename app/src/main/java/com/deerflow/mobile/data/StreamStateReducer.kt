@@ -178,7 +178,106 @@ private fun mergeSubtaskBlock(previous: MessageBlock.Subtask, incoming: MessageB
         result = incoming.result ?: previous.result,
         error = incoming.error ?: previous.error,
         modelName = incoming.modelName ?: previous.modelName,
+        steps = mergeSubtaskSteps(previous.steps, incoming.steps),
     )
+
+internal fun mergeSubtaskSteps(
+    previous: List<MessageBlock.SubtaskStep>,
+    incoming: List<MessageBlock.SubtaskStep>,
+): List<MessageBlock.SubtaskStep> {
+    if (incoming.isEmpty()) return previous
+    if (previous.isEmpty()) return incoming.sortedBy { it.messageIndex }
+    val byIndex = LinkedHashMap<Int, MessageBlock.SubtaskStep>()
+    previous.forEach { byIndex[it.messageIndex] = it }
+    incoming.forEach { step ->
+        val existing = byIndex[step.messageIndex]
+        byIndex[step.messageIndex] = if (existing == null) {
+            step
+        } else {
+            existing.copy(
+                kind = step.kind.ifBlank { existing.kind },
+                text = step.text.ifBlank { existing.text },
+                toolName = step.toolName ?: existing.toolName,
+                toolCalls = step.toolCalls.ifEmpty { existing.toolCalls },
+                truncated = step.truncated || existing.truncated,
+            )
+        }
+    }
+    return byIndex.values.sortedBy { it.messageIndex }
+}
+
+/** Apply a live `task_*` custom event onto the matching Subtask block. */
+internal fun applySubagentProgress(
+    messages: List<ChatMessage>,
+    progress: StreamUpdate.SubagentProgress,
+): List<ChatMessage> {
+    if (progress.taskId.isBlank()) return messages
+    fun patch(block: MessageBlock.Subtask): MessageBlock.Subtask = block.copy(
+        description = progress.description
+            ?.takeUnless { it.isBlank() || it == "Subtask" }
+            ?: block.description,
+        status = progress.status?.takeUnless { it == MessageBlock.SubtaskStatus.InProgress }
+            ?: block.status,
+        result = progress.result ?: block.result,
+        error = progress.error ?: block.error,
+        modelName = progress.modelName ?: block.modelName,
+        steps = progress.step?.let { mergeSubtaskSteps(block.steps, listOf(it)) } ?: block.steps,
+    )
+
+    var changed = false
+    val byCallId = messages.map { message ->
+        var messageChanged = false
+        val blocks = message.blocks.map { block ->
+            if (block is MessageBlock.Subtask && block.callId == progress.taskId) {
+                changed = true
+                messageChanged = true
+                patch(block)
+            } else {
+                block
+            }
+        }
+        if (messageChanged) message.copy(blocks = blocks) else message
+    }
+    if (changed) return byCallId
+
+    // Fallback: single in-progress subtask when tool_call_id has not landed yet.
+    val inProgress = messages.flatMap { msg ->
+        msg.blocks.mapNotNull { block ->
+            (block as? MessageBlock.Subtask)?.takeIf { it.status == MessageBlock.SubtaskStatus.InProgress }
+        }
+    }
+    if (inProgress.size != 1) return messages
+    val only = inProgress.single()
+    return messages.map { message ->
+        var messageChanged = false
+        val blocks = message.blocks.map { block ->
+            if (block is MessageBlock.Subtask && block.callId == only.callId) {
+                messageChanged = true
+                patch(block)
+            } else {
+                block
+            }
+        }
+        if (messageChanged) message.copy(blocks = blocks) else message
+    }
+}
+
+/** Steps shown in the subtask card (mirrors web stepsForDisplay). */
+internal fun subtaskStepsForDisplay(
+    steps: List<MessageBlock.SubtaskStep>,
+    status: MessageBlock.SubtaskStatus,
+): List<MessageBlock.SubtaskStep> {
+    val visible = steps
+        .filter { it.kind == "tool" || it.text.isNotBlank() || it.toolCalls.isNotEmpty() }
+        .sortedBy { it.messageIndex }
+    if (status == MessageBlock.SubtaskStatus.Completed) {
+        val last = visible.lastOrNull()
+        if (last != null && last.kind == "ai" && last.toolCalls.isEmpty()) {
+            return visible.dropLast(1)
+        }
+    }
+    return visible
+}
 
 private fun MessageBlock.structuredKey(): String = when (this) {
     is MessageBlock.ToolCall -> "call:${id.ifBlank { "$name:$detail" }}"

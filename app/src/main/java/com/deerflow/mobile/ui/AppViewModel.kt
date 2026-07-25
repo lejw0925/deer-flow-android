@@ -211,6 +211,13 @@ internal fun applyQuickActionToComposer(
     )
 }
 
+internal fun isCurrentNewDraftLoad(state: AppUiState, sessionKey: String): Boolean =
+    state.selectedThread == null &&
+        state.draftStorageKey == NEW_DRAFT_KEY &&
+        state.draftSessionKey == sessionKey &&
+        state.composer.text.isBlank() &&
+        state.composer.attachments.isEmpty()
+
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = SettingsStore(application)
     private val cookieStore = WebViewSessionCookieStore()
@@ -836,35 +843,59 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun newDraftSessionKey(): String = "new-draft-${UUID.randomUUID()}"
+
+    private fun restoreNewDraft(sessionKey: String) {
+        threadLoadJob = viewModelScope.launch {
+            val draft = threads.loadDraft(NEW_DRAFT_KEY)
+            val attachments = runCatching { threads.loadAttachments(NEW_DRAFT_KEY) }.getOrDefault(emptyList())
+            mutableState.update { current ->
+                if (!isCurrentNewDraftLoad(current, sessionKey)) {
+                    current
+                } else {
+                    current.copy(
+                        composer = current.composer.copy(text = draft, attachments = attachments),
+                        composerResetToken = current.composerResetToken + 1,
+                    )
+                }
+            }
+        }
+    }
+
+    private fun cancelNewDraftRestore() {
+        val current = mutableState.value
+        if (current.selectedThread == null && current.draftStorageKey == NEW_DRAFT_KEY) {
+            threadLoadJob?.cancel()
+        }
+    }
+
     fun createThread() {
         threadLoadJob?.cancel()
         cancelArtifactWork()
-        viewModelScope.launch {
-            val assistant = mutableState.value.defaultAgentId
-            val draft = threads.loadDraft(NEW_DRAFT_KEY)
-            val attachments = runCatching { threads.loadAttachments(NEW_DRAFT_KEY) }.getOrDefault(emptyList())
-            mutableState.update {
-                it.copy(
-                    selectedThread = null,
-                    messages = emptyList(),
-                    todos = emptyList(),
-                    artifacts = emptyList(),
-                    artifactBusy = false,
-                    artifactSession = null,
-                    composer = it.composer.copy(
-                        text = draft,
-                        attachments = attachments,
-                        options = it.composer.options.copy(assistantId = assistant),
-                    ),
-                    loadingChat = false,
-                    draftStorageKey = NEW_DRAFT_KEY,
-                    draftSessionKey = "new-draft",
-                    composerResetToken = it.composerResetToken + 1,
-                    route = AppRoute.Conversation,
-                    error = null,
-                )
-            }
+        val sessionKey = newDraftSessionKey()
+        val assistant = mutableState.value.defaultAgentId
+        mutableState.update {
+            it.copy(
+                selectedThread = null,
+                messages = emptyList(),
+                todos = emptyList(),
+                artifacts = emptyList(),
+                artifactBusy = false,
+                artifactSession = null,
+                composer = it.composer.copy(
+                    text = "",
+                    attachments = emptyList(),
+                    options = it.composer.options.copy(assistantId = assistant),
+                ),
+                loadingChat = false,
+                draftStorageKey = NEW_DRAFT_KEY,
+                draftSessionKey = sessionKey,
+                composerResetToken = it.composerResetToken + 1,
+                route = AppRoute.Conversation,
+                error = null,
+            )
         }
+        restoreNewDraft(sessionKey)
     }
 
     fun openThread(thread: ThreadSummary) {
@@ -945,6 +976,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
             return
         }
+        val sessionKey = newDraftSessionKey()
         mutableState.update {
             it.copy(
                 route = AppRoute.Workspace,
@@ -960,21 +992,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     options = it.composer.options.copy(assistantId = it.defaultAgentId),
                 ),
                 draftStorageKey = NEW_DRAFT_KEY,
-                draftSessionKey = "new-draft",
+                draftSessionKey = sessionKey,
                 composerResetToken = it.composerResetToken + 1,
                 error = null,
             )
         }
-        viewModelScope.launch {
-            val draft = threads.loadDraft(NEW_DRAFT_KEY)
-            val attachments = runCatching { threads.loadAttachments(NEW_DRAFT_KEY) }.getOrDefault(emptyList())
-            mutableState.update {
-                it.copy(
-                    composer = it.composer.copy(text = draft, attachments = attachments),
-                    composerResetToken = it.composerResetToken + 1,
-                )
-            }
-        }
+        restoreNewDraft(sessionKey)
     }
 
     fun deleteThread(thread: ThreadSummary) {
@@ -1038,6 +1061,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateDraft(value: String) {
+        cancelNewDraftRestore()
         val key = mutableState.value.draftStorageKey
         mutableState.update { it.copy(composer = it.composer.copy(text = value)) }
         draftJob?.cancel()
@@ -1047,6 +1071,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun addAttachment(uri: Uri) {
+        cancelNewDraftRestore()
         val resolver = getApplication<Application>().contentResolver
         runCatching {
             resolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)

@@ -47,6 +47,21 @@ class MessageCacheCodecTest {
                     status = MessageBlock.SubtaskStatus.Completed,
                     result = "Room supports migrations",
                     modelName = "test-model",
+                    steps = listOf(
+                        MessageBlock.SubtaskStep(
+                            messageIndex = 1,
+                            kind = "ai",
+                            text = "Inspect the schema",
+                            toolCalls = listOf("read_file"),
+                        ),
+                        MessageBlock.SubtaskStep(
+                            messageIndex = 2,
+                            kind = "tool",
+                            text = "Schema found",
+                            toolName = "read_file",
+                            truncated = true,
+                        ),
+                    ),
                 ),
                 MessageBlock.HumanInput(request),
                 MessageBlock.Approval(request.copy(clarificationType = "risk_confirmation")),

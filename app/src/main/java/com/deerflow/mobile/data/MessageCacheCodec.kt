@@ -74,6 +74,22 @@ private fun MessageBlock.toCacheJson(): JSONObject = JSONObject().apply {
             putNullable("result", block.result)
             putNullable("error", block.error)
             putNullable("modelName", block.modelName)
+            put(
+                "steps",
+                JSONArray().apply {
+                    block.steps.forEach { step ->
+                        put(
+                            JSONObject()
+                                .put("messageIndex", step.messageIndex)
+                                .put("kind", step.kind)
+                                .put("text", step.text)
+                                .put("toolCalls", JSONArray(step.toolCalls))
+                                .put("truncated", step.truncated)
+                                .also { it.putNullable("toolName", step.toolName) },
+                        )
+                    }
+                },
+            )
         }
         is MessageBlock.HumanInput -> {
             put("type", "human_input")
@@ -127,6 +143,33 @@ private fun JSONObject.toMessageBlock(): MessageBlock? = runCatching {
             result = nullableString("result"),
             error = nullableString("error"),
             modelName = nullableString("modelName"),
+            steps = optJSONArray("steps")?.let { steps ->
+                buildList {
+                    for (index in 0 until steps.length()) {
+                        val step = steps.optJSONObject(index) ?: continue
+                        val toolCalls = step.optJSONArray("toolCalls")
+                        add(
+                            MessageBlock.SubtaskStep(
+                                messageIndex = step.optInt("messageIndex"),
+                                kind = step.optString("kind"),
+                                text = step.optString("text"),
+                                toolName = step.nullableString("toolName"),
+                                toolCalls = if (toolCalls == null) {
+                                    emptyList()
+                                } else {
+                                    buildList {
+                                        for (i in 0 until toolCalls.length()) {
+                                            val name = toolCalls.optString(i)
+                                            if (name.isNotBlank()) add(name)
+                                        }
+                                    }
+                                },
+                                truncated = step.optBoolean("truncated"),
+                            ),
+                        )
+                    }
+                }
+            }.orEmpty(),
         )
         "human_input" -> MessageBlock.HumanInput(getJSONObject("request").toHumanInputRequest())
         "approval" -> MessageBlock.Approval(getJSONObject("request").toHumanInputRequest())

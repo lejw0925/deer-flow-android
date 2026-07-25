@@ -76,6 +76,30 @@ class RunProgressTest {
     }
 
     @Test
+    fun notificationIconsFollowTheLatestToolAndRunPhase() {
+        assertEquals(
+            RunNotificationIcon.Search,
+            RunProgressUpdate(RunProgress.Working, latestToolName = "web_search").notificationIcon(),
+        )
+        assertEquals(
+            RunNotificationIcon.Terminal,
+            RunProgressUpdate(RunProgress.Working, latestToolName = "execute_command").notificationIcon(),
+        )
+        assertEquals(
+            RunNotificationIcon.Files,
+            RunProgressUpdate(RunProgress.Responding, latestToolName = "read_file").notificationIcon(),
+        )
+        assertEquals(
+            RunNotificationIcon.Thinking,
+            RunProgressUpdate(RunProgress.Working).notificationIcon(),
+        )
+        assertEquals(
+            RunNotificationIcon.Reconnect,
+            RunProgressUpdate(RunProgress.Reconnecting, latestToolName = "web_search").notificationIcon(),
+        )
+    }
+
+    @Test
     fun notificationProjectionOnlyPublishesMeaningfulChangesAtMostOncePerSecond() {
         val initial = RunProgressUpdate(RunProgress.Working).notificationProjection()
         val same = RunProgressUpdate(RunProgress.Working).notificationProjection()

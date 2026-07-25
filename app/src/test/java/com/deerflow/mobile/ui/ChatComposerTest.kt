@@ -5,6 +5,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import com.deerflow.mobile.data.ComposerState
 import com.deerflow.mobile.data.RunOptions
 import com.deerflow.mobile.data.SkillInfo
+import com.deerflow.mobile.data.ThreadSummary
 import com.deerflow.mobile.data.WorkspaceCapabilities
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -39,6 +40,24 @@ class ChatComposerTest {
         assertTrue(isCurrentThreadLoad("thread-2", "thread-2"))
         assertFalse(isCurrentThreadLoad("thread-2", "thread-1"))
         assertFalse(isCurrentThreadLoad(null, "thread-1"))
+    }
+
+    @Test
+    fun `new draft restore only applies to the untouched matching session`() {
+        val sessionKey = "new-draft-session"
+        val initial = AppUiState(serverUrl = "http://example.test", draftSessionKey = sessionKey)
+
+        assertTrue(isCurrentNewDraftLoad(initial, sessionKey))
+        assertFalse(isCurrentNewDraftLoad(initial.copy(draftSessionKey = "other-session"), sessionKey))
+        assertFalse(isCurrentNewDraftLoad(initial.copy(composer = ComposerState(text = "typing")), sessionKey))
+        assertFalse(
+            isCurrentNewDraftLoad(
+                initial.copy(
+                    selectedThread = ThreadSummary("thread-1", "Thread", "idle", "2026-07-25T00:00:00Z"),
+                ),
+                sessionKey,
+            ),
+        )
     }
 
     @Test

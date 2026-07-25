@@ -73,6 +73,7 @@ class RunService : Service() {
                     completedTodos = intent.getIntExtra(EXTRA_COMPLETED_TODOS, 0),
                     totalTodos = intent.getIntExtra(EXTRA_TOTAL_TODOS, 0),
                     currentTodo = intent.getStringExtra(EXTRA_CURRENT_TODO),
+                    latestToolName = intent.getStringExtra(EXTRA_LATEST_TOOL_NAME),
                 )
                 publish(ongoing = true)
             }
@@ -194,11 +195,15 @@ class RunService : Service() {
         detail: String?,
     ): Notification {
         val style = Notification.ProgressStyle()
-            .setProgress(progress.percent)
             .setProgressIndeterminate(progress.indeterminate)
-            .setStyledByProgress(true)
-            .apply { progressTrackerIcon()?.let { setProgressTrackerIcon(it) } }
             .addProgressSegment(Notification.ProgressStyle.Segment(100).setColor(notificationAccentColor))
+            .apply {
+                if (!this@RunService.progress.indeterminate) {
+                    setProgress(this@RunService.progress.percent)
+                    setStyledByProgress(true)
+                    setProgressTrackerIcon(progressTrackerIcon())
+                }
+            }
         return Notification.Builder(this, CHANNEL_ID)
             // The small icon is what Android renders at the left of a Live Update status chip.
             .setSmallIcon(statusChipSmallIconRes())
@@ -294,18 +299,19 @@ class RunService : Service() {
     )
 
     @RequiresApi(36)
-    private fun progressTrackerIcon(): Icon? = when (progress.phase) {
-        RunProgress.Uploading -> Icon.createWithResource(this, android.R.drawable.stat_sys_upload)
-        RunProgress.Reconnecting -> Icon.createWithResource(this, android.R.drawable.stat_notify_sync)
-        RunProgress.Finalizing, RunProgress.Completed -> Icon.createWithResource(this, android.R.drawable.stat_sys_upload_done)
-        RunProgress.Preparing, RunProgress.Connecting -> Icon.createWithResource(this, android.R.drawable.stat_notify_sync)
-        RunProgress.Working, RunProgress.Responding -> null
-    }
+    private fun progressTrackerIcon(): Icon = Icon.createWithResource(this, statusChipSmallIconRes())
 
-    private fun statusChipSmallIconRes(): Int = when (progress.phase) {
-        RunProgress.Uploading -> android.R.drawable.stat_sys_upload
-        RunProgress.Completed -> android.R.drawable.stat_sys_upload_done
-        else -> android.R.drawable.stat_notify_sync
+    private fun statusChipSmallIconRes(): Int = when (progress.notificationIcon()) {
+        RunNotificationIcon.Thinking -> R.drawable.ic_notification_thinking
+        RunNotificationIcon.Search -> android.R.drawable.ic_menu_search
+        RunNotificationIcon.Browse -> android.R.drawable.ic_menu_view
+        RunNotificationIcon.Code -> android.R.drawable.ic_menu_edit
+        RunNotificationIcon.Terminal -> android.R.drawable.ic_menu_manage
+        RunNotificationIcon.Files -> android.R.drawable.ic_menu_agenda
+        RunNotificationIcon.Task -> android.R.drawable.ic_menu_my_calendar
+        RunNotificationIcon.Upload -> android.R.drawable.stat_sys_upload
+        RunNotificationIcon.Reconnect -> android.R.drawable.ic_menu_revert
+        RunNotificationIcon.Completed -> android.R.drawable.stat_sys_upload_done
     }
 
     private fun finish(detail: String) {
@@ -371,6 +377,7 @@ class RunService : Service() {
         private const val EXTRA_COMPLETED_TODOS = "completed_todos"
         private const val EXTRA_TOTAL_TODOS = "total_todos"
         private const val EXTRA_CURRENT_TODO = "current_todo"
+        private const val EXTRA_LATEST_TOOL_NAME = "latest_tool_name"
         internal const val EXTRA_REQUEST_PROMOTED_ONGOING = "android.requestPromotedOngoing"
 
         fun start(context: Context, title: String, serverUrl: String? = null, threadId: String? = null) {
@@ -391,6 +398,7 @@ class RunService : Service() {
                     .putExtra(EXTRA_COMPLETED_TODOS, update.completedTodos)
                     .putExtra(EXTRA_TOTAL_TODOS, update.totalTodos)
                     .putExtra(EXTRA_CURRENT_TODO, update.currentTodo)
+                    .putExtra(EXTRA_LATEST_TOOL_NAME, update.latestToolName)
                     .putExtra(EXTRA_TITLE, title),
             )
         }

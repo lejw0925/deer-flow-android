@@ -71,6 +71,53 @@ class RunCoordinatorTest {
     }
 
     @Test
+    fun `subagent progress updates its card and the latest live tool`() {
+        val current = initial.copy(
+            serverMessages = listOf(
+                ChatMessage(
+                    "ai-1",
+                    MessageRole.Assistant,
+                    "",
+                    blocks = listOf(
+                        MessageBlock.Subtask(
+                            callId = "task-1",
+                            subagentType = "general-purpose",
+                            description = "Inspect the API",
+                            prompt = "Read the API contract",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val running = reduceRunState(
+            current,
+            StreamUpdate.SubagentProgress(
+                taskId = "task-1",
+                step = MessageBlock.SubtaskStep(
+                    messageIndex = 1,
+                    kind = "tool",
+                    text = "",
+                    toolName = "web_search",
+                ),
+            ),
+        )
+        val completed = reduceRunState(
+            running,
+            StreamUpdate.SubagentProgress(
+                taskId = "task-1",
+                status = MessageBlock.SubtaskStatus.Completed,
+                result = "Verified",
+            ),
+        )
+
+        val subtask = completed.serverMessages.single().blocks.filterIsInstance<MessageBlock.Subtask>().single()
+        assertEquals("web_search", completed.latestToolName)
+        assertEquals(MessageBlock.SubtaskStatus.Completed, subtask.status)
+        assertEquals("Verified", subtask.result)
+        assertEquals(listOf("web_search"), subtask.steps.map(MessageBlock.SubtaskStep::toolName))
+    }
+
+    @Test
     fun `pending chunks publish their fully merged text in one refresh`() {
         val pending = PendingChunkState()
         pending.append(initial, ChatMessage("ai-1", MessageRole.Assistant, "Hello "))

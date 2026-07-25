@@ -406,13 +406,25 @@ private fun ProcessingStepView(step: ProcessingStep, runActive: Boolean, onArtif
 @Composable
 private fun SubtaskStep(subtask: MessageBlock.Subtask) {
     var expanded by rememberSaveable(subtask.callId) { mutableStateOf(false) }
-    val statusText = stringResource(
-        when (subtask.status) {
-            MessageBlock.SubtaskStatus.InProgress -> R.string.subtask_running
-            MessageBlock.SubtaskStatus.Completed -> R.string.subtask_completed
-            MessageBlock.SubtaskStatus.Failed -> R.string.subtask_failed
-        },
-    )
+    val displaySteps = remember(subtask.steps, subtask.status) {
+        com.deerflow.mobile.data.subtaskStepsForDisplay(subtask.steps, subtask.status)
+    }
+    val latestStep = displaySteps.lastOrNull()
+    val progressHint = when {
+        latestStep == null -> null
+        latestStep.kind == "tool" -> latestStep.toolName?.takeIf { it.isNotBlank() }
+            ?: latestStep.text.takeIf { it.isNotBlank() }?.lineSequence()?.firstOrNull()
+        latestStep.toolCalls.isNotEmpty() -> latestStep.toolCalls.first()
+        latestStep.text.isNotBlank() -> latestStep.text.lineSequence().firstOrNull()?.take(80)
+        else -> null
+    }
+    val statusText = when (subtask.status) {
+        MessageBlock.SubtaskStatus.InProgress -> progressHint
+            ?.let { stringResource(R.string.subtask_running_step, it) }
+            ?: stringResource(R.string.subtask_running)
+        MessageBlock.SubtaskStatus.Completed -> stringResource(R.string.subtask_completed)
+        MessageBlock.SubtaskStatus.Failed -> stringResource(R.string.subtask_failed)
+    }
     Surface(
         onClick = { expanded = !expanded },
         color = MaterialTheme.colorScheme.secondaryContainer,
@@ -424,7 +436,7 @@ private fun SubtaskStep(subtask: MessageBlock.Subtask) {
                 Icon(Icons.Outlined.Psychology, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                 Column(Modifier.weight(1f)) {
                     Text(subtask.description, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(statusText, style = MaterialTheme.typography.labelSmall, color = if (subtask.status == MessageBlock.SubtaskStatus.Failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(statusText, style = MaterialTheme.typography.labelSmall, color = if (subtask.status == MessageBlock.SubtaskStatus.Failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 when (subtask.status) {
                     MessageBlock.SubtaskStatus.InProgress -> LoadingIndicator(Modifier.size(20.dp))
@@ -436,6 +448,35 @@ private fun SubtaskStep(subtask: MessageBlock.Subtask) {
             if (expanded) {
                 subtask.subagentType.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
                 subtask.prompt.takeIf { it.isNotBlank() }?.let { MarkdownContent(it) }
+                if (displaySteps.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        displaySteps.takeLast(12).forEach { step ->
+                            val label = when {
+                                step.kind == "tool" -> step.toolName?.takeIf { it.isNotBlank() } ?: step.text
+                                step.toolCalls.isNotEmpty() -> step.toolCalls.joinToString(", ")
+                                else -> step.text
+                            }.ifBlank { "…" }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.padding(start = 4.dp),
+                            ) {
+                                Icon(
+                                    if (step.kind == "tool" || step.toolCalls.isNotEmpty()) Icons.Outlined.Code else Icons.Outlined.Psychology,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                                Text(
+                                    label,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                }
                 subtask.result?.takeIf { it.isNotBlank() }?.let { MarkdownContent(it) }
                 subtask.error?.takeIf { it.isNotBlank() }?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
