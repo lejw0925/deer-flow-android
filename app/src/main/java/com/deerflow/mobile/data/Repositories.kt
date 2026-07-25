@@ -63,15 +63,19 @@ class ThreadRepository(
     suspend fun loadAttachments(threadId: String): List<PendingAttachment> =
         cache.loadAttachments(api.serverUrl, threadId)
 
-    suspend fun probeArtifact(threadId: String, path: String): ArtifactProbe =
-        api.probeArtifact(threadId, path)
+    suspend fun probeArtifact(
+        threadId: String,
+        path: String,
+        maxBytes: Long = MAX_ARTIFACT_DOWNLOAD_BYTES,
+    ): ArtifactProbe = api.probeArtifact(threadId, path, maxBytes)
 
     suspend fun downloadArtifact(
         threadId: String,
         probe: ArtifactProbe,
         directory: File,
+        maxBytes: Long = MAX_ARTIFACT_DOWNLOAD_BYTES,
         onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit = { _, _ -> },
-    ): ArtifactDownload = api.downloadArtifact(threadId, probe, directory, onProgress)
+    ): ArtifactDownload = api.downloadArtifact(threadId, probe, directory, maxBytes, onProgress)
 }
 
 class RunRepository(private val api: DeerFlowApi) {

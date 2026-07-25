@@ -120,6 +120,12 @@ class SettingsStoreInstrumentedTest {
             store.setDynamicColor(false)
             store.setNotifyOnRunCompletion(false)
             store.setCacheRetentionPolicy(CacheRetentionPolicy.ClearOnSignOut)
+            store.setArtifactDownloadLimits(
+                ArtifactDownloadLimits(
+                    autoDownloadBytes = 5L * 1024 * 1024,
+                    manualDownloadBytes = 50L * 1024 * 1024,
+                ),
+            )
 
             assertEquals(
                 SettingsSnapshot(
@@ -128,6 +134,10 @@ class SettingsStoreInstrumentedTest {
                     useDynamicColor = false,
                     notifyOnRunCompletion = false,
                     cacheRetentionPolicy = CacheRetentionPolicy.ClearOnSignOut,
+                    artifactDownloadLimits = ArtifactDownloadLimits(
+                        autoDownloadBytes = 5L * 1024 * 1024,
+                        manualDownloadBytes = 50L * 1024 * 1024,
+                    ),
                 ),
                 store.read(),
             )
@@ -150,6 +160,10 @@ class SettingsStoreInstrumentedTest {
                     useDynamicColor = false,
                     notifyOnRunCompletion = false,
                     cacheRetentionPolicy = CacheRetentionPolicy.ClearOnSignOut,
+                    artifactDownloadLimits = ArtifactDownloadLimits(
+                        autoDownloadBytes = 5L * 1024 * 1024,
+                        manualDownloadBytes = 50L * 1024 * 1024,
+                    ),
                 ),
                 SettingsStore(dataStore).read(),
             )

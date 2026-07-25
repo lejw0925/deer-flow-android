@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -29,7 +30,26 @@ data class SettingsSnapshot(
     val useDynamicColor: Boolean = true,
     val notifyOnRunCompletion: Boolean = true,
     val cacheRetentionPolicy: CacheRetentionPolicy = CacheRetentionPolicy.KeepUntilCleared,
+    val artifactDownloadLimits: ArtifactDownloadLimits = ArtifactDownloadLimits(),
 )
+
+data class ArtifactDownloadLimits(
+    val autoDownloadBytes: Long = DEFAULT_ARTIFACT_AUTO_DOWNLOAD_BYTES,
+    val manualDownloadBytes: Long = MAX_ARTIFACT_DOWNLOAD_BYTES,
+)
+
+internal const val DEFAULT_ARTIFACT_AUTO_DOWNLOAD_BYTES = 10L * 1024 * 1024
+
+internal fun normalizeArtifactDownloadLimits(
+    autoDownloadBytes: Long,
+    manualDownloadBytes: Long,
+): ArtifactDownloadLimits {
+    val manualLimit = manualDownloadBytes.coerceIn(1L, MAX_ARTIFACT_DOWNLOAD_BYTES)
+    return ArtifactDownloadLimits(
+        autoDownloadBytes = autoDownloadBytes.coerceIn(0L, manualLimit),
+        manualDownloadBytes = manualLimit,
+    )
+}
 
 data class SavedRunOptions(
     val modelName: String? = null,
@@ -61,6 +81,14 @@ class SettingsStore internal constructor(
 
     suspend fun setCacheRetentionPolicy(value: CacheRetentionPolicy) {
         dataStore.edit { it[CACHE_RETENTION_POLICY] = value.name }
+    }
+
+    suspend fun setArtifactDownloadLimits(value: ArtifactDownloadLimits) {
+        val normalized = normalizeArtifactDownloadLimits(value.autoDownloadBytes, value.manualDownloadBytes)
+        dataStore.edit {
+            it[ARTIFACT_AUTO_DOWNLOAD_BYTES] = normalized.autoDownloadBytes
+            it[ARTIFACT_MANUAL_DOWNLOAD_BYTES] = normalized.manualDownloadBytes
+        }
     }
 
     suspend fun pinnedThreads(serverUrl: String): Set<String> =
@@ -123,6 +151,10 @@ class SettingsStore internal constructor(
         cacheRetentionPolicy = runCatching {
             CacheRetentionPolicy.valueOf(this[CACHE_RETENTION_POLICY].orEmpty())
         }.getOrDefault(CacheRetentionPolicy.KeepUntilCleared),
+        artifactDownloadLimits = normalizeArtifactDownloadLimits(
+            autoDownloadBytes = this[ARTIFACT_AUTO_DOWNLOAD_BYTES] ?: DEFAULT_ARTIFACT_AUTO_DOWNLOAD_BYTES,
+            manualDownloadBytes = this[ARTIFACT_MANUAL_DOWNLOAD_BYTES] ?: MAX_ARTIFACT_DOWNLOAD_BYTES,
+        ),
     )
 
     private fun pinnedThreadsKey(serverUrl: String) = stringSetPreferencesKey("$KEY_PINNED_PREFIX$serverUrl")
@@ -142,6 +174,8 @@ class SettingsStore internal constructor(
         private val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         private val NOTIFY_ON_RUN_COMPLETION = booleanPreferencesKey("notify_on_run_completion")
         private val CACHE_RETENTION_POLICY = stringPreferencesKey("cache_retention_policy")
+        private val ARTIFACT_AUTO_DOWNLOAD_BYTES = longPreferencesKey("artifact_auto_download_bytes")
+        private val ARTIFACT_MANUAL_DOWNLOAD_BYTES = longPreferencesKey("artifact_manual_download_bytes")
         private const val KEY_PINNED_PREFIX = "pinned_threads_"
         private const val KEY_DEFAULT_AGENT_PREFIX = "default_agent_"
         private const val KEY_SELECTED_MODEL_PREFIX = "selected_model_"

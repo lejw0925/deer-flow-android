@@ -13,6 +13,7 @@ import com.deerflow.mobile.data.AgentInfo
 import com.deerflow.mobile.data.AgentRunInfo
 import com.deerflow.mobile.data.AssistantTurn
 import com.deerflow.mobile.data.ApiException
+import com.deerflow.mobile.data.ArtifactDownloadLimits
 import com.deerflow.mobile.data.ArtifactProbe
 import com.deerflow.mobile.data.AttachmentStatus
 import com.deerflow.mobile.data.ChatMessage
@@ -57,6 +58,7 @@ import com.deerflow.mobile.data.WorkspaceRepository
 import com.deerflow.mobile.data.assistantTurnForMessage
 import com.deerflow.mobile.data.isLatestAssistantTurn
 import com.deerflow.mobile.data.normalizeServerUrl
+import com.deerflow.mobile.data.normalizeArtifactDownloadLimits
 import com.deerflow.mobile.data.resolveAgentSelection
 import com.deerflow.mobile.run.CoordinatedRunRequest
 import com.deerflow.mobile.run.CoordinatedRunState
@@ -116,6 +118,7 @@ data class AppUiState(
     val artifactDownloadConfirmation: PendingArtifactDownload? = null,
     val artifactDownloadProgress: ArtifactDownloadProgress? = null,
     val artifactPreview: ArtifactPreviewState? = null,
+    val artifactOpenRequest: ArtifactOpenRequest? = null,
     val composer: ComposerState = ComposerState(),
     /** Storage follows the conversation, while this key belongs to the editor session. */
     val draftStorageKey: String = NEW_DRAFT_KEY,
@@ -140,6 +143,7 @@ data class AppUiState(
     val language: LanguagePreference = LanguagePreference.System,
     val notifyOnRunCompletion: Boolean = true,
     val cacheRetentionPolicy: CacheRetentionPolicy = CacheRetentionPolicy.KeepUntilCleared,
+    val artifactDownloadLimits: ArtifactDownloadLimits = ArtifactDownloadLimits(),
     val cacheStats: CacheStats = CacheStats(),
     val loadingCacheStats: Boolean = false,
     val clearingCache: Boolean = false,
@@ -161,6 +165,12 @@ data class ArtifactPreviewState(
 data class PendingArtifactDownload(
     val threadId: String,
     val probe: ArtifactProbe,
+    val maxDownloadBytes: Long,
+)
+
+data class ArtifactOpenRequest(
+    val mimeType: String,
+    val localPath: String,
 )
 
 data class ArtifactDownloadProgress(
@@ -168,6 +178,12 @@ data class ArtifactDownloadProgress(
     val downloadedBytes: Long,
     val totalBytes: Long?,
 )
+
+private sealed interface ArtifactDownloadTarget {
+    data object Preview : ArtifactDownloadTarget
+    data object Open : ArtifactDownloadTarget
+    data class Save(val destination: Uri) : ArtifactDownloadTarget
+}
 
 private fun ChannelProviders.replaceChannelProvider(updated: ChannelProviderInfo): ChannelProviders = copy(
     providers = providers.map { provider -> if (provider.provider == updated.provider) updated else provider },
@@ -242,6 +258,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     language = currentLanguagePreference(),
                     notifyOnRunCompletion = saved.notifyOnRunCompletion,
                     cacheRetentionPolicy = saved.cacheRetentionPolicy,
+                    artifactDownloadLimits = saved.artifactDownloadLimits,
                     defaultAgentId = defaultAgentId,
                     composer = it.composer.copy(
                         options = it.composer.options.copy(assistantId = defaultAgentId),
@@ -432,6 +449,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             language = current.language,
             notifyOnRunCompletion = current.notifyOnRunCompletion,
             cacheRetentionPolicy = current.cacheRetentionPolicy,
+            artifactDownloadLimits = current.artifactDownloadLimits,
             cacheStats = current.cacheStats,
         )
         checkSession()
@@ -515,6 +533,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 language = current.language,
                 notifyOnRunCompletion = current.notifyOnRunCompletion,
                 cacheRetentionPolicy = current.cacheRetentionPolicy,
+                artifactDownloadLimits = current.artifactDownloadLimits,
                 cacheStats = updatedCacheStats,
             )
             refreshSsoProviders()
@@ -838,6 +857,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     artifactDownloadConfirmation = null,
                     artifactDownloadProgress = null,
                     artifactPreview = null,
+                    artifactOpenRequest = null,
                     composer = it.composer.copy(
                         text = draft,
                         attachments = attachments,
@@ -869,6 +889,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 artifactDownloadConfirmation = null,
                 artifactDownloadProgress = null,
                 artifactPreview = null,
+                artifactOpenRequest = null,
                 loadingChat = true,
                 draftStorageKey = thread.id,
                 draftSessionKey = "thread-draft-${thread.id}",
@@ -931,6 +952,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     artifactDownloadConfirmation = null,
                     artifactDownloadProgress = null,
                     artifactPreview = null,
+                    artifactOpenRequest = null,
                     error = null,
                 )
             }
@@ -947,6 +969,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 artifactDownloadConfirmation = null,
                 artifactDownloadProgress = null,
                 artifactPreview = null,
+                artifactOpenRequest = null,
                 composer = it.composer.copy(
                     text = "",
                     attachments = emptyList(),
@@ -991,6 +1014,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         artifactDownloadConfirmation = if (it.selectedThread?.id == thread.id) null else it.artifactDownloadConfirmation,
                         artifactDownloadProgress = if (it.selectedThread?.id == thread.id) null else it.artifactDownloadProgress,
                         artifactPreview = if (it.selectedThread?.id == thread.id) null else it.artifactPreview,
+                        artifactOpenRequest = if (it.selectedThread?.id == thread.id) null else it.artifactOpenRequest,
                         route = if (it.selectedThread?.id == thread.id) AppRoute.Workspace else it.route,
                     )
                 }
@@ -1867,6 +1891,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.update { it.copy(cacheRetentionPolicy = value) }
     }
 
+    fun setArtifactDownloadLimits(value: ArtifactDownloadLimits) {
+        val normalized = normalizeArtifactDownloadLimits(value.autoDownloadBytes, value.manualDownloadBytes)
+        persistSetting { setArtifactDownloadLimits(normalized) }
+        mutableState.update { it.copy(artifactDownloadLimits = normalized) }
+    }
+
     fun refreshCacheStats() {
         if (mutableState.value.loadingCacheStats || mutableState.value.clearingCache) return
         viewModelScope.launch {
@@ -1898,6 +1928,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 artifactDownloadConfirmation = null,
                 artifactDownloadProgress = null,
                 artifactPreview = null,
+                artifactOpenRequest = null,
             )
         }
         viewModelScope.launch {
@@ -1985,6 +2016,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val current = mutableState.value
         val thread = current.selectedThread ?: return
         if (path.isBlank() || current.artifactBusy) return
+        val limits = current.artifactDownloadLimits
         val operationId = nextArtifactOperation()
         mutableState.update {
             it.copy(
@@ -1992,23 +2024,34 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 artifactDownloadConfirmation = null,
                 artifactDownloadProgress = null,
                 artifactPreview = null,
+                artifactOpenRequest = null,
                 error = null,
             )
         }
         artifactDownloadJob = viewModelScope.launch(Dispatchers.IO) {
             try {
-                val probe = threads.probeArtifact(thread.id, path)
+                val probe = threads.probeArtifact(thread.id, path, limits.manualDownloadBytes)
                 currentCoroutineContext().ensureActive()
-                if (requiresArtifactDownloadConfirmation(probe.totalBytes)) {
+                if (requiresArtifactDownloadConfirmation(probe.totalBytes, limits.autoDownloadBytes)) {
                     mutableState.update { latest ->
                         if (!isCurrentArtifactOperation(operationId, latest, thread.id)) latest
                         else latest.copy(
                             artifactBusy = false,
-                            artifactDownloadConfirmation = PendingArtifactDownload(thread.id, probe),
+                            artifactDownloadConfirmation = PendingArtifactDownload(
+                                threadId = thread.id,
+                                probe = probe,
+                                maxDownloadBytes = limits.manualDownloadBytes,
+                            ),
                         )
                     }
                 } else {
-                    downloadArtifact(thread.id, probe, operationId)
+                    downloadArtifact(
+                        threadId = thread.id,
+                        probe = probe,
+                        operationId = operationId,
+                        target = ArtifactDownloadTarget.Preview,
+                        maxDownloadBytes = limits.manualDownloadBytes,
+                    )
                 }
             } catch (error: CancellationException) {
                 throw error
@@ -2029,8 +2072,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun confirmArtifactDownload() {
+    fun confirmArtifactOpen() {
         val pending = mutableState.value.artifactDownloadConfirmation ?: return
+        startArtifactDownload(pending, ArtifactDownloadTarget.Open)
+    }
+
+    fun confirmArtifactSave(destination: Uri) {
+        val pending = mutableState.value.artifactDownloadConfirmation ?: return
+        startArtifactDownload(pending, ArtifactDownloadTarget.Save(destination))
+    }
+
+    private fun startArtifactDownload(pending: PendingArtifactDownload, target: ArtifactDownloadTarget) {
         if (mutableState.value.selectedThread?.id != pending.threadId) return
         val operationId = nextArtifactOperation()
         mutableState.update {
@@ -2038,12 +2090,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 artifactBusy = true,
                 artifactDownloadConfirmation = null,
                 artifactDownloadProgress = ArtifactDownloadProgress(pending.probe.filename, 0L, pending.probe.totalBytes),
+                artifactPreview = null,
+                artifactOpenRequest = null,
                 error = null,
             )
         }
         artifactDownloadJob = viewModelScope.launch(Dispatchers.IO) {
             try {
-                downloadArtifact(pending.threadId, pending.probe, operationId)
+                downloadArtifact(
+                    threadId = pending.threadId,
+                    probe = pending.probe,
+                    operationId = operationId,
+                    target = target,
+                    maxDownloadBytes = pending.maxDownloadBytes,
+                )
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -2052,7 +2112,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         latest.copy(
                             artifactBusy = false,
                             artifactDownloadProgress = null,
-                            error = error.userMessage("Could not download this artifact."),
+                            error = error.userMessage(
+                                if (target is ArtifactDownloadTarget.Save) {
+                                    "Could not save this artifact."
+                                } else {
+                                    "Could not download this artifact."
+                                },
+                            ),
                         )
                     } else {
                         latest
@@ -2069,14 +2135,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 artifactBusy = false,
                 artifactDownloadConfirmation = null,
                 artifactDownloadProgress = null,
+                artifactOpenRequest = null,
             )
         }
     }
 
-    private suspend fun downloadArtifact(threadId: String, probe: ArtifactProbe, operationId: Long) {
+    private suspend fun downloadArtifact(
+        threadId: String,
+        probe: ArtifactProbe,
+        operationId: Long,
+        target: ArtifactDownloadTarget,
+        maxDownloadBytes: Long,
+    ) {
         val directory = File(getApplication<Application>().cacheDir, "artifacts")
         var lastReportedBytes = 0L
-        val download = threads.downloadArtifact(threadId, probe, directory) { downloadedBytes, totalBytes ->
+        val download = threads.downloadArtifact(threadId, probe, directory, maxDownloadBytes) { downloadedBytes, totalBytes ->
             val shouldReport = downloadedBytes == 0L ||
                 downloadedBytes - lastReportedBytes >= ARTIFACT_PROGRESS_UPDATE_BYTES ||
                 (totalBytes != null && downloadedBytes >= totalBytes)
@@ -2091,8 +2164,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         currentCoroutineContext().ensureActive()
-        val text = if (isTextArtifact(download.probe.mimeType, download.probe.filename)) {
+        val text = if (target == ArtifactDownloadTarget.Preview && isTextArtifact(download.probe.mimeType, download.probe.filename)) {
             readArtifactTextPreview(download.file)
+        } else {
+            null
+        }
+        if (target is ArtifactDownloadTarget.Save) {
+            val resolver = getApplication<Application>().contentResolver
+            resolver.openOutputStream(target.destination)?.use { output ->
+                download.file.inputStream().use { input -> input.copyTo(output) }
+            } ?: throw IOException("Could not open the selected destination.")
+            currentCoroutineContext().ensureActive()
+        }
+        val savedNotice = if (target is ArtifactDownloadTarget.Save) {
+            getApplication<Application>().getString(R.string.artifact_saved, download.probe.filename)
         } else {
             null
         }
@@ -2103,14 +2188,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 latest.copy(
                     artifactBusy = false,
                     artifactDownloadProgress = null,
-                    artifactPreview = ArtifactPreviewState(
-                        path = probe.path,
-                        filename = download.probe.filename,
-                        mimeType = download.probe.mimeType,
-                        text = text?.text,
-                        localPath = download.file.absolutePath,
-                        textTruncated = text?.truncated == true,
-                    ),
+                    artifactPreview = if (target == ArtifactDownloadTarget.Preview) {
+                        ArtifactPreviewState(
+                            path = probe.path,
+                            filename = download.probe.filename,
+                            mimeType = download.probe.mimeType,
+                            text = text?.text,
+                            localPath = download.file.absolutePath,
+                            textTruncated = text?.truncated == true,
+                        )
+                    } else {
+                        null
+                    },
+                    artifactOpenRequest = if (target == ArtifactDownloadTarget.Open) {
+                        ArtifactOpenRequest(
+                            mimeType = download.probe.mimeType,
+                            localPath = download.file.absolutePath,
+                        )
+                    } else {
+                        null
+                    },
+                    notice = savedNotice ?: latest.notice,
                 )
             }
         }
@@ -2132,6 +2230,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun dismissArtifactPreview() {
         mutableState.update { it.copy(artifactPreview = null) }
+    }
+
+    fun dismissArtifactOpenRequest() {
+        mutableState.update { it.copy(artifactOpenRequest = null) }
     }
 
     override fun onCleared() {

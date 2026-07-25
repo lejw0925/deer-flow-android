@@ -118,6 +118,7 @@
     <string name="artifact_downloaded_of_total">已下载 %1$s，共 %2$s</string>
     <string name="artifact_downloaded_unknown_total">已下载 %1$s</string>
     <string name="artifact_preview_truncated">仅以纯文本显示前 256 KiB。</string>
+    <string name="artifact_saved">已保存 %1$s。</string>
     <string name="copy">复制</string>
     <string name="token_usage">Token · 输入 %1$s · 输出 %2$s · 合计 %3$s</string>
     <string name="thinking">正在思考</string>
@@ -343,6 +344,11 @@
     <string name="live_updates_available">此设备可使用符合条件的 Android 16 通知</string>
     <string name="live_updates_unavailable">此设备或系统通知设置暂不支持</string>
     <string name="storage">存储</string>
+    <string name="artifact_auto_download_limit">自动下载大小</string>
+    <string name="artifact_auto_download_limit_summary">自动下载不超过 %1$s 的文件</string>
+    <string name="artifact_auto_download_never">不自动下载</string>
+    <string name="artifact_manual_download_limit">手动下载上限</string>
+    <string name="artifact_manual_download_limit_summary">超过 %1$s 的文件无法下载</string>
     <string name="cached_data">缓存数据</string>
     <string name="cache_summary">%1$d 项缓存 · 磁盘占用 %2$s</string>
     <string name="cache_retention">缓存保留策略</string>

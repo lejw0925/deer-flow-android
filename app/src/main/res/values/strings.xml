@@ -118,6 +118,7 @@
     <string name="artifact_downloaded_of_total">%1$s of %2$s</string>
     <string name="artifact_downloaded_unknown_total">%1$s downloaded</string>
     <string name="artifact_preview_truncated">Showing the first 256 KiB as plain text.</string>
+    <string name="artifact_saved">Saved %1$s.</string>
     <string name="copy">Copy</string>
     <string name="token_usage">Tokens · In %1$s · Out %2$s · Total %3$s</string>
     <string name="thinking">Thinking</string>
@@ -344,6 +345,11 @@
     <string name="live_updates_available">Available for eligible Android 16 notifications</string>
     <string name="live_updates_unavailable">Unavailable on this device or in system notification settings</string>
     <string name="storage">Storage</string>
+    <string name="artifact_auto_download_limit">Auto-download size</string>
+    <string name="artifact_auto_download_limit_summary">Download files up to %1$s automatically</string>
+    <string name="artifact_auto_download_never">Never download automatically</string>
+    <string name="artifact_manual_download_limit">Manual download limit</string>
+    <string name="artifact_manual_download_limit_summary">Files larger than %1$s cannot be downloaded</string>
     <string name="cached_data">Cached data</string>
     <string name="cache_summary">%1$d cached items · %2$s on disk</string>
     <string name="cache_retention">Cache retention</string>

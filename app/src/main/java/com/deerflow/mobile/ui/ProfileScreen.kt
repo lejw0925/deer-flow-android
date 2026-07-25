@@ -30,6 +30,7 @@ import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.CleaningServices
 import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Link
@@ -74,10 +75,16 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.deerflow.mobile.BuildConfig
 import com.deerflow.mobile.R
+import com.deerflow.mobile.data.ArtifactDownloadLimits
 import com.deerflow.mobile.data.CacheRetentionPolicy
 import com.deerflow.mobile.data.LanguagePreference
+import com.deerflow.mobile.data.MAX_ARTIFACT_DOWNLOAD_BYTES
 import com.deerflow.mobile.data.ThemePreference
 import com.deerflow.mobile.data.parseThirdPartyLicenseNotices
+
+private const val MEBIBYTE = 1024L * 1024L
+private val ARTIFACT_AUTO_DOWNLOAD_OPTIONS = listOf(0L, MEBIBYTE, 5L * MEBIBYTE, 10L * MEBIBYTE, 25L * MEBIBYTE, 50L * MEBIBYTE, 100L * MEBIBYTE)
+private val ARTIFACT_MANUAL_DOWNLOAD_OPTIONS = listOf(10L * MEBIBYTE, 25L * MEBIBYTE, 50L * MEBIBYTE, 100L * MEBIBYTE, MAX_ARTIFACT_DOWNLOAD_BYTES)
 
 @Composable
 fun ProfileScreen(
@@ -98,6 +105,7 @@ fun ProfileScreen(
         onLanguageSelected = viewModel::setLanguage,
         onNotifyOnRunCompletionChanged = viewModel::setNotifyOnRunCompletion,
         onCacheRetentionPolicySelected = viewModel::setCacheRetentionPolicy,
+        onArtifactDownloadLimitsSelected = viewModel::setArtifactDownloadLimits,
         onRefreshCacheStats = viewModel::refreshCacheStats,
         onClearCache = viewModel::clearCache,
         onSignOut = viewModel::logout,
@@ -126,6 +134,7 @@ internal fun ProfileContent(
     onLanguageSelected: (LanguagePreference) -> Unit,
     onNotifyOnRunCompletionChanged: (Boolean) -> Unit,
     onCacheRetentionPolicySelected: (CacheRetentionPolicy) -> Unit,
+    onArtifactDownloadLimitsSelected: (ArtifactDownloadLimits) -> Unit = {},
     onRefreshCacheStats: () -> Unit,
     onClearCache: () -> Unit,
     onSignOut: () -> Unit,
@@ -137,6 +146,8 @@ internal fun ProfileContent(
     var serverUrl by rememberSaveable(state.serverUrl) { mutableStateOf(state.serverUrl) }
     var showLanguageDialog by rememberSaveable { mutableStateOf(false) }
     var showCachePolicyDialog by rememberSaveable { mutableStateOf(false) }
+    var showArtifactAutoDownloadLimitDialog by rememberSaveable { mutableStateOf(false) }
+    var showArtifactManualDownloadLimitDialog by rememberSaveable { mutableStateOf(false) }
     var showClearCacheDialog by rememberSaveable { mutableStateOf(false) }
     var showAbout by rememberSaveable { mutableStateOf(false) }
     var showDeerFlowLicense by rememberSaveable { mutableStateOf(false) }
@@ -269,6 +280,43 @@ internal fun ProfileContent(
                         SettingsDivider()
                         SettingsSectionTitle(R.string.storage)
                         ListItem(
+                            headlineContent = { Text(stringResource(R.string.artifact_auto_download_limit)) },
+                            supportingContent = {
+                                Text(
+                                    stringResource(
+                                        R.string.artifact_auto_download_limit_summary,
+                                        artifactAutoDownloadLimitLabel(state.artifactDownloadLimits.autoDownloadBytes),
+                                    ),
+                                )
+                            },
+                            leadingContent = { Icon(Icons.Outlined.FileDownload, contentDescription = null) },
+                            trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showArtifactAutoDownloadLimitDialog = true }
+                                .testTag(UiTags.ProfileArtifactAutoDownloadLimit),
+                        )
+                        ListItem(
+                            headlineContent = { Text(stringResource(R.string.artifact_manual_download_limit)) },
+                            supportingContent = {
+                                Text(
+                                    stringResource(
+                                        R.string.artifact_manual_download_limit_summary,
+                                        Formatter.formatFileSize(
+                                            LocalContext.current,
+                                            state.artifactDownloadLimits.manualDownloadBytes,
+                                        ),
+                                    ),
+                                )
+                            },
+                            leadingContent = { Icon(Icons.Outlined.FileDownload, contentDescription = null) },
+                            trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showArtifactManualDownloadLimitDialog = true }
+                                .testTag(UiTags.ProfileArtifactManualDownloadLimit),
+                        )
+                        ListItem(
                             headlineContent = { Text(stringResource(R.string.cached_data)) },
                             supportingContent = {
                                 val size = Formatter.formatShortFileSize(LocalContext.current, state.cacheStats.bytesOnDisk)
@@ -392,6 +440,50 @@ internal fun ProfileContent(
                 onCacheRetentionPolicySelected(it)
             },
             onDismiss = { showCachePolicyDialog = false },
+        )
+    }
+    if (showArtifactAutoDownloadLimitDialog) {
+        val availableValues = ARTIFACT_AUTO_DOWNLOAD_OPTIONS.filter {
+            it <= state.artifactDownloadLimits.manualDownloadBytes
+        }
+        SingleChoiceDialog(
+            title = stringResource(R.string.artifact_auto_download_limit),
+            values = availableValues,
+            selected = state.artifactDownloadLimits.autoDownloadBytes,
+            label = { artifactAutoDownloadLimitLabel(it) },
+            tag = { UiTags.ProfileArtifactAutoDownloadLimitOptionPrefix + it },
+            onSelect = { value ->
+                showArtifactAutoDownloadLimitDialog = false
+                onArtifactDownloadLimitsSelected(
+                    ArtifactDownloadLimits(
+                        autoDownloadBytes = value,
+                        manualDownloadBytes = state.artifactDownloadLimits.manualDownloadBytes,
+                    ),
+                )
+            },
+            onDismiss = { showArtifactAutoDownloadLimitDialog = false },
+        )
+    }
+    if (showArtifactManualDownloadLimitDialog) {
+        val availableValues = ARTIFACT_MANUAL_DOWNLOAD_OPTIONS.filter {
+            it >= state.artifactDownloadLimits.autoDownloadBytes
+        }
+        SingleChoiceDialog(
+            title = stringResource(R.string.artifact_manual_download_limit),
+            values = availableValues,
+            selected = state.artifactDownloadLimits.manualDownloadBytes,
+            label = { Formatter.formatFileSize(LocalContext.current, it) },
+            tag = { UiTags.ProfileArtifactManualDownloadLimitOptionPrefix + it },
+            onSelect = { value ->
+                showArtifactManualDownloadLimitDialog = false
+                onArtifactDownloadLimitsSelected(
+                    ArtifactDownloadLimits(
+                        autoDownloadBytes = state.artifactDownloadLimits.autoDownloadBytes,
+                        manualDownloadBytes = value,
+                    ),
+                )
+            },
+            onDismiss = { showArtifactManualDownloadLimitDialog = false },
         )
     }
     if (showClearCacheDialog) {
@@ -614,6 +706,14 @@ private fun <T> SingleChoiceDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }
+
+@Composable
+private fun artifactAutoDownloadLimitLabel(bytes: Long): String =
+    if (bytes == 0L) {
+        stringResource(R.string.artifact_auto_download_never)
+    } else {
+        Formatter.formatFileSize(LocalContext.current, bytes)
+    }
 
 @Composable
 private fun ProfileSection(content: @Composable () -> Unit) {

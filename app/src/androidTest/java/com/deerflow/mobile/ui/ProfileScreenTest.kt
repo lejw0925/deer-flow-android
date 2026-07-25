@@ -10,6 +10,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import com.deerflow.mobile.BuildConfig
+import com.deerflow.mobile.data.ArtifactDownloadLimits
 import com.deerflow.mobile.data.CacheRetentionPolicy
 import com.deerflow.mobile.data.CacheStats
 import com.deerflow.mobile.data.DeerFlowUser
@@ -63,6 +64,24 @@ class ProfileScreenTest {
     }
 
     @Test
+    fun artifactDownloadLimitSelectionsDispatchCallbacks() {
+        val limits = AtomicReference<ArtifactDownloadLimits>()
+        setProfile(onArtifactDownloadLimitsSelected = limits::set)
+
+        val autoLimit = 5L * 1024 * 1024
+        scrollToProfileItem(UiTags.ProfileArtifactAutoDownloadLimit)
+        compose.onNodeWithTag(UiTags.ProfileArtifactAutoDownloadLimit).performClick()
+        compose.onNodeWithTag(UiTags.ProfileArtifactAutoDownloadLimitOptionPrefix + autoLimit).performClick()
+
+        compose.runOnIdle {
+            assertEquals(
+                ArtifactDownloadLimits(autoDownloadBytes = autoLimit),
+                limits.get(),
+            )
+        }
+    }
+
+    @Test
     fun channelsAreOpenedFromTheProfileScreen() {
         val channelOpens = AtomicInteger()
         setProfile(onOpenChannels = { channelOpens.incrementAndGet() })
@@ -106,6 +125,7 @@ class ProfileScreenTest {
         onThemeSelected: (ThemePreference) -> Unit = {},
         onNotifyOnRunCompletionChanged: (Boolean) -> Unit = {},
         onCacheRetentionPolicySelected: (CacheRetentionPolicy) -> Unit = {},
+        onArtifactDownloadLimitsSelected: (ArtifactDownloadLimits) -> Unit = {},
         onClearCache: () -> Unit = {},
         onOpenChannels: () -> Unit = {},
         onOpenSourceLicenses: () -> Unit = {},
@@ -131,6 +151,7 @@ class ProfileScreenTest {
                     onLanguageSelected = onLanguageSelected,
                     onNotifyOnRunCompletionChanged = onNotifyOnRunCompletionChanged,
                     onCacheRetentionPolicySelected = onCacheRetentionPolicySelected,
+                    onArtifactDownloadLimitsSelected = onArtifactDownloadLimitsSelected,
                     onRefreshCacheStats = {},
                     onClearCache = onClearCache,
                     onSignOut = {},

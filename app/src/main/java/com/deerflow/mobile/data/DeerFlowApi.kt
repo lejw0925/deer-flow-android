@@ -56,8 +56,20 @@ class ApiException(
 internal const val MAX_ARTIFACT_DOWNLOAD_BYTES = 200L * 1024 * 1024
 private const val MAX_ARTIFACT_ERROR_BODY_BYTES = 64 * 1024
 
-private fun artifactDownloadLimitError(): ApiException =
-    ApiException(413, "This artifact exceeds the 200 MiB Android download limit.")
+private fun artifactDownloadLimitError(maxBytes: Long = MAX_ARTIFACT_DOWNLOAD_BYTES): ApiException =
+    ApiException(
+        413,
+        if (maxBytes >= MAX_ARTIFACT_DOWNLOAD_BYTES) {
+            "This artifact exceeds the 200 MiB Android download limit."
+        } else {
+            "This artifact exceeds the configured download limit."
+        },
+    )
+
+private fun artifactDownloadLimit(maxBytes: Long): Long {
+    require(maxBytes > 0L) { "Artifact download limit must be positive." }
+    return minOf(maxBytes, MAX_ARTIFACT_DOWNLOAD_BYTES)
+}
 
 private fun artifactProbe(response: okhttp3.Response, path: String, totalBytes: Long?): ArtifactProbe = ArtifactProbe(
     path = path,
@@ -585,7 +597,12 @@ class DeerFlowApi(
         }
     }
 
-    suspend fun probeArtifact(threadId: String, path: String): ArtifactProbe = withContext(Dispatchers.IO) {
+    suspend fun probeArtifact(
+        threadId: String,
+        path: String,
+        maxBytes: Long = MAX_ARTIFACT_DOWNLOAD_BYTES,
+    ): ArtifactProbe = withContext(Dispatchers.IO) {
+        val downloadLimit = artifactDownloadLimit(maxBytes)
         val call = client.newCall(
             Request.Builder()
                 .url(artifactUrl(threadId, path))
@@ -604,7 +621,7 @@ class DeerFlowApi(
                 // Some servers ignore Range entirely and return a full 200 response; its Content-Length is usable.
                 val totalBytes = contentRangeTotal(response.header("Content-Range"))
                     ?: body?.contentLength()?.takeIf { response.code == HttpURLConnection.HTTP_OK && it >= 0L }
-                if (totalBytes != null && totalBytes > MAX_ARTIFACT_DOWNLOAD_BYTES) throw artifactDownloadLimitError()
+                if (totalBytes != null && totalBytes > downloadLimit) throw artifactDownloadLimitError(downloadLimit)
                 artifactProbe(response, path, totalBytes)
             }
         } finally {
@@ -616,9 +633,11 @@ class DeerFlowApi(
         threadId: String,
         probe: ArtifactProbe,
         directory: File,
+        maxBytes: Long = MAX_ARTIFACT_DOWNLOAD_BYTES,
         onProgress: (downloadedBytes: Long, totalBytes: Long?) -> Unit = { _, _ -> },
     ): ArtifactDownload = withContext(Dispatchers.IO) {
-        if (probe.totalBytes != null && probe.totalBytes > MAX_ARTIFACT_DOWNLOAD_BYTES) throw artifactDownloadLimitError()
+        val downloadLimit = artifactDownloadLimit(maxBytes)
+        if (probe.totalBytes != null && probe.totalBytes > downloadLimit) throw artifactDownloadLimitError(downloadLimit)
         if (!directory.exists() && !directory.mkdirs()) throw IOException("Could not create the artifact cache directory.")
 
         val safeFilename = cacheSafeArtifactFilename(probe.filename)
@@ -643,10 +662,10 @@ class DeerFlowApi(
                     throw IOException("Artifact download did not return a complete response.")
                 }
                 val contentLength = body?.contentLength() ?: -1L
-                if (contentLength > MAX_ARTIFACT_DOWNLOAD_BYTES) throw artifactDownloadLimitError()
+                if (contentLength > downloadLimit) throw artifactDownloadLimitError(downloadLimit)
                 val responseTotal = contentRangeTotal(response.header("Content-Range"))
                 val totalBytes = probe.totalBytes ?: responseTotal ?: contentLength.takeIf { it >= 0L }
-                if (totalBytes != null && totalBytes > MAX_ARTIFACT_DOWNLOAD_BYTES) throw artifactDownloadLimitError()
+                if (totalBytes != null && totalBytes > downloadLimit) throw artifactDownloadLimitError(downloadLimit)
                 if (probe.totalBytes != null && responseTotal != null && probe.totalBytes != responseTotal) {
                     throw IOException("Artifact size changed before the download started.")
                 }
@@ -657,7 +676,12 @@ class DeerFlowApi(
                 onProgress(0L, totalBytes)
                 val bytesDownloaded = body?.byteStream()?.use { input ->
                     partFile.outputStream().buffered().use { output ->
-                        copyArtifactStream(input, output, expectedLength = contentLength) { downloadedBytes ->
+                        copyArtifactStream(
+                            input = input,
+                            output = output,
+                            expectedLength = contentLength,
+                            maxBytes = downloadLimit,
+                        ) { downloadedBytes ->
                             onProgress(downloadedBytes, totalBytes)
                         }
                     }
@@ -1293,7 +1317,7 @@ internal suspend fun copyArtifactStream(
     maxBytes: Long = MAX_ARTIFACT_DOWNLOAD_BYTES,
     onBytesWritten: (Long) -> Unit = {},
 ): Long {
-    if (expectedLength > maxBytes) throw artifactDownloadLimitError()
+    if (expectedLength > maxBytes) throw artifactDownloadLimitError(maxBytes)
     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
     var bytesWritten = 0L
     while (true) {
@@ -1301,7 +1325,7 @@ internal suspend fun copyArtifactStream(
         val count = input.read(buffer)
         if (count < 0) break
         if (count == 0) continue
-        if (count.toLong() > maxBytes - bytesWritten) throw artifactDownloadLimitError()
+        if (count.toLong() > maxBytes - bytesWritten) throw artifactDownloadLimitError(maxBytes)
         output.write(buffer, 0, count)
         bytesWritten += count
         onBytesWritten(bytesWritten)

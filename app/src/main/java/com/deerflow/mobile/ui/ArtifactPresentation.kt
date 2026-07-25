@@ -1,11 +1,12 @@
 package com.deerflow.mobile.ui
 
+import com.deerflow.mobile.data.DEFAULT_ARTIFACT_AUTO_DOWNLOAD_BYTES
 import java.io.File
 import java.io.FilterInputStream
 import java.io.InputStream
 import java.io.InputStreamReader
 
-internal const val ARTIFACT_CONFIRMATION_BYTES = 10L * 1024 * 1024
+internal const val ARTIFACT_CONFIRMATION_BYTES = DEFAULT_ARTIFACT_AUTO_DOWNLOAD_BYTES
 internal const val MAX_INLINE_ARTIFACT_TEXT_BYTES = 512L * 1024
 internal const val MAX_ARTIFACT_TEXT_PREVIEW_BYTES = 256L * 1024
 
@@ -14,8 +15,10 @@ internal data class ArtifactTextPreview(
     val truncated: Boolean,
 )
 
-internal fun requiresArtifactDownloadConfirmation(totalBytes: Long?): Boolean =
-    totalBytes == null || totalBytes > ARTIFACT_CONFIRMATION_BYTES
+internal fun requiresArtifactDownloadConfirmation(
+    totalBytes: Long?,
+    autoDownloadBytes: Long = ARTIFACT_CONFIRMATION_BYTES,
+): Boolean = totalBytes == null || totalBytes > autoDownloadBytes
 
 internal fun isTextArtifact(mimeType: String, filename: String): Boolean {
     if (mimeType in setOf("text/html", "application/xhtml+xml", "image/svg+xml")) return false

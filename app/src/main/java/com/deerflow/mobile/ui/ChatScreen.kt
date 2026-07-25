@@ -180,8 +180,11 @@ fun ChatScreen(
         pendingExportFormat = null
         if (uri != null && format != null) viewModel.exportConversation(uri, format)
     }
-    val artifactSaveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
+    val artifactPreviewSaveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
         if (uri != null) viewModel.saveArtifact(uri)
+    }
+    val artifactDownloadSaveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
+        if (uri != null) viewModel.confirmArtifactSave(uri)
     }
 
     Column(Modifier.fillMaxSize().testTag(UiTags.ChatScreen).padding(contentPadding)) {
@@ -285,7 +288,7 @@ fun ChatScreen(
         ArtifactPreviewDialog(
             preview = preview,
             onDismiss = viewModel::dismissArtifactPreview,
-            onSave = { artifactSaveLauncher.launch(preview.filename) },
+            onSave = { artifactPreviewSaveLauncher.launch(preview.filename) },
             onOpen = {
                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", File(preview.localPath))
                 val intent = Intent(Intent.ACTION_VIEW)
@@ -299,10 +302,26 @@ fun ChatScreen(
             },
         )
     }
+    state.artifactOpenRequest?.let { request ->
+        LaunchedEffect(request.localPath) {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", File(request.localPath))
+            val intent = Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, request.mimeType)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            try {
+                context.startActivity(intent)
+            } catch (_: ActivityNotFoundException) {
+                viewModel.reportArtifactOpenFailure()
+            } finally {
+                viewModel.dismissArtifactOpenRequest()
+            }
+        }
+    }
     state.artifactDownloadConfirmation?.let { pending ->
-        ArtifactDownloadConfirmationDialog(
+        ArtifactDownloadActionDialog(
             pending = pending,
-            onDownload = viewModel::confirmArtifactDownload,
+            onOpen = viewModel::confirmArtifactOpen,
+            onSave = { artifactDownloadSaveLauncher.launch(pending.probe.filename) },
             onCancel = viewModel::cancelArtifactDownload,
         )
     }
@@ -329,14 +348,18 @@ internal fun ConversationMessageList(
 ) {
     val messageGroups = remember(messages) { groupChatMessages(messages) }
     var expandedProcessingGroups by remember(conversationKey) { mutableStateOf(emptySet<String>()) }
+    var initialPositionRestored by remember(conversationKey) { mutableStateOf(false) }
     val autoFollowEnabled by rememberUpdatedState(
         shouldAutoFollowConversation(messageGroups, runActive, expandedProcessingGroups),
     )
 
-    LaunchedEffect(messageGroups.size, messages.lastOrNull()?.text?.length) {
+    LaunchedEffect(conversationKey, messageGroups.size, messages.lastOrNull()?.text?.length) {
         if (messageGroups.isNotEmpty()) {
-            delay(40)
-            if (autoFollowEnabled) {
+            if (!initialPositionRestored) {
+                listState.scrollToItem(messageGroups.lastIndex)
+                initialPositionRestored = true
+            } else if (autoFollowEnabled) {
+                delay(40)
                 listState.animateScrollToItem(messageGroups.lastIndex)
             }
         }
@@ -758,9 +781,10 @@ internal fun ArtifactPreviewDialog(
 }
 
 @Composable
-private fun ArtifactDownloadConfirmationDialog(
+private fun ArtifactDownloadActionDialog(
     pending: PendingArtifactDownload,
-    onDownload: () -> Unit,
+    onOpen: () -> Unit,
+    onSave: () -> Unit,
     onCancel: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -777,8 +801,13 @@ private fun ArtifactDownloadConfirmationDialog(
                 Text(stringResource(R.string.artifact_download_confirmation_body), style = MaterialTheme.typography.bodyMedium)
             }
         },
-        confirmButton = { TextButton(onClick = onDownload) { Text(stringResource(R.string.download)) } },
-        dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) } },
+        confirmButton = { TextButton(onClick = onOpen) { Text(stringResource(R.string.open)) } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onSave) { Text(stringResource(R.string.save_copy)) }
+                TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
+            }
+        },
     )
 }
 

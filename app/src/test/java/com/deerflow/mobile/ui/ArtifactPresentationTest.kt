@@ -17,6 +17,15 @@ class ArtifactPresentationTest {
     }
 
     @Test
+    fun confirmationUsesTheConfiguredAutoDownloadLimit() {
+        val autoDownloadBytes = 5L * 1024 * 1024
+
+        assertFalse(requiresArtifactDownloadConfirmation(autoDownloadBytes, autoDownloadBytes))
+        assertTrue(requiresArtifactDownloadConfirmation(autoDownloadBytes + 1L, autoDownloadBytes))
+        assertTrue(requiresArtifactDownloadConfirmation(null, autoDownloadBytes))
+    }
+
+    @Test
     fun largeTextPreviewReadsOnlyTheFirst256KiBAndMarksItTruncated() {
         val file = Files.createTempFile("artifact-preview", ".txt").toFile()
         try {
