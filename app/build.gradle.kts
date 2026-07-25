@@ -52,14 +52,19 @@ android {
         applicationId = "com.deerflow.mobile"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }
 
     signingConfigs {
+        getByName("debug") {
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
         create("release") {
             if (releaseSigningConfigured) {
                 storeFile = file(requireNotNull(releaseStoreFile))
@@ -70,10 +75,16 @@ android {
                 // A locally verifiable release variant, never a distributable release artifact.
                 initWith(getByName("debug"))
             }
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
         }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(

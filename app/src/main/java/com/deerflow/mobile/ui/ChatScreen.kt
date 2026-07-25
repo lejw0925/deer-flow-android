@@ -110,6 +110,7 @@ import androidx.compose.ui.semantics.traversalIndex
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -180,11 +181,8 @@ fun ChatScreen(
         pendingExportFormat = null
         if (uri != null && format != null) viewModel.exportConversation(uri, format)
     }
-    val artifactPreviewSaveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
+    val artifactSaveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
         if (uri != null) viewModel.saveArtifact(uri)
-    }
-    val artifactDownloadSaveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
-        if (uri != null) viewModel.confirmArtifactSave(uri)
     }
 
     Column(Modifier.fillMaxSize().testTag(UiTags.ChatScreen).padding(contentPadding)) {
@@ -284,52 +282,28 @@ fun ChatScreen(
             },
         )
     }
-    state.artifactPreview?.let { preview ->
-        ArtifactPreviewDialog(
-            preview = preview,
-            onDismiss = viewModel::dismissArtifactPreview,
-            onSave = { artifactPreviewSaveLauncher.launch(preview.filename) },
-            onOpen = {
-                val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", File(preview.localPath))
-                val intent = Intent(Intent.ACTION_VIEW)
-                    .setDataAndType(uri, preview.mimeType)
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                try {
-                    context.startActivity(intent)
-                } catch (_: ActivityNotFoundException) {
-                    viewModel.reportArtifactOpenFailure()
-                }
-            },
-        )
-    }
-    state.artifactOpenRequest?.let { request ->
-        LaunchedEffect(request.localPath) {
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", File(request.localPath))
-            val intent = Intent(Intent.ACTION_VIEW)
-                .setDataAndType(uri, request.mimeType)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            try {
-                context.startActivity(intent)
-            } catch (_: ActivityNotFoundException) {
-                viewModel.reportArtifactOpenFailure()
-            } finally {
-                viewModel.dismissArtifactOpenRequest()
-            }
+    state.artifactSession?.let { session ->
+        if (session.phase != ArtifactSessionPhase.Probing) {
+            ArtifactSessionDialog(
+                session = session,
+                onDismiss = viewModel::dismissArtifactSession,
+                onDownload = viewModel::confirmArtifactDownload,
+                onCancel = viewModel::cancelArtifactDownload,
+                onSave = { artifactSaveLauncher.launch(session.filename) },
+                onOpen = {
+                    val localPath = session.localPath ?: return@ArtifactSessionDialog
+                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", File(localPath))
+                    val intent = Intent(Intent.ACTION_VIEW)
+                        .setDataAndType(uri, session.mimeType.ifBlank { "*/*" })
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    try {
+                        context.startActivity(intent)
+                    } catch (_: ActivityNotFoundException) {
+                        viewModel.reportArtifactOpenFailure()
+                    }
+                },
+            )
         }
-    }
-    state.artifactDownloadConfirmation?.let { pending ->
-        ArtifactDownloadActionDialog(
-            pending = pending,
-            onOpen = viewModel::confirmArtifactOpen,
-            onSave = { artifactDownloadSaveLauncher.launch(pending.probe.filename) },
-            onCancel = viewModel::cancelArtifactDownload,
-        )
-    }
-    state.artifactDownloadProgress?.let { progress ->
-        ArtifactDownloadProgressDialog(
-            progress = progress,
-            onCancel = viewModel::cancelArtifactDownload,
-        )
     }
 }
 
@@ -701,21 +675,26 @@ internal fun TodoSummary(todos: List<TodoItem>) {
             }
             if (expanded) {
                 todos.forEach { todo ->
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            when (todo.status) {
-                                "completed" -> "[x]"
-                                "in_progress" -> "[>]"
-                                else -> "[ ]"
-                            },
-                            color = if (todo.status == "completed") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(todo.content, modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    }
+                    val status = todo.status.lowercase()
+                    val completed = status == "completed"
+                    val inProgress = status == "in_progress"
+                    Text(
+                        todo.content,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = if (inProgress) FontWeight.Bold else FontWeight.Normal,
+                            textDecoration = if (completed) TextDecoration.LineThrough else TextDecoration.None,
+                        ),
+                        color = when {
+                            inProgress -> MaterialTheme.colorScheme.primary
+                            completed -> MaterialTheme.colorScheme.onSurfaceVariant
+                            else -> MaterialTheme.colorScheme.onSurface
+                        },
+                    )
                 }
             }
         }
@@ -729,122 +708,153 @@ internal fun ArtifactPreviewDialog(
     onSave: () -> Unit,
     onOpen: () -> Unit,
 ) {
-    val markdown = preview.filename.endsWith(".md", ignoreCase = true) || preview.filename.endsWith(".markdown", ignoreCase = true)
-    val language = artifactLanguage(preview.filename, preview.mimeType)
+    ArtifactSessionDialog(
+        session = ArtifactSession(
+            threadId = "",
+            path = preview.path,
+            filename = preview.filename,
+            mimeType = preview.mimeType,
+            totalBytes = null,
+            maxDownloadBytes = 0L,
+            phase = ArtifactSessionPhase.Ready,
+            localPath = preview.localPath,
+            text = preview.text,
+            textTruncated = preview.textTruncated,
+        ),
+        onDismiss = onDismiss,
+        onDownload = {},
+        onCancel = onDismiss,
+        onSave = onSave,
+        onOpen = onOpen,
+    )
+}
+
+@Composable
+internal fun ArtifactSessionDialog(
+    session: ArtifactSession,
+    onDismiss: () -> Unit,
+    onDownload: () -> Unit,
+    onCancel: () -> Unit,
+    onSave: () -> Unit,
+    onOpen: () -> Unit,
+) {
+    val context = LocalContext.current
+    val ready = session.phase == ArtifactSessionPhase.Ready
+    val downloading = session.phase == ArtifactSessionPhase.Downloading
+    val awaiting = session.phase == ArtifactSessionPhase.AwaitingConfirm
+    val sizeLabel = session.totalBytes?.let { Formatter.formatFileSize(context, it) }
+        ?: stringResource(R.string.artifact_size_unknown)
+    val downloadedLabel = Formatter.formatFileSize(context, session.downloadedBytes)
+    val markdown = session.filename.endsWith(".md", ignoreCase = true) ||
+        session.filename.endsWith(".markdown", ignoreCase = true)
+    val language = artifactLanguage(session.filename, session.mimeType)
     AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(preview.filename, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        onDismissRequest = {
+            if (downloading) onCancel() else onDismiss()
+        },
+        title = { Text(session.filename, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         text = {
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(6.dp),
-                modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
-            ) {
-                SelectionContainer {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (preview.textTruncated) {
-                            Text(
-                                stringResource(R.string.artifact_preview_truncated),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (session.mimeType.isNotBlank()) {
+                    Text(session.mimeType, style = MaterialTheme.typography.bodyMedium)
+                }
+                Text(sizeLabel, style = MaterialTheme.typography.bodyMedium)
+                when {
+                    awaiting -> {
+                        Text(
+                            stringResource(R.string.artifact_download_confirmation_body),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                    downloading -> {
+                        Text(
+                            if (session.totalBytes == null) {
+                                stringResource(R.string.artifact_downloaded_unknown_total, downloadedLabel)
+                            } else {
+                                stringResource(R.string.artifact_downloaded_of_total, downloadedLabel, sizeLabel)
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        if (session.totalBytes == null || session.totalBytes <= 0L) {
+                            LoadingIndicator(Modifier.size(24.dp))
+                        } else {
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = {
+                                    (session.downloadedBytes.toFloat() / session.totalBytes).coerceIn(0f, 1f)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
                             )
                         }
-                        when {
-                            preview.text == null -> Text(preview.mimeType)
-                            markdown && !preview.textTruncated -> MarkdownContent(preview.text)
-                            language != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(language, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                                Text(
-                                    preview.text,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                                )
+                    }
+                    ready && session.text != null -> {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 420.dp)
+                                .verticalScroll(rememberScrollState()),
+                        ) {
+                            SelectionContainer {
+                                Column(
+                                    Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    if (session.textTruncated) {
+                                        Text(
+                                            stringResource(R.string.artifact_preview_truncated),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    when {
+                                        markdown && !session.textTruncated -> MarkdownContent(session.text)
+                                        language != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Text(
+                                                language,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.primary,
+                                            )
+                                            Text(
+                                                session.text,
+                                                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                                            )
+                                        }
+                                        else -> Text(
+                                            session.text,
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                                        )
+                                    }
+                                }
                             }
-                            else -> Text(
-                                preview.text,
-                                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                            )
                         }
                     }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onOpen) { Text(stringResource(R.string.open)) }
-        },
-        dismissButton = {
-            Row {
-                TextButton(onClick = onSave) { Text(stringResource(R.string.save_copy)) }
-                TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
-            }
-        },
-    )
-}
-
-@Composable
-private fun ArtifactDownloadActionDialog(
-    pending: PendingArtifactDownload,
-    onOpen: () -> Unit,
-    onSave: () -> Unit,
-    onCancel: () -> Unit,
-) {
-    val context = LocalContext.current
-    val size = pending.probe.totalBytes?.let { Formatter.formatFileSize(context, it) }
-        ?: stringResource(R.string.artifact_size_unknown)
-    AlertDialog(
-        onDismissRequest = onCancel,
-        title = { Text(stringResource(R.string.artifact_download_title)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(pending.probe.filename, style = MaterialTheme.typography.titleSmall)
-                Text(pending.probe.mimeType, style = MaterialTheme.typography.bodyMedium)
-                Text(size, style = MaterialTheme.typography.bodyMedium)
-                Text(stringResource(R.string.artifact_download_confirmation_body), style = MaterialTheme.typography.bodyMedium)
-            }
-        },
-        confirmButton = { TextButton(onClick = onOpen) { Text(stringResource(R.string.open)) } },
-        dismissButton = {
-            Row {
-                TextButton(onClick = onSave) { Text(stringResource(R.string.save_copy)) }
-                TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
-            }
-        },
-    )
-}
-
-@Composable
-private fun ArtifactDownloadProgressDialog(
-    progress: ArtifactDownloadProgress,
-    onCancel: () -> Unit,
-) {
-    val context = LocalContext.current
-    val size = Formatter.formatFileSize(context, progress.downloadedBytes)
-    val total = progress.totalBytes?.let { Formatter.formatFileSize(context, it) }
-    AlertDialog(
-        onDismissRequest = onCancel,
-        title = { Text(stringResource(R.string.artifact_downloading_title)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(progress.filename, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(
-                    if (total == null) {
-                        stringResource(R.string.artifact_downloaded_unknown_total, size)
-                    } else {
-                        stringResource(R.string.artifact_downloaded_of_total, size, total)
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                if (progress.totalBytes == null || progress.totalBytes <= 0L) {
-                    LoadingIndicator(Modifier.size(24.dp))
-                } else {
-                    androidx.compose.material3.LinearProgressIndicator(
-                        progress = { (progress.downloadedBytes.toFloat() / progress.totalBytes).coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+            when {
+                awaiting -> TextButton(onClick = onDownload) { Text(stringResource(R.string.download)) }
+                downloading -> {}
+                ready -> TextButton(onClick = onOpen, enabled = session.localPath != null) {
+                    Text(stringResource(R.string.open))
                 }
             }
         },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) } },
+        dismissButton = {
+            Row {
+                if (ready) {
+                    TextButton(onClick = onSave, enabled = session.localPath != null) {
+                        Text(stringResource(R.string.save_copy))
+                    }
+                }
+                TextButton(
+                    onClick = if (downloading) onCancel else onDismiss,
+                ) {
+                    Text(stringResource(if (downloading || awaiting) R.string.cancel else R.string.close))
+                }
+            }
+        },
     )
 }
 

@@ -35,18 +35,28 @@ data class SettingsSnapshot(
 
 data class ArtifactDownloadLimits(
     val autoDownloadBytes: Long = DEFAULT_ARTIFACT_AUTO_DOWNLOAD_BYTES,
-    val manualDownloadBytes: Long = MAX_ARTIFACT_DOWNLOAD_BYTES,
+    val manualDownloadBytes: Long = DEFAULT_ARTIFACT_MANUAL_DOWNLOAD_BYTES,
 )
 
+internal const val MIN_ARTIFACT_AUTO_DOWNLOAD_BYTES = 100L * 1024
+internal const val MAX_ARTIFACT_AUTO_DOWNLOAD_BYTES = 50L * 1024 * 1024
+internal const val MIN_ARTIFACT_MANUAL_DOWNLOAD_BYTES = 200L * 1024 * 1024
 internal const val DEFAULT_ARTIFACT_AUTO_DOWNLOAD_BYTES = 10L * 1024 * 1024
+internal const val DEFAULT_ARTIFACT_MANUAL_DOWNLOAD_BYTES = 200L * 1024 * 1024
 
 internal fun normalizeArtifactDownloadLimits(
     autoDownloadBytes: Long,
     manualDownloadBytes: Long,
 ): ArtifactDownloadLimits {
-    val manualLimit = manualDownloadBytes.coerceIn(1L, MAX_ARTIFACT_DOWNLOAD_BYTES)
+    val manualLimit = manualDownloadBytes.coerceIn(
+        MIN_ARTIFACT_MANUAL_DOWNLOAD_BYTES,
+        MAX_ARTIFACT_DOWNLOAD_BYTES,
+    )
     return ArtifactDownloadLimits(
-        autoDownloadBytes = autoDownloadBytes.coerceIn(0L, manualLimit),
+        autoDownloadBytes = autoDownloadBytes.coerceIn(
+            MIN_ARTIFACT_AUTO_DOWNLOAD_BYTES,
+            minOf(MAX_ARTIFACT_AUTO_DOWNLOAD_BYTES, manualLimit),
+        ),
         manualDownloadBytes = manualLimit,
     )
 }
@@ -153,7 +163,7 @@ class SettingsStore internal constructor(
         }.getOrDefault(CacheRetentionPolicy.KeepUntilCleared),
         artifactDownloadLimits = normalizeArtifactDownloadLimits(
             autoDownloadBytes = this[ARTIFACT_AUTO_DOWNLOAD_BYTES] ?: DEFAULT_ARTIFACT_AUTO_DOWNLOAD_BYTES,
-            manualDownloadBytes = this[ARTIFACT_MANUAL_DOWNLOAD_BYTES] ?: MAX_ARTIFACT_DOWNLOAD_BYTES,
+            manualDownloadBytes = this[ARTIFACT_MANUAL_DOWNLOAD_BYTES] ?: DEFAULT_ARTIFACT_MANUAL_DOWNLOAD_BYTES,
         ),
     )
 

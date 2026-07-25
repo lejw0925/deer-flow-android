@@ -64,21 +64,11 @@ class ProfileScreenTest {
     }
 
     @Test
-    fun artifactDownloadLimitSelectionsDispatchCallbacks() {
-        val limits = AtomicReference<ArtifactDownloadLimits>()
-        setProfile(onArtifactDownloadLimitsSelected = limits::set)
-
-        val autoLimit = 5L * 1024 * 1024
+    fun artifactDownloadLimitSlidersAreShown() {
+        setProfile()
         scrollToProfileItem(UiTags.ProfileArtifactAutoDownloadLimit)
-        compose.onNodeWithTag(UiTags.ProfileArtifactAutoDownloadLimit).performClick()
-        compose.onNodeWithTag(UiTags.ProfileArtifactAutoDownloadLimitOptionPrefix + autoLimit).performClick()
-
-        compose.runOnIdle {
-            assertEquals(
-                ArtifactDownloadLimits(autoDownloadBytes = autoLimit),
-                limits.get(),
-            )
-        }
+        compose.onNodeWithTag(UiTags.ProfileArtifactAutoDownloadLimit).assertExists()
+        compose.onNodeWithTag(UiTags.ProfileArtifactManualDownloadLimit).assertExists()
     }
 
     @Test

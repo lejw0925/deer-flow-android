@@ -346,7 +346,6 @@
     <string name="storage">存储</string>
     <string name="artifact_auto_download_limit">自动下载大小</string>
     <string name="artifact_auto_download_limit_summary">自动下载不超过 %1$s 的文件</string>
-    <string name="artifact_auto_download_never">不自动下载</string>
     <string name="artifact_manual_download_limit">手动下载上限</string>
     <string name="artifact_manual_download_limit_summary">超过 %1$s 的文件无法下载</string>
     <string name="cached_data">缓存数据</string>

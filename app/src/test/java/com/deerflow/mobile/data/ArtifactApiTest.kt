@@ -102,9 +102,9 @@ class ArtifactApiTest {
     }
 
     @Test
-    fun downloadRejectsTwoHundredOneMiBAtProbeWithoutAFullRequest() = runBlocking {
+    fun downloadRejectsOneGiBPlusOneAtProbeWithoutAFullRequest() = runBlocking {
         val server = ArtifactHttpServer(
-            listOf(ArtifactResponse(status = 206, body = byteArrayOf(0), headers = mapOf("Content-Range" to "bytes 0-0/${201L * 1024 * 1024}"))),
+            listOf(ArtifactResponse(status = 206, body = byteArrayOf(0), headers = mapOf("Content-Range" to "bytes 0-0/${MAX_ARTIFACT_DOWNLOAD_BYTES + 1L}"))),
         )
         try {
             val error = runCatching {

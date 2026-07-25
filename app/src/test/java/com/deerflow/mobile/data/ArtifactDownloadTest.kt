@@ -43,7 +43,7 @@ class ArtifactDownloadTest {
     }
 
     @Test
-    fun streamRejectsBodiesThatExceedTheTwoHundredMiBLimit() = runBlocking {
+    fun streamRejectsBodiesThatExceedTheOneGiBLimit() = runBlocking {
         val error = runCatching {
             copyArtifactStream(
                 input = ByteArrayInputStream(ByteArray(8)),

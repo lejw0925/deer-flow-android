@@ -30,7 +30,6 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.CallSplit
 import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.CheckBoxOutlineBlank
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Description
@@ -48,6 +47,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -616,22 +617,21 @@ private fun MessageBlockView(block: MessageBlock, onArtifact: (String) -> Unit =
         is MessageBlock.HumanInput -> Unit
         is MessageBlock.Approval -> Unit
         is MessageBlock.HumanInputResponseBlock -> Unit
-        is MessageBlock.Todo -> Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = when (block.status) {
-                    "completed" -> Icons.Outlined.CheckCircle
-                    "in_progress" -> Icons.Outlined.IndeterminateCheckBox
-                    else -> Icons.Outlined.CheckBoxOutlineBlank
+        is MessageBlock.Todo -> {
+            val completed = block.status == "completed"
+            val inProgress = block.status == "in_progress"
+            Text(
+                block.title,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = if (inProgress) FontWeight.Bold else FontWeight.Normal,
+                    textDecoration = if (completed) TextDecoration.LineThrough else TextDecoration.None,
+                ),
+                color = when {
+                    inProgress -> MaterialTheme.colorScheme.primary
+                    completed -> MaterialTheme.colorScheme.onSurfaceVariant
+                    else -> MaterialTheme.colorScheme.onSurface
                 },
-                contentDescription = null,
-                tint = when (block.status) {
-                    "completed" -> MaterialTheme.colorScheme.primary
-                    "in_progress" -> MaterialTheme.colorScheme.secondary
-                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                modifier = Modifier.size(18.dp),
             )
-            Text(block.title, modifier = Modifier.padding(start = 8.dp))
         }
         is MessageBlock.Artifact -> FileAttachmentChip(
             filename = block.title,

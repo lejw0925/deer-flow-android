@@ -53,14 +53,14 @@ class ApiException(
     override val message: String,
 ) : Exception(message)
 
-internal const val MAX_ARTIFACT_DOWNLOAD_BYTES = 200L * 1024 * 1024
+internal const val MAX_ARTIFACT_DOWNLOAD_BYTES = 1024L * 1024 * 1024
 private const val MAX_ARTIFACT_ERROR_BODY_BYTES = 64 * 1024
 
 private fun artifactDownloadLimitError(maxBytes: Long = MAX_ARTIFACT_DOWNLOAD_BYTES): ApiException =
     ApiException(
         413,
         if (maxBytes >= MAX_ARTIFACT_DOWNLOAD_BYTES) {
-            "This artifact exceeds the 200 MiB Android download limit."
+            "This artifact exceeds the 1 GiB Android download limit."
         } else {
             "This artifact exceeds the configured download limit."
         },
