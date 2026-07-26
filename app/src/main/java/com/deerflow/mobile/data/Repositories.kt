@@ -108,6 +108,14 @@ class RunRepository(private val api: DeerFlowApi) {
         if (runId != null) runCatching { api.cancelRun(threadId, runId) }
     }
 
+    suspend fun details(threadId: String): List<RunDetails> = api.listRunDetails(threadId)
+
+    suspend fun events(threadId: String, runId: String): List<RunEventRecord> =
+        api.listRunEvents(threadId, runId)
+
+    suspend fun workspaceChanges(threadId: String, runId: String): WorkspaceChanges =
+        api.workspaceChanges(threadId, runId)
+
     fun disconnect() = api.cancelActiveStream()
 }
 
@@ -208,6 +216,15 @@ class WorkspaceRepository(
 
     suspend fun disconnectChannelProvider(provider: String): ChannelProviderInfo = api.disconnectChannelProvider(provider)
     suspend fun connectChannelProvider(provider: String): ChannelConnectResult = api.connectChannelProvider(provider)
+
+    suspend fun larkIntegrationStatus(): LarkIntegrationStatus = api.loadLarkIntegrationStatus()
+    suspend fun installLarkIntegration(): LarkIntegrationResult = api.installLarkIntegration()
+    suspend fun startLarkConfiguration(brand: String): LarkVerification = api.startLarkConfiguration(brand)
+    suspend fun completeLarkConfiguration(verification: LarkVerification): LarkIntegrationResult =
+        api.completeLarkConfiguration(verification)
+    suspend fun startLarkAuthorization(): LarkVerification = api.startLarkAuthorization()
+    suspend fun completeLarkAuthorization(verification: LarkVerification): LarkIntegrationResult =
+        api.completeLarkAuthorization(verification)
 
     private suspend fun cacheMemory(value: MemoryData): MemoryData {
         cache.saveMemory(api.serverUrl, value)

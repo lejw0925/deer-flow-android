@@ -86,6 +86,17 @@ class ProfileScreenTest {
     }
 
     @Test
+    fun larkIntegrationIsOpenedSeparatelyFromChannels() {
+        val larkOpens = AtomicInteger()
+        setProfile(onOpenLarkIntegration = { larkOpens.incrementAndGet() })
+
+        scrollToProfileItem(UiTags.ProfileLarkIntegration)
+        compose.onNodeWithTag(UiTags.ProfileLarkIntegration).performClick()
+
+        compose.runOnIdle { assertEquals(1, larkOpens.get()) }
+    }
+
+    @Test
     fun cacheClearRequiresConfirmationAndAboutExposesLicenseActions() {
         val clearCalls = AtomicInteger()
         val openSourceCalls = AtomicInteger()
@@ -126,6 +137,7 @@ class ProfileScreenTest {
         onArtifactDownloadLimitsSelected: (ArtifactDownloadLimits) -> Unit = {},
         onClearCache: () -> Unit = {},
         onOpenChannels: () -> Unit = {},
+        onOpenLarkIntegration: () -> Unit = {},
         onOpenSourceLicenses: () -> Unit = {},
         onOpenSourceCode: () -> Unit = {},
     ) {
@@ -155,6 +167,7 @@ class ProfileScreenTest {
                     onClearCache = onClearCache,
                     onSignOut = {},
                     onOpenChannels = onOpenChannels,
+                    onOpenLarkIntegration = onOpenLarkIntegration,
                     onOpenSourceLicenses = onOpenSourceLicenses,
                     onOpenSourceCode = onOpenSourceCode,
                     contentPadding = PaddingValues(),

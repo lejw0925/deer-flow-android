@@ -41,10 +41,15 @@ import com.deerflow.mobile.data.McpConfig
 import com.deerflow.mobile.data.McpToolInfo
 import com.deerflow.mobile.data.LEAD_AGENT_ID
 import com.deerflow.mobile.data.LanguagePreference
+import com.deerflow.mobile.data.LarkIntegrationStatus
+import com.deerflow.mobile.data.LarkVerification
+import com.deerflow.mobile.data.LarkVerificationKind
 import com.deerflow.mobile.data.HumanInputRequest
 import com.deerflow.mobile.data.HumanInputResponse
 import com.deerflow.mobile.data.PendingAttachment
 import com.deerflow.mobile.data.RunMode
+import com.deerflow.mobile.data.RunDetails
+import com.deerflow.mobile.data.RunEventRecord
 import com.deerflow.mobile.data.RunRepository
 import com.deerflow.mobile.data.RunState
 import com.deerflow.mobile.data.RunStatus
@@ -60,6 +65,7 @@ import com.deerflow.mobile.data.UploadSource
 import com.deerflow.mobile.data.WebViewSessionCookieStore
 import com.deerflow.mobile.data.WorkspaceCache
 import com.deerflow.mobile.data.WorkspaceCapabilities
+import com.deerflow.mobile.data.WorkspaceChanges
 import com.deerflow.mobile.data.WorkspaceRepository
 import com.deerflow.mobile.data.assistantTurnForMessage
 import com.deerflow.mobile.data.isLatestAssistantTurn
@@ -78,6 +84,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -107,6 +114,8 @@ data class AppUiState(
     val loadingMcpConfig: Boolean = false,
     val loadingMcpTools: Boolean = false,
     val loadingChannels: Boolean = false,
+    val loadingLarkIntegration: Boolean = false,
+    val larkIntegrationBusy: Boolean = false,
     val loadingTasks: Boolean = false,
     val loadingTaskRuns: Boolean = false,
     val loadingAgentRuns: Boolean = false,
@@ -121,6 +130,14 @@ data class AppUiState(
     val messages: List<ChatMessage> = emptyList(),
     val todos: List<com.deerflow.mobile.data.TodoItem> = emptyList(),
     val artifacts: List<String> = emptyList(),
+    val runNotice: com.deerflow.mobile.data.StreamUpdate.RunNotice? = null,
+    val loadingRunDetails: Boolean = false,
+    val runDetailsThreadId: String? = null,
+    val conversationRuns: List<RunDetails> = emptyList(),
+    val selectedRunDetailsId: String? = null,
+    val runEvents: List<RunEventRecord> = emptyList(),
+    val workspaceChanges: WorkspaceChanges? = null,
+    val runDetailsError: String? = null,
     val artifactBusy: Boolean = false,
     val artifactSession: ArtifactSession? = null,
     val browser: BrowserUiState = BrowserUiState(),
@@ -135,6 +152,9 @@ data class AppUiState(
     val mcpTools: List<McpToolInfo> = emptyList(),
     val channelProviders: ChannelProviders? = null,
     val channelConnect: ChannelConnectResult? = null,
+    val larkIntegration: LarkIntegrationStatus? = null,
+    val larkVerification: LarkVerification? = null,
+    val larkIntegrationError: String? = null,
     val defaultAgentId: String = LEAD_AGENT_ID,
     val tasks: List<ScheduledTaskInfo> = emptyList(),
     val taskRunsTaskId: String? = null,
@@ -275,6 +295,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var pendingRunDestination: PendingRunDestination? = null
     private var pendingNewConversation = false
     private var runRecoveryAttemptedForServer: String? = null
+    private var runDetailsRequestId = 0L
 
     init {
         observeCoordinatedRun()
@@ -335,6 +356,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     messages = if (selected?.id == coordinated.threadId) coordinated.messages else current.messages,
                     todos = if (selected?.id == coordinated.threadId) coordinated.todos else current.todos,
                     artifacts = if (selected?.id == coordinated.threadId) coordinated.artifacts else current.artifacts,
+                    runNotice = if (selected?.id == coordinated.threadId) coordinated.runNotice else current.runNotice,
                     run = if (selected?.id == coordinated.threadId) coordinated.run else current.run,
                     messageActionBusy = if (selected?.id == coordinated.threadId && !coordinated.run.active) false else current.messageActionBusy,
                     error = if (selected?.id == coordinated.threadId) coordinated.error ?: current.error else current.error,
@@ -731,6 +753,273 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun refreshLarkIntegration() {
+        if (mutableState.value.user == null || mutableState.value.loadingLarkIntegration) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(loadingLarkIntegration = true, larkIntegrationError = null) }
+            try {
+                val status = workspace.larkIntegrationStatus()
+                mutableState.update { it.copy(larkIntegration = status, loadingLarkIntegration = false) }
+            } catch (error: Exception) {
+                handleAuthenticatedError(error) {
+                    it.copy(
+                        loadingLarkIntegration = false,
+                        larkIntegrationError = error.userMessage("Could not load the Lark integration."),
+                    )
+                }
+            }
+        }
+    }
+
+    fun installLarkIntegration() {
+        if (mutableState.value.user?.role != "admin" || mutableState.value.larkIntegrationBusy) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(larkIntegrationBusy = true, larkIntegrationError = null) }
+            try {
+                val result = workspace.installLarkIntegration()
+                mutableState.update {
+                    it.copy(
+                        larkIntegration = result.status,
+                        larkIntegrationBusy = false,
+                        larkVerification = null,
+                        notice = result.message.takeIf(String::isNotBlank),
+                    )
+                }
+            } catch (error: Exception) {
+                handleAuthenticatedError(error) {
+                    it.copy(
+                        larkIntegrationBusy = false,
+                        larkIntegrationError = error.userMessage("Could not install the Lark integration."),
+                    )
+                }
+            }
+        }
+    }
+
+    fun startLarkConfiguration(brand: String) {
+        if (mutableState.value.larkIntegrationBusy) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(larkIntegrationBusy = true, larkIntegrationError = null) }
+            try {
+                val verification = workspace.startLarkConfiguration(brand)
+                mutableState.update { it.copy(larkVerification = verification, larkIntegrationBusy = false) }
+            } catch (error: Exception) {
+                handleAuthenticatedError(error) {
+                    it.copy(
+                        larkIntegrationBusy = false,
+                        larkIntegrationError = error.userMessage("Could not start Lark setup."),
+                    )
+                }
+            }
+        }
+    }
+
+    fun completeLarkConfiguration() {
+        val verification = mutableState.value.larkVerification
+            ?.takeIf { it.kind == LarkVerificationKind.Configuration }
+            ?: return
+        if (mutableState.value.larkIntegrationBusy) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(larkIntegrationBusy = true, larkIntegrationError = null) }
+            try {
+                val result = workspace.completeLarkConfiguration(verification)
+                mutableState.update {
+                    it.copy(
+                        larkIntegration = result.status,
+                        larkIntegrationBusy = false,
+                        larkVerification = null,
+                        notice = result.message.takeIf(String::isNotBlank),
+                    )
+                }
+            } catch (error: Exception) {
+                handleAuthenticatedError(error) {
+                    it.copy(
+                        larkIntegrationBusy = false,
+                        larkIntegrationError = error.userMessage("Could not complete Lark setup."),
+                    )
+                }
+            }
+        }
+    }
+
+    fun startLarkAuthorization() {
+        if (mutableState.value.larkIntegrationBusy) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(larkIntegrationBusy = true, larkIntegrationError = null) }
+            try {
+                val verification = workspace.startLarkAuthorization()
+                mutableState.update { it.copy(larkVerification = verification, larkIntegrationBusy = false) }
+            } catch (error: Exception) {
+                handleAuthenticatedError(error) {
+                    it.copy(
+                        larkIntegrationBusy = false,
+                        larkIntegrationError = error.userMessage("Could not start Lark authorization."),
+                    )
+                }
+            }
+        }
+    }
+
+    fun completeLarkAuthorization() {
+        val verification = mutableState.value.larkVerification
+            ?.takeIf { it.kind == LarkVerificationKind.Authorization }
+            ?: return
+        if (mutableState.value.larkIntegrationBusy) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(larkIntegrationBusy = true, larkIntegrationError = null) }
+            try {
+                val result = workspace.completeLarkAuthorization(verification)
+                mutableState.update {
+                    it.copy(
+                        larkIntegration = result.status,
+                        larkIntegrationBusy = false,
+                        larkVerification = null,
+                        notice = result.message.takeIf(String::isNotBlank),
+                    )
+                }
+            } catch (error: Exception) {
+                handleAuthenticatedError(error) {
+                    it.copy(
+                        larkIntegrationBusy = false,
+                        larkIntegrationError = error.userMessage("Could not complete Lark authorization."),
+                    )
+                }
+            }
+        }
+    }
+
+    fun clearLarkVerification() {
+        mutableState.update { it.copy(larkVerification = null, larkIntegrationError = null) }
+    }
+
+    fun openRunDetails() {
+        val thread = mutableState.value.selectedThread ?: return
+        val requestId = ++runDetailsRequestId
+        viewModelScope.launch {
+            mutableState.update {
+                it.copy(
+                    loadingRunDetails = true,
+                    runDetailsThreadId = thread.id,
+                    runDetailsError = null,
+                )
+            }
+            try {
+                val details = runs.details(thread.id)
+                val selected = mutableState.value.selectedRunDetailsId
+                    ?.takeIf { selectedId -> details.any { it.runId == selectedId } }
+                    ?: details.firstOrNull()?.runId
+                loadRunDetailsPayload(requestId, thread.id, details, selected)
+            } catch (error: Exception) {
+                if (isCurrentRunDetailsRequest(requestId, thread.id)) {
+                    handleAuthenticatedError(error) {
+                        it.copy(
+                            loadingRunDetails = false,
+                            runDetailsThreadId = thread.id,
+                            runDetailsError = error.userMessage("Could not load run details."),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun selectRunDetails(runId: String) {
+        val current = mutableState.value
+        val threadId = current.selectedThread?.id ?: return
+        if (current.runDetailsThreadId != threadId || current.selectedRunDetailsId == runId) return
+        val requestId = ++runDetailsRequestId
+        viewModelScope.launch {
+            loadRunDetailsPayload(requestId, threadId, current.conversationRuns, runId)
+        }
+    }
+
+    fun clearRunDetails() {
+        runDetailsRequestId += 1
+        mutableState.update {
+            it.copy(
+                loadingRunDetails = false,
+                runDetailsThreadId = null,
+                conversationRuns = emptyList(),
+                selectedRunDetailsId = null,
+                runEvents = emptyList(),
+                workspaceChanges = null,
+                runDetailsError = null,
+            )
+        }
+    }
+
+    private suspend fun loadRunDetailsPayload(
+        requestId: Long,
+        threadId: String,
+        details: List<RunDetails>,
+        selectedRunId: String?,
+    ) {
+        if (selectedRunId == null) {
+            if (isCurrentRunDetailsRequest(requestId, threadId)) {
+                mutableState.update {
+                    it.copy(
+                        loadingRunDetails = false,
+                        runDetailsThreadId = threadId,
+                        conversationRuns = details,
+                        selectedRunDetailsId = null,
+                        runEvents = emptyList(),
+                        workspaceChanges = null,
+                    )
+                }
+            }
+            return
+        }
+        mutableState.update {
+            if (it.selectedThread?.id == threadId) {
+                it.copy(
+                    loadingRunDetails = true,
+                    runDetailsThreadId = threadId,
+                    conversationRuns = details,
+                    selectedRunDetailsId = selectedRunId,
+                    runEvents = emptyList(),
+                    workspaceChanges = null,
+                    runDetailsError = null,
+                )
+            } else {
+                it
+            }
+        }
+        val (events, changes) = coroutineScope {
+            val eventsResult = async {
+                try {
+                    Result.success(runs.events(threadId, selectedRunId))
+                } catch (error: Exception) {
+                    Result.failure(error)
+                }
+            }
+            val changesResult = async {
+                try {
+                    Result.success(runs.workspaceChanges(threadId, selectedRunId))
+                } catch (error: Exception) {
+                    Result.failure(error)
+                }
+            }
+            eventsResult.await() to changesResult.await()
+        }
+        if (!isCurrentRunDetailsRequest(requestId, threadId)) return
+        val problem = listOfNotNull(events.exceptionOrNull(), changes.exceptionOrNull()).firstOrNull()
+        mutableState.update {
+            it.copy(
+                loadingRunDetails = false,
+                runDetailsThreadId = threadId,
+                conversationRuns = details,
+                selectedRunDetailsId = selectedRunId,
+                runEvents = events.getOrDefault(emptyList()),
+                workspaceChanges = changes.getOrNull(),
+                runDetailsError = (problem as? Exception)?.userMessage("Could not load the complete run audit.")
+                    ?: problem?.message?.takeIf(String::isNotBlank),
+            )
+        }
+    }
+
+    private fun isCurrentRunDetailsRequest(requestId: Long, threadId: String): Boolean =
+        requestId == runDetailsRequestId && mutableState.value.selectedThread?.id == threadId
+
     fun refreshTasks() {
         if (mutableState.value.user == null) return
         viewModelScope.launch {
@@ -906,6 +1195,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         threadLoadJob?.cancel()
         closeBrowser()
         cancelArtifactWork()
+        clearRunDetails()
         val sessionKey = newDraftSessionKey()
         val current = mutableState.value
         val assistant = current.defaultAgentId
@@ -917,6 +1207,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 messages = emptyList(),
                 todos = emptyList(),
                 artifacts = emptyList(),
+                runNotice = null,
                 artifactBusy = false,
                 artifactSession = null,
                 composer = it.composer.copy(
@@ -1088,6 +1379,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         threadLoadJob?.cancel()
         closeBrowser()
         cancelArtifactWork()
+        clearRunDetails()
         mutableState.update {
             it.copy(
                 route = AppRoute.Conversation,
@@ -1096,6 +1388,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 messages = emptyList(),
                 todos = emptyList(),
                 artifacts = emptyList(),
+                runNotice = null,
                 artifactBusy = false,
                 artifactSession = null,
                 loadingChat = true,
@@ -1168,6 +1461,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val sessionKey = newDraftSessionKey()
+        clearRunDetails()
         mutableState.update {
             it.copy(
                 route = AppRoute.Workspace,
@@ -1176,6 +1470,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 messages = emptyList(),
                 todos = emptyList(),
                 artifacts = emptyList(),
+                runNotice = null,
                 artifactBusy = false,
                 artifactSession = null,
                 composer = it.composer.copy(

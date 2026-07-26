@@ -6,6 +6,7 @@ import com.deerflow.mobile.data.MessageBlock
 import com.deerflow.mobile.data.MessageRole
 import com.deerflow.mobile.data.RunState
 import com.deerflow.mobile.data.RunStatus
+import com.deerflow.mobile.data.RunNoticeKind
 import com.deerflow.mobile.data.StreamMessageOperation
 import com.deerflow.mobile.data.StreamPatch
 import com.deerflow.mobile.data.StreamUpdate
@@ -115,6 +116,33 @@ class RunCoordinatorTest {
         assertEquals(MessageBlock.SubtaskStatus.Completed, subtask.status)
         assertEquals("Verified", subtask.result)
         assertEquals(listOf("web_search"), subtask.steps.map(MessageBlock.SubtaskStep::toolName))
+    }
+
+    @Test
+    fun `gateway middleware notice is retained without changing the active run`() {
+        val notice = StreamUpdate.RunNotice(
+            kind = RunNoticeKind.LlmRetry,
+            message = "Retrying after a rate limit.",
+            attempt = 2,
+            maxAttempts = 3,
+            waitMillis = 250,
+        )
+
+        val reduced = reduceRunState(initial, notice)
+
+        assertEquals(RunStatus.Connecting, reduced.run.status)
+        assertEquals(notice, reduced.runNotice)
+    }
+
+    @Test
+    fun `only transient stream http failures are retryable`() {
+        assertFalse(isRetryableStreamHttpFailure(400))
+        assertFalse(isRetryableStreamHttpFailure(401))
+        assertFalse(isRetryableStreamHttpFailure(422))
+        assertTrue(isRetryableStreamHttpFailure(408))
+        assertTrue(isRetryableStreamHttpFailure(409))
+        assertTrue(isRetryableStreamHttpFailure(429))
+        assertTrue(isRetryableStreamHttpFailure(500))
     }
 
     @Test

@@ -63,6 +63,7 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.DesktopWindows
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Language
@@ -150,6 +151,7 @@ fun ChatScreen(
     var expandedTopSelector by remember { mutableStateOf<TopSelectorKind?>(null) }
     var showAgentPicker by remember { mutableStateOf(false) }
     var showSkills by remember { mutableStateOf(false) }
+    var showRunDetails by remember { mutableStateOf(false) }
     var pendingExportFormat by remember { mutableStateOf<ConversationExportFormat?>(null) }
     var editorValue by rememberSaveable(
         state.draftSessionKey,
@@ -205,6 +207,10 @@ fun ChatScreen(
                 val title = state.selectedThread?.title ?: "deerflow-conversation"
                 exportLauncher.launch(conversationExportFileName(title, format))
             },
+            onOpenRunDetails = {
+                showRunDetails = true
+                viewModel.openRunDetails()
+            },
             onOpenBrowser = viewModel::openBrowser,
             expandedSelector = expandedTopSelector,
             onExpandedSelectorChange = { expandedTopSelector = it },
@@ -245,7 +251,10 @@ fun ChatScreen(
             }
         }
         if (state.run.active && state.selectedThread != null) {
-            RunActivityRow(startedAtEpochMs = state.run.startedAtEpochMs)
+            RunActivityRow(
+                startedAtEpochMs = state.run.startedAtEpochMs,
+                notice = state.runNotice,
+            )
         }
         MessageComposer(
             state = state,
@@ -302,6 +311,17 @@ fun ChatScreen(
                 viewModel.updateDraft(updated.text)
                 showSkills = false
             },
+        )
+    }
+    if (showRunDetails) {
+        RunDetailsSheet(
+            state = state,
+            onDismiss = {
+                showRunDetails = false
+                viewModel.clearRunDetails()
+            },
+            onSelectRun = viewModel::selectRunDetails,
+            onReload = viewModel::openRunDetails,
         )
     }
     if (state.browser.visible) {
@@ -527,11 +547,16 @@ internal fun ChatTopBar(
     onModelSelected: (String?) -> Unit,
     onModeSelected: (RunMode) -> Unit,
     onExport: (ConversationExportFormat) -> Unit,
+    onOpenRunDetails: () -> Unit = {},
     onOpenBrowser: () -> Unit = {},
     expandedSelector: TopSelectorKind?,
     onExpandedSelectorChange: (TopSelectorKind?) -> Unit,
 ) {
-    var exportMenuExpanded by remember { mutableStateOf(false) }
+    var overflowMenuExpanded by remember { mutableStateOf(false) }
+    val isConversation = state.route == AppRoute.Conversation
+    val showRunDetails = isConversation && state.selectedThread != null
+    val showBrowser = showRunDetails && state.capabilities.browserControlEnabled
+    val showExportActions = isConversation && state.messages.isNotEmpty()
     TopAppBar(
         modifier = Modifier
             .testTag(UiTags.ChatTopBar)
@@ -551,55 +576,65 @@ internal fun ChatTopBar(
             }
         },
         actions = {
-            if (
-                state.route == AppRoute.Conversation &&
-                state.selectedThread != null &&
-                state.capabilities.browserControlEnabled
-            ) {
+            if (showBrowser) {
                 IconButton(
                     onClick = onOpenBrowser,
                     modifier = Modifier
                         .size(48.dp)
                         .testTag(UiTags.BrowserOpenButton)
-                        .semantics { traversalIndex = 2f },
+                        .semantics { traversalIndex = 3f },
                 ) {
                     Icon(Icons.Outlined.DesktopWindows, contentDescription = stringResource(R.string.browser_live_open))
                 }
             }
-            if (state.route == AppRoute.Conversation && state.messages.isNotEmpty()) {
+            if (showRunDetails || showExportActions) {
                 Box {
                     IconButton(
-                        onClick = { exportMenuExpanded = true },
+                        onClick = { overflowMenuExpanded = true },
                         enabled = !state.exportBusy,
                         modifier = Modifier
                             .size(48.dp)
-                            .testTag(UiTags.ConversationExportButton)
-                            .semantics { traversalIndex = 3f },
+                            .testTag(UiTags.ConversationOverflowButton)
+                            .semantics { traversalIndex = if (showBrowser) 4f else 3f },
                     ) {
-                        Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.export_conversation))
+                        Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.more_actions))
                     }
                     DropdownMenu(
-                        expanded = exportMenuExpanded,
-                        onDismissRequest = { exportMenuExpanded = false },
+                        expanded = overflowMenuExpanded,
+                        onDismissRequest = { overflowMenuExpanded = false },
                     ) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.export_markdown)) },
-                            leadingIcon = { Icon(Icons.Outlined.Description, contentDescription = null) },
-                            onClick = {
-                                exportMenuExpanded = false
-                                onExport(ConversationExportFormat.Markdown)
-                            },
-                            enabled = !state.exportBusy,
-                        )
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.export_plain_text)) },
-                            leadingIcon = { Icon(Icons.Outlined.Code, contentDescription = null) },
-                            onClick = {
-                                exportMenuExpanded = false
-                                onExport(ConversationExportFormat.PlainText)
-                            },
-                            enabled = !state.exportBusy,
-                        )
+                        if (showRunDetails) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.run_details_open)) },
+                                leadingIcon = { Icon(Icons.Outlined.History, contentDescription = null) },
+                                onClick = {
+                                    overflowMenuExpanded = false
+                                    onOpenRunDetails()
+                                },
+                                modifier = Modifier.testTag(UiTags.RunDetailsOpenButton),
+                            )
+                        }
+                        if (showRunDetails && showExportActions) HorizontalDivider()
+                        if (showExportActions) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.export_markdown)) },
+                                leadingIcon = { Icon(Icons.Outlined.Description, contentDescription = null) },
+                                onClick = {
+                                    overflowMenuExpanded = false
+                                    onExport(ConversationExportFormat.Markdown)
+                                },
+                                enabled = !state.exportBusy,
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.export_plain_text)) },
+                                leadingIcon = { Icon(Icons.Outlined.Code, contentDescription = null) },
+                                onClick = {
+                                    overflowMenuExpanded = false
+                                    onExport(ConversationExportFormat.PlainText)
+                                },
+                                enabled = !state.exportBusy,
+                            )
+                        }
                     }
                 }
             }

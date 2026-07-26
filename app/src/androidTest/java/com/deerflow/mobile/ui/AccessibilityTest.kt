@@ -20,6 +20,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -32,6 +33,7 @@ import com.deerflow.mobile.data.ModelInfo
 import com.deerflow.mobile.data.RunMode
 import com.deerflow.mobile.data.RunOptions
 import com.deerflow.mobile.data.ScheduledTaskInfo
+import com.deerflow.mobile.data.ThreadSummary
 import com.deerflow.mobile.data.WorkspaceCapabilities
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -49,7 +51,7 @@ class AccessibilityTest {
 
         listOf(
             R.string.back,
-            R.string.export_conversation,
+            R.string.more_actions,
             R.string.add_attachment,
             R.string.send_message,
         ).forEach { label ->
@@ -82,7 +84,7 @@ class AccessibilityTest {
             UiTags.ChatNavigationButton,
             UiTags.ModelSelector,
             UiTags.ModeSelector,
-            UiTags.ConversationExportButton,
+            UiTags.ConversationOverflowButton,
         ).map { tag ->
             compose.onNodeWithTag(tag).fetchSemanticsNode().config[SemanticsProperties.TraversalIndex]
         }
@@ -99,7 +101,7 @@ class AccessibilityTest {
             UiTags.ChatNavigationButton,
             UiTags.ModelSelector,
             UiTags.ModeSelector,
-            UiTags.ConversationExportButton,
+            UiTags.ConversationOverflowButton,
             UiTags.ComposerAttachmentButton,
             UiTags.SendStopButton,
         ).forEach { tag ->
@@ -151,7 +153,7 @@ class AccessibilityTest {
             UiTags.ChatNavigationButton,
             UiTags.ModelSelector,
             UiTags.ModeSelector,
-            UiTags.ConversationExportButton,
+            UiTags.ConversationOverflowButton,
         ).map { compose.onNodeWithTag(it).bounds() }
         val composerControls = listOf(
             UiTags.ComposerInput,
@@ -168,6 +170,40 @@ class AccessibilityTest {
             "Composer input overlaps send action: ${composerControls[0]} and ${composerControls[1]}",
             composerControls[0].right <= composerControls[1].left,
         )
+    }
+
+    @Test
+    fun runDetailsIsOpenedFromConversationOverflowMenu() {
+        var runDetailsOpened = 0
+        val state = chatState().copy(
+            selectedThread = ThreadSummary(
+                id = "thread-1",
+                title = "Regression conversation",
+                status = "success",
+                updatedAt = "2026-07-26T12:00:00Z",
+            ),
+        )
+        compose.setContent {
+            MaterialTheme {
+                var expanded by remember { mutableStateOf<TopSelectorKind?>(null) }
+                ChatTopBar(
+                    state = state,
+                    onOpenDrawer = {},
+                    onBack = {},
+                    onModelSelected = {},
+                    onModeSelected = {},
+                    onExport = {},
+                    onOpenRunDetails = { runDetailsOpened += 1 },
+                    expandedSelector = expanded,
+                    onExpandedSelectorChange = { expanded = it },
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription(context.getString(R.string.run_details_open)).assertDoesNotExist()
+        compose.onNodeWithTag(UiTags.ConversationOverflowButton).performClick()
+        compose.onNodeWithTag(UiTags.RunDetailsOpenButton).assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(1, runDetailsOpened) }
     }
 
     private fun setChatSurface() {

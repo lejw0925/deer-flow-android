@@ -546,6 +546,57 @@ class DeerFlowApiStreamingTest {
     }
 
     @Test
+    fun decodesGatewayRunNoticesWithoutTaskIdsAndIgnoresNamespacedFrames() = runBlocking {
+        val server = ScriptedSseServer(
+            listOf(
+                sse(
+                    """event: messages-tuple|lead_agent:subtask
+id: namespaced-message
+data: {"type":"ai","id":"ignored","content":"Do not merge this"}""",
+                    """event: updates|lead_agent:subtask
+id: namespaced-update
+data: {"agent":{"title":"Do not use this title"}}""",
+                    """event: custom
+id: retry-1
+data: {"type":"llm_retry","attempt":2,"max_attempts":3,"wait_ms":250,"reason":"rate_limit","message":"Retrying after a rate limit."}""",
+                    """event: custom
+id: safety-1
+data: {"type":"safety_termination","reason_field":"finish_reason","reason_value":"content_filter"}""",
+                    """event: messages-tuple
+id: root-message
+data: {"type":"ai","id":"root","content":"Visible answer"}""",
+                    """event: end
+id: end-1
+data: null""",
+                ),
+            ),
+        )
+        try {
+            val updates = mutableListOf<StreamUpdate>()
+            DeerFlowApi(server.url, NoopSessionCookieStore).streamMessage(
+                threadId = "thread-1",
+                message = "Show notices",
+                options = RunOptions(),
+            ) { updates += it }
+
+            assertEquals(
+                listOf("Visible answer"),
+                updates.filterIsInstance<StreamUpdate.MessageChunk>().map { it.value.text },
+            )
+            val notices = updates.filterIsInstance<StreamUpdate.RunNotice>()
+            assertEquals(2, notices.size)
+            assertEquals(RunNoticeKind.LlmRetry, notices[0].kind)
+            assertEquals(2, notices[0].attempt)
+            assertEquals(3, notices[0].maxAttempts)
+            assertEquals(250L, notices[0].waitMillis)
+            assertEquals(RunNoticeKind.SafetyTermination, notices[1].kind)
+            assertEquals("content_filter", notices[1].message)
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test
     fun streamRequestUsesOnlyTheSelectedModelsSupportedOptions() = runBlocking {
         val server = ScriptedSseServer(
             listOf(
@@ -618,7 +669,7 @@ class DeerFlowApiStreamingTest {
                 List(modes.length()) { modes.getString(it) }
             })
             assertFalse(payload.getBoolean("stream_subgraphs"))
-            assertTrue(payload.getBoolean("stream_resumable"))
+            assertFalse(payload.getBoolean("stream_resumable"))
             assertEquals("continue", payload.getString("on_disconnect"))
             assertFalse(request.headers["accept-encoding"].equals("identity", ignoreCase = true))
 
@@ -750,6 +801,91 @@ class DeerFlowApiStreamingTest {
             assertEquals("Stopped by user", run.stopReason)
             assertEquals("GET", server.requests.single().method)
             assertEquals("/api/threads/thread-1/runs/run-1", server.requests.single().path)
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test
+    fun readsRunAuditAndWorkspaceChangesThroughGatewayContracts() = runBlocking {
+        val server = ScriptedSseServer(
+            listOf(
+                ScriptedResponse(
+                    contentType = "application/json",
+                    body = """[{"run_id":"run-1","thread_id":"thread-1","assistant_id":"lead_agent","status":"success","created_at":"2026-07-26T10:00:00Z","updated_at":"2026-07-26T10:01:00Z","total_input_tokens":12,"total_output_tokens":34,"total_tokens":46,"llm_call_count":2,"lead_agent_tokens":20,"subagent_tokens":20,"middleware_tokens":6,"message_count":3,"stop_reason":null}]""",
+                ),
+                ScriptedResponse(
+                    contentType = "application/json",
+                    body = """[{"seq":7,"event_type":"subagent.step","category":"subagent","content":{"tool":"web_search"},"metadata":{"task_id":"task-1"},"created_at":"2026-07-26T10:00:30Z"}]""",
+                ),
+                ScriptedResponse(
+                    contentType = "application/json",
+                    body = """{"available":true,"version":1,"summary":{"created":1,"modified":2,"deleted":0,"symlink_created":0,"additions":12,"deletions":3,"truncated":false},"files":[{"path":"outputs/report.md","root":"workspace","status":"modified","binary":false,"sensitive":false,"size_before":10,"size_after":19,"diff":"+report","diff_truncated":false,"additions":12,"deletions":3}]}""",
+                ),
+            ),
+        )
+        try {
+            val api = DeerFlowApi(server.url, NoopSessionCookieStore)
+            val details = api.listRunDetails("thread-1")
+            val events = api.listRunEvents("thread-1", "run-1")
+            val changes = api.workspaceChanges("thread-1", "run-1")
+
+            assertEquals(46, details.single().totalTokens)
+            assertEquals(GatewayRunStatus.Success, details.single().status)
+            assertEquals("task-1", events.single().taskId)
+            assertTrue(events.single().content.contains("web_search"))
+            assertTrue(changes.available)
+            assertEquals(2, changes.summary.modified)
+            assertEquals("outputs/report.md", changes.files.single().path)
+            assertEquals(12, changes.files.single().additions)
+            assertEquals("/api/threads/thread-1/runs", server.requests[0].path)
+            assertEquals("/api/threads/thread-1/runs/run-1/events?limit=500", server.requests[1].path)
+            assertEquals(
+                "/api/threads/thread-1/runs/run-1/workspace-changes?include_files=true&include_diff=true",
+                server.requests[2].path,
+            )
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test
+    fun drivesTheLarkDeviceCodeGatewayContracts() = runBlocking {
+        val status = """{"installed":true,"version":"1.2.3","latest_available_version":"1.2.4","runtime_version_mismatch":false,"app_configured":true,"app_id":"cli_123","app_brand":"feishu","skills_expected":4,"skills_installed":4,"enabled_skills":["lark-docs"],"cli":{"available":true,"version":"1.2.3","error":null},"auth":{"status":"authenticated","message":null,"user":"Ada","verified":true},"sandbox_runtime_ready":true,"sandbox_runtime_detail":null}"""
+        val server = ScriptedSseServer(
+            listOf(
+                ScriptedResponse(contentType = "application/json", body = status),
+                ScriptedResponse(contentType = "application/json", body = """{"verification_url":"https://lark.example.test/config","device_code":"config-device","expires_in":300,"interval":2,"user_code":"ABCD","brand":"lark"}"""),
+                ScriptedResponse(contentType = "application/json", body = """{"success":true,"message":"Configured","status":$status}"""),
+                ScriptedResponse(contentType = "application/json", body = """{"verification_url":"https://lark.example.test/auth","device_code":"auth-device","expires_in":300,"user_code":"WXYZ","hint":"Approve access"}"""),
+                ScriptedResponse(contentType = "application/json", body = """{"success":true,"message":"Authorized","status":$status}"""),
+            ),
+        )
+        try {
+            val api = DeerFlowApi(server.url, NoopSessionCookieStore)
+            val initial = api.loadLarkIntegrationStatus()
+            val configuration = api.startLarkConfiguration("lark")
+            val configured = api.completeLarkConfiguration(configuration)
+            val authorization = api.startLarkAuthorization()
+            val authorized = api.completeLarkAuthorization(authorization)
+
+            assertTrue(initial.auth.authenticated)
+            assertEquals(LarkVerificationKind.Configuration, configuration.kind)
+            assertEquals("lark", configuration.brand)
+            assertTrue(configured.success)
+            assertEquals(LarkVerificationKind.Authorization, authorization.kind)
+            assertEquals("Approve access", authorization.hint)
+            assertTrue(authorized.success)
+            assertEquals("GET", server.requests[0].method)
+            assertEquals("/api/integrations/lark/status", server.requests[0].path)
+            assertEquals("/api/integrations/lark/config/start", server.requests[1].path)
+            assertEquals("lark", JSONObject(server.requests[1].body).getString("brand"))
+            assertEquals("/api/integrations/lark/config/complete", server.requests[2].path)
+            assertEquals("config-device", JSONObject(server.requests[2].body).getString("device_code"))
+            assertEquals("/api/integrations/lark/auth/start", server.requests[3].path)
+            assertTrue(JSONObject(server.requests[3].body).getBoolean("recommend"))
+            assertEquals("/api/integrations/lark/auth/complete", server.requests[4].path)
+            assertEquals("auth-device", JSONObject(server.requests[4].body).getString("device_code"))
         } finally {
             server.close()
         }

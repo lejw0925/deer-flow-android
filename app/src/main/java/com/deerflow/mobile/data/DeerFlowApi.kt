@@ -236,6 +236,27 @@ private fun JSONObject.toGatewayRunInfo(): GatewayRunInfo? {
     )
 }
 
+private fun JSONObject.toRunDetails(): RunDetails? {
+    val runId = optString("run_id").takeIf { it.isNotBlank() } ?: return null
+    return RunDetails(
+        runId = runId,
+        threadId = optString("thread_id"),
+        assistantId = nullableJsonString(opt("assistant_id")),
+        status = GatewayRunStatus.fromWire(optString("status")),
+        createdAt = optString("created_at"),
+        updatedAt = optString("updated_at"),
+        totalInputTokens = optInt("total_input_tokens"),
+        totalOutputTokens = optInt("total_output_tokens"),
+        totalTokens = optInt("total_tokens"),
+        llmCallCount = optInt("llm_call_count"),
+        leadAgentTokens = optInt("lead_agent_tokens"),
+        subagentTokens = optInt("subagent_tokens"),
+        middlewareTokens = optInt("middleware_tokens"),
+        messageCount = optInt("message_count"),
+        stopReason = nullableJsonString(opt("stop_reason")),
+    )
+}
+
 class DeerFlowApi(
     serverUrl: String,
     private val cookies: SessionCookieStore,
@@ -499,6 +520,50 @@ class DeerFlowApi(
             code = response.getString("code"),
             instruction = response.optString("instruction"),
             expiresInSeconds = response.optInt("expires_in"),
+        )
+    }
+
+    suspend fun loadLarkIntegrationStatus(): LarkIntegrationStatus =
+        parseLarkIntegrationStatus(JSONObject(request("GET", "/api/integrations/lark/status")))
+
+    suspend fun installLarkIntegration(): LarkIntegrationResult =
+        parseLarkIntegrationResult(JSONObject(request("POST", "/api/integrations/lark/install", "")))
+
+    suspend fun startLarkConfiguration(brand: String): LarkVerification {
+        val payload = JSONObject().put("brand", brand)
+        return parseLarkVerification(
+            JSONObject(request("POST", "/api/integrations/lark/config/start", payload.toString())),
+            LarkVerificationKind.Configuration,
+        )
+    }
+
+    suspend fun completeLarkConfiguration(verification: LarkVerification): LarkIntegrationResult {
+        require(verification.kind == LarkVerificationKind.Configuration) { "Expected a Lark configuration flow." }
+        val payload = JSONObject()
+            .put("device_code", verification.deviceCode)
+            .put("brand", verification.brand ?: "feishu")
+            .apply {
+                verification.intervalSeconds?.let { put("interval", it) }
+                verification.expiresInSeconds?.let { put("expires_in", it) }
+            }
+        return parseLarkIntegrationResult(
+            JSONObject(request("POST", "/api/integrations/lark/config/complete", payload.toString())),
+        )
+    }
+
+    suspend fun startLarkAuthorization(): LarkVerification {
+        val payload = JSONObject().put("recommend", true)
+        return parseLarkVerification(
+            JSONObject(request("POST", "/api/integrations/lark/auth/start", payload.toString())),
+            LarkVerificationKind.Authorization,
+        )
+    }
+
+    suspend fun completeLarkAuthorization(verification: LarkVerification): LarkIntegrationResult {
+        require(verification.kind == LarkVerificationKind.Authorization) { "Expected a Lark authorization flow." }
+        val payload = JSONObject().put("device_code", verification.deviceCode)
+        return parseLarkIntegrationResult(
+            JSONObject(request("POST", "/api/integrations/lark/auth/complete", payload.toString())),
         )
     }
 
@@ -1000,13 +1065,93 @@ class DeerFlowApi(
     suspend fun latestActiveRun(threadId: String): GatewayRunInfo? =
         listRuns(threadId).firstOrNull { it.status.active }
 
-    private suspend fun listRuns(threadId: String): List<GatewayRunInfo> {
+    suspend fun listRunDetails(threadId: String): List<RunDetails> {
         val payload = JSONArray(request("GET", "/api/threads/${pathSegment(threadId)}/runs"))
         return (0 until payload.length())
             .asSequence()
-            .mapNotNull { index -> payload.optJSONObject(index) }
-            .mapNotNull(JSONObject::toGatewayRunInfo)
+            .mapNotNull { index -> payload.optJSONObject(index)?.toRunDetails() }
             .toList()
+    }
+
+    suspend fun listRunEvents(threadId: String, runId: String): List<RunEventRecord> {
+        val payload = JSONArray(
+            request(
+                "GET",
+                "/api/threads/${pathSegment(threadId)}/runs/${pathSegment(runId)}/events?limit=500",
+            ),
+        )
+        return buildList {
+            for (index in 0 until payload.length()) {
+                val event = payload.optJSONObject(index) ?: continue
+                val metadata = event.optJSONObject("metadata") ?: JSONObject()
+                add(
+                    RunEventRecord(
+                        sequence = event.optionalInt("seq"),
+                        eventType = event.optString("event_type"),
+                        category = event.optString("category"),
+                        content = event.jsonValueText("content"),
+                        createdAt = nullableJsonString(event.opt("created_at")),
+                        taskId = nullableJsonString(metadata.opt("task_id")),
+                    ),
+                )
+            }
+        }
+    }
+
+    suspend fun workspaceChanges(threadId: String, runId: String): WorkspaceChanges {
+        val root = JSONObject(
+            request(
+                "GET",
+                "/api/threads/${pathSegment(threadId)}/runs/${pathSegment(runId)}/workspace-changes?include_files=true&include_diff=true",
+            ),
+        )
+        val summary = root.optJSONObject("summary") ?: JSONObject()
+        val files = root.optJSONArray("files") ?: JSONArray()
+        return WorkspaceChanges(
+            available = root.optBoolean("available"),
+            version = root.optInt("version", 1),
+            summary = WorkspaceChangeSummary(
+                created = summary.optInt("created"),
+                modified = summary.optInt("modified"),
+                deleted = summary.optInt("deleted"),
+                symlinkCreated = summary.optInt("symlink_created"),
+                additions = summary.optInt("additions"),
+                deletions = summary.optInt("deletions"),
+                truncated = summary.optBoolean("truncated"),
+            ),
+            files = buildList {
+                for (index in 0 until files.length()) {
+                    val file = files.optJSONObject(index) ?: continue
+                    add(
+                        WorkspaceChangeFile(
+                            path = file.optString("path"),
+                            root = file.optString("root"),
+                            status = file.optString("status"),
+                            binary = file.optBoolean("binary"),
+                            sensitive = file.optBoolean("sensitive"),
+                            sizeBefore = file.optionalLong("size_before"),
+                            sizeAfter = file.optionalLong("size_after"),
+                            diff = file.optString("diff"),
+                            diffTruncated = file.optBoolean("diff_truncated"),
+                            diffUnavailableReason = nullableJsonString(file.opt("diff_unavailable_reason")),
+                            additions = file.optInt("additions"),
+                            deletions = file.optInt("deletions"),
+                        ),
+                    )
+                }
+            },
+        )
+    }
+
+    private suspend fun listRuns(threadId: String): List<GatewayRunInfo> {
+        return listRunDetails(threadId)
+            .map { details ->
+                GatewayRunInfo(
+                    runId = details.runId,
+                    status = details.status,
+                    stopReason = details.stopReason,
+                )
+            }
     }
 
     private fun reconnectDelay(attempt: Int): Long =
@@ -1091,7 +1236,9 @@ class DeerFlowApi(
             .put("input", regenerate?.let { JSONObject(it.inputJson) } ?: JSONObject().put("messages", JSONArray().put(human)))
             .put("stream_mode", JSONArray().put("messages-tuple").put("updates").put("custom"))
             .put("stream_subgraphs", false)
-            .put("stream_resumable", true)
+            // Current Gateways accept only false (or omission). Resume still uses Last-Event-ID
+            // against the run-specific stream endpoint after a disconnect.
+            .put("stream_resumable", false)
             .put("on_disconnect", "continue")
             .put("config", JSONObject().put("recursion_limit", 1000))
             .put("context", context)
@@ -1143,6 +1290,10 @@ class DeerFlowApi(
     }
 
     private fun decodeStreamEvent(event: SseEvent, onUpdate: (StreamUpdate) -> Unit): Boolean {
+        // LangGraph prefixes subgraph frames with `event|namespace`. This client requests
+        // stream_subgraphs=false, but ignoring them protects the root conversation when an
+        // older Gateway sends them anyway or the option is enabled in a future release.
+        if ('|' in event.event) return false
         when (event.event) {
             "metadata" -> onUpdate(StreamUpdate.Started(runCatching { JSONObject(event.data).optString("run_id") }.getOrNull()))
             "messages", "messages-tuple" -> {
@@ -1181,14 +1332,27 @@ class DeerFlowApi(
     private fun parseCustomStreamUpdate(raw: String): StreamUpdate? {
         val payload = parseJson(raw) as? JSONObject ?: return null
         val type = payload.optString("type")
-        val taskId = payload.optString("task_id").ifBlank { return null }
         return when (type) {
+            "llm_retry" -> StreamUpdate.RunNotice(
+                kind = RunNoticeKind.LlmRetry,
+                message = payload.optString("message").ifBlank { payload.optString("reason") },
+                attempt = payload.optionalInt("attempt"),
+                maxAttempts = payload.optionalInt("max_attempts"),
+                waitMillis = payload.optionalLong("wait_ms"),
+            )
+            "safety_termination" -> StreamUpdate.RunNotice(
+                kind = RunNoticeKind.SafetyTermination,
+                message = payload.optString("reason_value")
+                    .ifBlank { payload.optString("reason") }
+                    .ifBlank { payload.optString("reason_field") },
+            )
             "task_started" -> StreamUpdate.SubagentProgress(
-                taskId = taskId,
+                taskId = payload.optString("task_id").ifBlank { return null },
                 description = payload.optString("description").takeIf { it.isNotBlank() },
                 modelName = payload.optString("model_name").takeIf { it.isNotBlank() },
             )
             "task_running" -> {
+                val taskId = payload.optString("task_id").ifBlank { return null }
                 val message = payload.optJSONObject("message") ?: JSONObject()
                 val messageIndex = payload.optInt("message_index", 0)
                 val kind = if (message.optString("type") == "tool") "tool" else "ai"
@@ -1217,13 +1381,13 @@ class DeerFlowApi(
                 )
             }
             "task_completed" -> StreamUpdate.SubagentProgress(
-                taskId = taskId,
+                taskId = payload.optString("task_id").ifBlank { return null },
                 status = MessageBlock.SubtaskStatus.Completed,
                 result = payload.optString("result").takeIf { it.isNotBlank() },
                 modelName = payload.optString("model_name").takeIf { it.isNotBlank() },
             )
             "task_failed", "task_cancelled", "task_timed_out" -> StreamUpdate.SubagentProgress(
-                taskId = taskId,
+                taskId = payload.optString("task_id").ifBlank { return null },
                 status = MessageBlock.SubtaskStatus.Failed,
                 error = payload.optString("error").ifBlank {
                     payload.optString("result")
@@ -1345,6 +1509,53 @@ class DeerFlowApi(
             },
         )
     }
+
+    private fun parseLarkIntegrationStatus(root: JSONObject): LarkIntegrationStatus {
+        val cli = root.optJSONObject("cli") ?: JSONObject()
+        val auth = root.optJSONObject("auth") ?: JSONObject()
+        return LarkIntegrationStatus(
+            installed = root.optBoolean("installed"),
+            version = root.optString("version"),
+            latestAvailableVersion = nullableJsonString(root.opt("latest_available_version")),
+            runtimeVersionMismatch = root.optBoolean("runtime_version_mismatch"),
+            appConfigured = root.optBoolean("app_configured"),
+            appId = nullableJsonString(root.opt("app_id")),
+            appBrand = nullableJsonString(root.opt("app_brand")),
+            skillsExpected = root.optInt("skills_expected"),
+            skillsInstalled = root.optInt("skills_installed"),
+            enabledSkills = root.optJSONArray("enabled_skills").toStringList(),
+            cli = LarkCliProbe(
+                available = cli.optBoolean("available"),
+                version = nullableJsonString(cli.opt("version")),
+                error = nullableJsonString(cli.opt("error")),
+            ),
+            auth = LarkAuthProbe(
+                status = auth.optString("status"),
+                message = nullableJsonString(auth.opt("message")),
+                user = nullableJsonString(auth.opt("user")),
+                verified = auth.optBoolean("verified"),
+            ),
+            sandboxRuntimeReady = root.optBoolean("sandbox_runtime_ready"),
+            sandboxRuntimeDetail = nullableJsonString(root.opt("sandbox_runtime_detail")),
+        )
+    }
+
+    private fun parseLarkIntegrationResult(root: JSONObject): LarkIntegrationResult = LarkIntegrationResult(
+        success = root.optBoolean("success"),
+        message = root.optString("message"),
+        status = parseLarkIntegrationStatus(root.optJSONObject("status") ?: JSONObject()),
+    )
+
+    private fun parseLarkVerification(root: JSONObject, kind: LarkVerificationKind): LarkVerification = LarkVerification(
+        kind = kind,
+        verificationUrl = root.getString("verification_url"),
+        deviceCode = root.getString("device_code"),
+        expiresInSeconds = root.optionalInt("expires_in"),
+        userCode = nullableJsonString(root.opt("user_code")),
+        brand = nullableJsonString(root.opt("brand")),
+        intervalSeconds = root.optionalInt("interval"),
+        hint = nullableJsonString(root.opt("hint")),
+    )
 
     private fun parseChannelProvider(provider: JSONObject): ChannelProviderInfo = ChannelProviderInfo(
         provider = provider.getString("provider"),
@@ -1579,5 +1790,22 @@ private fun queryParameter(value: String): String =
     URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")
 
 internal fun nullableJsonString(value: Any?): String? = (value as? String)?.takeIf { it.isNotBlank() }
+
+private fun JSONObject.optionalInt(name: String): Int? =
+    if (has(name) && !isNull(name)) optInt(name) else null
+
+private fun JSONObject.optionalLong(name: String): Long? =
+    if (has(name) && !isNull(name)) optLong(name) else null
+
+private fun JSONObject.jsonValueText(name: String): String = when (val value = opt(name)) {
+    null,
+    JSONObject.NULL,
+    -> ""
+    is String -> value
+    is JSONObject,
+    is JSONArray,
+    -> value.toString()
+    else -> value.toString()
+}
 
 private fun nullableJsonDouble(value: Any?): Double? = (value as? Number)?.toDouble()?.takeIf { it.isFinite() }

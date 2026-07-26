@@ -69,6 +69,8 @@ data class CoordinatedRunState(
     val artifacts: List<String> = emptyList(),
     /** Latest tool name observed on the stream (for Live Update icons). */
     val latestToolName: String? = null,
+    /** Latest Gateway middleware notice, visible while the run is active. */
+    val runNotice: StreamUpdate.RunNotice? = null,
     val error: String? = null,
     val revision: Long = 0,
 ) {
@@ -415,6 +417,10 @@ class RunCoordinator private constructor(context: Context) {
                                 finishMissingRun(api, request, current)
                                 return@launch
                             }
+                            if (!isRetryableStreamHttpFailure(result.statusCode)) {
+                                finishRejectedStream(current, result.message)
+                                return@launch
+                            }
                             val reconnecting = current.run.copy(
                                 status = RunStatus.Reconnecting,
                                 runId = result.runId ?: current.run.runId,
@@ -547,6 +553,13 @@ class RunCoordinator private constructor(context: Context) {
         RunService.complete(appContext, completed.title)
     }
 
+    private suspend fun finishRejectedStream(current: CoordinatedRunState, message: String) {
+        val completed = completeWithoutSnapshot(current, GatewayRunStatus.Error, message)
+        logUnconfirmedPending(current, completed)
+        persistAndPublish(completed, clearRun = true)
+        RunService.fail(appContext, message, completed.title)
+    }
+
     private fun terminalErrorMessage(
         gatewayStatus: GatewayRunStatus,
         stopReason: String?,
@@ -602,6 +615,11 @@ class RunCoordinator private constructor(context: Context) {
                     next.title,
                 )
             }
+            is StreamUpdate.RunNotice -> RunService.update(
+                appContext,
+                runProgressUpdate(RunProgress.Working, next.todos, next.latestToolName),
+                next.title,
+            )
             StreamUpdate.Finished -> Unit
             is StreamUpdate.Failure -> RunService.update(
                 appContext,
@@ -839,6 +857,10 @@ internal fun resumableRun(saved: RunState, activeRunId: String?): RunState? = wh
     else -> null
 }
 
+/** Client errors are stable request failures; only contention, throttling, or server errors retry. */
+internal fun isRetryableStreamHttpFailure(statusCode: Int): Boolean =
+    statusCode == 408 || statusCode == 409 || statusCode == 425 || statusCode == 429 || statusCode >= 500
+
 internal fun reduceRunState(current: CoordinatedRunState, update: StreamUpdate): CoordinatedRunState {
     val revision = current.revision + 1
     return when (update) {
@@ -909,6 +931,10 @@ internal fun reduceRunState(current: CoordinatedRunState, update: StreamUpdate):
                 revision = revision,
             )
         }
+        is StreamUpdate.RunNotice -> current.copy(
+            runNotice = update,
+            revision = revision,
+        )
         is StreamUpdate.Failure -> current.copy(
             run = current.run.copy(status = RunStatus.Reconnecting),
             error = update.message,

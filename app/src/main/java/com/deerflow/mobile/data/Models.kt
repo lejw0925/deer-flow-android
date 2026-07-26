@@ -411,6 +411,119 @@ data class GatewayRunInfo(
     val stopReason: String? = null,
 )
 
+/** Full run record returned by the Gateway's run-history endpoint. */
+data class RunDetails(
+    val runId: String,
+    val threadId: String,
+    val assistantId: String?,
+    val status: GatewayRunStatus,
+    val createdAt: String,
+    val updatedAt: String,
+    val totalInputTokens: Int,
+    val totalOutputTokens: Int,
+    val totalTokens: Int,
+    val llmCallCount: Int,
+    val leadAgentTokens: Int,
+    val subagentTokens: Int,
+    val middlewareTokens: Int,
+    val messageCount: Int,
+    val stopReason: String?,
+)
+
+/** One persisted run event, used for the conversation's audit view. */
+data class RunEventRecord(
+    val sequence: Int?,
+    val eventType: String,
+    val category: String,
+    val content: String,
+    val createdAt: String?,
+    val taskId: String?,
+)
+
+data class WorkspaceChanges(
+    val available: Boolean,
+    val version: Int,
+    val summary: WorkspaceChangeSummary,
+    val files: List<WorkspaceChangeFile>,
+)
+
+data class WorkspaceChangeSummary(
+    val created: Int,
+    val modified: Int,
+    val deleted: Int,
+    val symlinkCreated: Int,
+    val additions: Int,
+    val deletions: Int,
+    val truncated: Boolean,
+)
+
+data class WorkspaceChangeFile(
+    val path: String,
+    val root: String,
+    val status: String,
+    val binary: Boolean,
+    val sensitive: Boolean,
+    val sizeBefore: Long?,
+    val sizeAfter: Long?,
+    val diff: String,
+    val diffTruncated: Boolean,
+    val diffUnavailableReason: String?,
+    val additions: Int,
+    val deletions: Int,
+)
+
+data class LarkCliProbe(
+    val available: Boolean,
+    val version: String?,
+    val error: String?,
+)
+
+data class LarkAuthProbe(
+    val status: String,
+    val message: String?,
+    val user: String?,
+    val verified: Boolean,
+) {
+    val authenticated: Boolean get() = status.equals("authenticated", ignoreCase = true)
+}
+
+data class LarkIntegrationStatus(
+    val installed: Boolean,
+    val version: String,
+    val latestAvailableVersion: String?,
+    val runtimeVersionMismatch: Boolean,
+    val appConfigured: Boolean,
+    val appId: String?,
+    val appBrand: String?,
+    val skillsExpected: Int,
+    val skillsInstalled: Int,
+    val enabledSkills: List<String>,
+    val cli: LarkCliProbe,
+    val auth: LarkAuthProbe,
+    val sandboxRuntimeReady: Boolean,
+    val sandboxRuntimeDetail: String?,
+)
+
+enum class LarkVerificationKind { Configuration, Authorization }
+
+/** Device-code browser flow returned by the Lark/Feishu integration endpoints. */
+data class LarkVerification(
+    val kind: LarkVerificationKind,
+    val verificationUrl: String,
+    val deviceCode: String,
+    val expiresInSeconds: Int?,
+    val userCode: String?,
+    val brand: String? = null,
+    val intervalSeconds: Int? = null,
+    val hint: String? = null,
+)
+
+data class LarkIntegrationResult(
+    val success: Boolean,
+    val message: String,
+    val status: LarkIntegrationStatus,
+)
+
 sealed interface StreamResult {
     /** The server sent the SSE `end` event, or recovery found a terminal run. */
     data class TerminalEnd(
@@ -479,9 +592,18 @@ sealed interface StreamUpdate {
         val modelName: String? = null,
         val description: String? = null,
     ) : StreamUpdate
+    data class RunNotice(
+        val kind: RunNoticeKind,
+        val message: String,
+        val attempt: Int? = null,
+        val maxAttempts: Int? = null,
+        val waitMillis: Long? = null,
+    ) : StreamUpdate
     data class Failure(val message: String) : StreamUpdate
     data object Finished : StreamUpdate
 }
+
+enum class RunNoticeKind { LlmRetry, SafetyTermination }
 
 /** A single node write from LangGraph's incremental `updates` stream. */
 data class StreamPatch(

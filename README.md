@@ -54,6 +54,12 @@ DeerFlow Android 是 DeerFlow 工作区的原生 Android 客户端，而不是 W
 - **工作区管理**：管理自定义 Agent 与执行历史、周期或一次性定时任务、Memory 摘要和事实、MCP 服务器/工具，以及 Channels 运行时配置。
 - **本地优先的阅读体验**：Room 缓存按服务器隔离的会话、消息、草稿、附件、运行恢复标记和工作区元数据。离线时可浏览已缓存内容，但应用不会离线排队发送提示词。
 
+### 1.1.1 更新
+
+- **运行详情与审计**：会话右上角三点菜单可打开运行详情，查看最近运行、事件、LLM/Token 用量与工作区变更；浏览器实时控制入口仍保持独立。
+- **飞书 / Lark 状态入口**：个人页提供安装、配置和授权状态，便于识别服务端缺失的前置条件。
+- **流式与自托管兼容性**：识别重试和安全终止通知，避免对客户端 HTTP 4xx 无限重试；签名版允许连接自托管 DeerFlow Gateway 的 HTTP 地址。
+
 ### 1.1.0 更新
 
 - **Browser Live Control**：Gateway 返回浏览器工具快照时，可从消息中打开 1280 x 720 的远程浏览器实时画面。支持地址跳转、前进/后退、标签切换、点击、拖动、滚动和文本输入；实际浏览与凭据仍保留在 Gateway 侧。
@@ -177,6 +183,12 @@ DeerFlow Android is the native Android workspace client for DeerFlow, not a WebV
 - **Rich output and files**: Markdown, code blocks, citations, tool calls, approval and human-input cards, subtasks, Todo state, image results, attachments, Artifact preview/download/open, camera/photo/document upload, and conversation export.
 - **Workspace management**: Manage custom Agents and their execution history, cron or one-time tasks, memory summaries and facts, MCP servers/tools, and Channels runtime configuration.
 - **Offline reading without surprise sends**: Room caches server-scoped conversations, messages, drafts, attachments, run markers, and workspace metadata. Cached content remains readable offline, but prompts are never queued for later transmission.
+
+### What's New in 1.1.1
+
+- **Run details and audit**: The conversation overflow menu opens run details for recent runs, events, LLM/token usage, and workspace changes. Browser Live Control remains a dedicated action.
+- **Lark status entry point**: Profile exposes installation, configuration, and authorization status so server-side prerequisites are clear.
+- **Streaming and self-hosted compatibility**: Retry and safety-termination notices are surfaced, client HTTP 4xx responses no longer retry indefinitely, and the signed build can reach self-hosted DeerFlow Gateway HTTP origins.
 
 ### What's New in 1.1.0
 

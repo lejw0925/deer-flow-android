@@ -31,6 +31,7 @@ import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.CleaningServices
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
@@ -95,6 +96,7 @@ fun ProfileScreen(
 ) {
     val context = LocalContext.current
     var showChannels by remember { mutableStateOf(false) }
+    var showLarkIntegration by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { viewModel.refreshCacheStats() }
     ProfileContent(
         state = state,
@@ -113,6 +115,10 @@ fun ProfileScreen(
             viewModel.refreshChannels()
             showChannels = true
         },
+        onOpenLarkIntegration = {
+            viewModel.refreshLarkIntegration()
+            showLarkIntegration = true
+        },
         onOpenSourceLicenses = {},
         onOpenSourceCode = {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SOURCE_CODE_URL)))
@@ -121,6 +127,9 @@ fun ProfileScreen(
     )
     if (showChannels) {
         ChannelsSheet(state, viewModel, onDismiss = { showChannels = false })
+    }
+    if (showLarkIntegration) {
+        LarkIntegrationSheet(state, viewModel, onDismiss = { showLarkIntegration = false })
     }
 }
 
@@ -139,6 +148,7 @@ internal fun ProfileContent(
     onClearCache: () -> Unit,
     onSignOut: () -> Unit,
     onOpenChannels: () -> Unit = {},
+    onOpenLarkIntegration: () -> Unit = {},
     onOpenSourceLicenses: () -> Unit,
     onOpenSourceCode: () -> Unit,
     contentPadding: PaddingValues = PaddingValues(),
@@ -213,6 +223,16 @@ internal fun ProfileContent(
                                 .fillMaxWidth()
                                 .clickable(onClick = onOpenChannels)
                                 .testTag(UiTags.ProfileChannels),
+                        )
+                        ListItem(
+                            headlineContent = { Text(stringResource(R.string.lark_integration)) },
+                            supportingContent = { Text(stringResource(R.string.lark_integration_subtitle)) },
+                            leadingContent = { Icon(Icons.Outlined.Extension, contentDescription = null) },
+                            trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(onClick = onOpenLarkIntegration)
+                                .testTag(UiTags.ProfileLarkIntegration),
                         )
                     }
                 }
