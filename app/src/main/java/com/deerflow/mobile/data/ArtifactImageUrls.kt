@@ -1,11 +1,14 @@
 package com.deerflow.mobile.data
 
+import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
+private fun decodePathSegment(segment: String): String =
+    runCatching { URLDecoder.decode(segment, StandardCharsets.UTF_8.name()) }.getOrDefault(segment)
+
 private fun encodePathSegment(segment: String): String {
-    val decoded = runCatching { java.net.URLDecoder.decode(segment, StandardCharsets.UTF_8) }
-        .getOrDefault(segment)
+    val decoded = decodePathSegment(segment)
     return URLEncoder.encode(decoded, StandardCharsets.UTF_8.name()).replace("+", "%20")
 }
 
@@ -48,7 +51,7 @@ fun resolveMessageImageURL(
     val (relativePath, suffix) = splitPathSuffix(src)
     val normalizedPath = relativePath.replace(Regex("^(?:\\./)+"), "")
     val decodedNormalizedPath = normalizedPath.split('/').joinToString("/") { segment ->
-        runCatching { java.net.URLDecoder.decode(segment, StandardCharsets.UTF_8) }.getOrDefault(segment)
+        decodePathSegment(segment)
     }
     if (
         normalizedPath.isEmpty() ||

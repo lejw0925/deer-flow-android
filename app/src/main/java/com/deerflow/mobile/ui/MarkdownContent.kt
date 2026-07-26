@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material3.HorizontalDivider
@@ -20,16 +22,20 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -44,6 +50,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.deerflow.mobile.R
 import io.ratex.RaTeXView
 import java.net.URI
+import kotlinx.coroutines.launch
 import org.commonmark.ext.gfm.strikethrough.Strikethrough
 import org.commonmark.ext.gfm.strikethrough.StrikethroughExtension
 import org.commonmark.ext.gfm.tables.TableBlock
@@ -77,13 +84,29 @@ private val markdownParser = Parser.builder()
     .includeSourceSpans(IncludeSourceSpans.BLOCKS)
     .build()
 
+private const val CITATION_ANNOTATION = "CITATION"
+private val LocalCitationNavigator = staticCompositionLocalOf<(String) -> Unit> { {} }
+
 @Composable
 fun MarkdownContent(markdown: String, modifier: Modifier = Modifier, onArtifact: (String) -> Unit = {}) {
-    val document = remember(markdown) { markdownParser.parse(markdown) }
-    val citations = remember(markdown) { document.citationSources() }
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        document.children().forEach { MarkdownBlock(it, markdown, onArtifact) }
-        CitationSources(citations)
+    val presentation = remember(markdown) { citationPresentation(markdown) }
+    val sourceRequesters = remember(presentation.sources) {
+        presentation.sources.associate { source -> source.url to BringIntoViewRequester() }
+    }
+    val scope = rememberCoroutineScope()
+    val onCitationClick = remember(sourceRequesters, scope) {
+        { url: String ->
+            sourceRequesters[url]?.let { requester ->
+                scope.launch { requester.bringIntoView() }
+            }
+            Unit
+        }
+    }
+    CompositionLocalProvider(LocalCitationNavigator provides onCitationClick) {
+        Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            presentation.bodyNodes.forEach { MarkdownBlock(it, markdown, onArtifact) }
+            CitationSources(presentation.sources, sourceRequesters)
+        }
     }
 }
 
@@ -324,6 +347,7 @@ private fun MarkdownInline(node: Node, style: TextStyle, onArtifact: (String) ->
 private fun MarkdownInlineNodes(nodes: List<Node>, style: TextStyle, onArtifact: (String) -> Unit = {}) {
     val primary = MaterialTheme.colorScheme.primary
     val codeBackground = MaterialTheme.colorScheme.surfaceVariant
+    val onCitationClick = LocalCitationNavigator.current
     val value = remember(nodes, primary, codeBackground) {
         buildAnnotatedString {
             nodes.forEach { appendInlineNode(it, primary, codeBackground) }
@@ -331,16 +355,28 @@ private fun MarkdownInlineNodes(nodes: List<Node>, style: TextStyle, onArtifact:
     }
     if (value.isEmpty()) return
     val uriHandler = LocalUriHandler.current
-    ClickableText(
-        text = value,
-        style = style.copy(color = MaterialTheme.colorScheme.onSurface),
-        onClick = { offset ->
-            value.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { link ->
-                if (link.item.isArtifactPath()) onArtifact(link.item)
-                else runCatching { uriHandler.openUri(link.item) }
-            }
-        },
-    )
+    val text = @Composable {
+        ClickableText(
+            text = value,
+            style = style.copy(color = MaterialTheme.colorScheme.onSurface),
+            onClick = { offset ->
+                val citation = value.getStringAnnotations(CITATION_ANNOTATION, offset, offset).firstOrNull()
+                if (citation != null) {
+                    onCitationClick(citation.item)
+                } else {
+                    value.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { link ->
+                        if (link.item.isArtifactPath()) onArtifact(link.item)
+                        else runCatching { uriHandler.openUri(link.item) }
+                    }
+                }
+            },
+        )
+    }
+    if (value.getStringAnnotations(CITATION_ANNOTATION, 0, value.length).isNotEmpty()) {
+        Box(Modifier.testTag(UiTags.CitationInline)) { text() }
+    } else {
+        text()
+    }
 }
 
 internal fun markdownImageLabel(title: String?, destination: String?): String {
@@ -364,6 +400,7 @@ private fun AnnotatedString.Builder.appendInlineNode(child: Node, primary: Color
         is Link -> {
             val citation = child.citationSource()
             if (citation != null) {
+                pushStringAnnotation(CITATION_ANNOTATION, citation.url)
                 withStyle(
                     SpanStyle(
                         color = primary,
@@ -373,6 +410,7 @@ private fun AnnotatedString.Builder.appendInlineNode(child: Node, primary: Color
                 ) {
                     append(" ${citation.title} ")
                 }
+                pop()
             } else {
                 pushStringAnnotation("URL", child.destination)
                 withStyle(SpanStyle(color = primary, textDecoration = TextDecoration.Underline)) {
@@ -392,8 +430,16 @@ private fun AnnotatedString.Builder.appendInlineNode(child: Node, primary: Color
 
 internal data class CitationSource(val title: String, val url: String, val domain: String, val count: Int)
 
+internal data class MarkdownCitationPresentation(
+    val bodyNodes: List<Node>,
+    val sources: List<CitationSource>,
+)
+
 @Composable
-private fun CitationSources(sources: List<CitationSource>) {
+private fun CitationSources(
+    sources: List<CitationSource>,
+    sourceRequesters: Map<String, BringIntoViewRequester>,
+) {
     if (sources.isEmpty()) return
     val uriHandler = LocalUriHandler.current
     val primary = MaterialTheme.colorScheme.primary
@@ -409,7 +455,7 @@ private fun CitationSources(sources: List<CitationSource>) {
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        sources.forEach { source ->
+        sources.forEachIndexed { index, source ->
             val link = remember(source, primary) {
                 buildAnnotatedString {
                     pushStringAnnotation("URL", source.url)
@@ -421,34 +467,110 @@ private fun CitationSources(sources: List<CitationSource>) {
                     if (source.count > 1) append(" ×${source.count}")
                 }
             }
-            ClickableText(
-                text = link,
-                style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
-                onClick = { offset ->
-                    link.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { reference ->
-                        runCatching { uriHandler.openUri(reference.item) }
-                    }
-                },
-            )
+            Box(
+                modifier = (sourceRequesters[source.url]?.let { requester ->
+                    Modifier.bringIntoViewRequester(requester)
+                } ?: Modifier).testTag(UiTags.CitationSourcePrefix + index),
+            ) {
+                ClickableText(
+                    text = link,
+                    style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                    onClick = { offset ->
+                        link.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { reference ->
+                            runCatching { uriHandler.openUri(reference.item) }
+                        }
+                    },
+                )
+            }
         }
     }
 }
 
 internal fun citationSources(markdown: String): List<CitationSource> {
-    val sources = linkedNodes(markdownParser.parse(markdown))
+    return citationSources(linkedNodes(markdownParser.parse(markdown)))
+}
+
+internal fun citationPresentation(markdown: String): MarkdownCitationPresentation =
+    markdownParser.parse(markdown).citationPresentation()
+
+private fun Node.citationPresentation(): MarkdownCitationPresentation {
+    val blocks = children().toList()
+    for (index in blocks.indices.reversed()) {
+        val heading = blocks[index] as? Heading ?: continue
+        if (!heading.isSourcesHeading()) continue
+
+        val sectionEnd = blocks.sectionEndAfter(index, heading.level)
+        val sourceSectionSources = blocks.subList(index + 1, sectionEnd).sourceSectionSources()
+        if (sourceSectionSources.isNotEmpty()) {
+            val bodyNodes = buildList {
+                addAll(blocks.subList(0, index))
+                addAll(blocks.subList(sectionEnd, blocks.size))
+            }
+            return MarkdownCitationPresentation(
+                bodyNodes = bodyNodes,
+                sources = bodyNodes.citationSources().ifEmpty { sourceSectionSources },
+            )
+        }
+    }
+    return MarkdownCitationPresentation(blocks, citationSources())
+}
+
+private fun Heading.isSourcesHeading(): Boolean = inlineText(this)
+    .trim()
+    .trimEnd(':')
+    .trim()
+    .equals("sources", ignoreCase = true)
+
+private fun List<Node>.sectionEndAfter(startIndex: Int, level: Int): Int {
+    for (index in startIndex + 1 until size) {
+        val heading = this[index] as? Heading ?: continue
+        if (heading.level <= level) return index
+    }
+    return size
+}
+
+private fun Iterable<Node>.citationSources(): List<CitationSource> =
+    citationSources(asSequence().flatMap { linkedNodes(it) })
+
+private fun Iterable<Node>.sourceSectionSources(): List<CitationSource> =
+    sourceSectionSources(asSequence().flatMap { linkedNodes(it) })
+
+private fun citationSources(links: Sequence<Link>): List<CitationSource> {
+    return links
         .mapNotNull(Link::citationSource)
-        .groupBy { it.url }
+        .groupedSources()
+}
+
+private fun sourceSectionSources(links: Sequence<Link>): List<CitationSource> {
+    return links
+        .mapNotNull(Link::sourceSectionSource)
+        .groupedSources()
+}
+
+private fun Sequence<CitationSource>.groupedSources(): List<CitationSource> {
+    val sources = groupBy { it.url }
     return sources.values.map { matches ->
         val source = matches.first()
         source.copy(count = matches.size)
     }
 }
 
-private fun Node.citationSources(): List<CitationSource> = linkedNodes(this)
-    .mapNotNull(Link::citationSource)
-    .groupBy { it.url }
-    .values
-    .map { matches -> matches.first().copy(count = matches.size) }
+private fun Link.sourceSectionSource(): CitationSource? {
+    citationSource()?.let { return it }
+    val url = destination.takeIf { it.startsWith("http://") || it.startsWith("https://") } ?: return null
+    val domain = sourceDomain(url)
+    return CitationSource(
+        title = inlineText(this).trim().ifBlank { domain },
+        url = url,
+        domain = domain,
+        count = 1,
+    )
+}
+
+private fun sourceDomain(url: String): String =
+    runCatching { URI(url).host.removePrefix("www.") }.getOrNull().orEmpty().ifBlank { url }
+
+private fun Node.citationSources(): List<CitationSource> = citationSources(linkedNodes(this))
 
 private fun linkedNodes(node: Node): Sequence<Link> = sequence {
     if (node is Link) yield(node)
@@ -459,7 +581,7 @@ private fun Link.citationSource(): CitationSource? {
     val url = destination.takeIf { it.startsWith("http://") || it.startsWith("https://") } ?: return null
     val rawTitle = inlineText(this).trim()
     if (!rawTitle.startsWith("citation:", ignoreCase = true)) return null
-    val domain = runCatching { URI(url).host.removePrefix("www.") }.getOrNull().orEmpty().ifBlank { url }
+    val domain = sourceDomain(url)
     val title = rawTitle.substringAfter(':').trim()
         .takeUnless { it.equals("source", ignoreCase = true) || it == "来源" }
         .orEmpty()

@@ -14,6 +14,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/lejw0925/deer-flow-android/releases/latest">下载最新版本</a> |
   <a href="#chinese">简体中文</a> | <a href="#english">English</a>
 </p>
 
@@ -53,6 +54,13 @@ DeerFlow Android 是 DeerFlow 工作区的原生 Android 客户端，而不是 W
 - **工作区管理**：管理自定义 Agent 与执行历史、周期或一次性定时任务、Memory 摘要和事实、MCP 服务器/工具，以及 Channels 运行时配置。
 - **本地优先的阅读体验**：Room 缓存按服务器隔离的会话、消息、草稿、附件、运行恢复标记和工作区元数据。离线时可浏览已缓存内容，但应用不会离线排队发送提示词。
 
+### 1.1.0 更新
+
+- **Browser Live Control**：Gateway 返回浏览器工具快照时，可从消息中打开 1280 x 720 的远程浏览器实时画面。支持地址跳转、前进/后退、标签切换、点击、拖动、滚动和文本输入；实际浏览与凭据仍保留在 Gateway 侧。
+- **更完整的 Agent 运行过程**：消费自定义 SSE 任务事件，实时更新子 Agent 步骤；运行通知会反映当前工具与完成状态，支持 Android 16 Live Update 和标准前台通知回退。
+- **阅读与工具呈现**：支持行内与块级 TeX 数学公式、浏览器工具预览，以及按工具类别显示的图标，便于在长会话中识别当前操作。
+- **账户与通道细节**：关于页展示版本、构建号、包名、源码与许可证；通道 API 的 JSON 空值不会再以可见的 `null` 文本显示。
+
 ### 技术架构
 
 | 层级 | 位置 | 职责 |
@@ -91,6 +99,10 @@ JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
 ```
 
 4. 在登录页填写 Gateway 的**站点根地址**，例如 `https://deerflow.example.com`。不要在地址后添加 `/api` 或 `/api/langgraph`。
+
+### 安装正式版本
+
+发布版本可从 [GitHub Releases](https://github.com/lejw0925/deer-flow-android/releases/latest) 下载 `app-release.apk`。在 Android 的安装确认页完成安装后，首次打开时填写 Gateway 的站点根地址即可。Release 包启用压缩与优化，并只允许生产 Gateway 的 HTTPS 连接（`localhost` 与模拟器 `10.0.2.2` 除外）。
 
 ### 使用本地 Mock Gateway
 
@@ -166,6 +178,13 @@ DeerFlow Android is the native Android workspace client for DeerFlow, not a WebV
 - **Workspace management**: Manage custom Agents and their execution history, cron or one-time tasks, memory summaries and facts, MCP servers/tools, and Channels runtime configuration.
 - **Offline reading without surprise sends**: Room caches server-scoped conversations, messages, drafts, attachments, run markers, and workspace metadata. Cached content remains readable offline, but prompts are never queued for later transmission.
 
+### What's New in 1.1.0
+
+- **Browser Live Control**: When the Gateway returns a browser-tool snapshot, open a 1280 x 720 remote browser view directly from the message. Address navigation, back/forward, tab selection, tap, drag, scroll, and text input are supported while the actual browsing session and credentials remain on the Gateway.
+- **More complete Agent progress**: Custom SSE task events update subagent steps as they happen. Run notifications reflect the active tool and terminal state, with Android 16 Live Updates and a standard foreground-notification fallback.
+- **Reading and tool presentation**: Inline and display TeX math, browser-tool previews, and tool-specific icons make long-running conversations easier to follow.
+- **Account and channel details**: The About screen shows version, build, package name, source, and license. JSON null values from the Channels API are no longer rendered as visible `null` text.
+
 ### Architecture
 
 | Layer | Location | Responsibility |
@@ -204,6 +223,10 @@ JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
 ```
 
 4. On the login screen, enter the Gateway's **origin**, such as `https://deerflow.example.com`. Do not append `/api` or `/api/langgraph`.
+
+### Install a Release
+
+Download `app-release.apk` from [GitHub Releases](https://github.com/lejw0925/deer-flow-android/releases/latest). Complete Android's install confirmation, then enter the Gateway origin on first launch. Release packages are optimized and only allow production Gateway HTTPS connections, apart from the `localhost` and emulator `10.0.2.2` development exceptions.
 
 ### Local Mock Gateway
 

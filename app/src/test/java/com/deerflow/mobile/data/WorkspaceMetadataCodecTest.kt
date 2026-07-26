@@ -35,6 +35,7 @@ class WorkspaceMetadataCodecTest {
                 ),
             ),
             agentsEnabled = true,
+            browserControlEnabled = true,
         )
 
         assertEquals(value, decodeWorkspaceCapabilities(encodeWorkspaceCapabilities(value)))

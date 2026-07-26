@@ -12,6 +12,14 @@ internal sealed interface ToolCallLabel {
     data class WebSearch(val query: String?) : ToolCallLabel
     data class ImageSearch(val query: String?) : ToolCallLabel
     data object ViewWebPage : ToolCallLabel
+    data class BrowserNavigate(val url: String?) : ToolCallLabel
+    data object BrowserSnapshot : ToolCallLabel
+    data object BrowserClick : ToolCallLabel
+    data object BrowserType : ToolCallLabel
+    data object BrowserGetText : ToolCallLabel
+    data object BrowserBack : ToolCallLabel
+    data object BrowserScreenshot : ToolCallLabel
+    data object BrowserClose : ToolCallLabel
     data object PresentFiles : ToolCallLabel
     data object ListFolder : ToolCallLabel
     data object ReadFile : ToolCallLabel
@@ -32,6 +40,14 @@ internal fun toolCallPresentation(call: MessageBlock.ToolCall): ToolCallPresenta
         "web_search" -> ToolCallPresentation(ToolCallLabel.WebSearch(args?.stringArgument("query")))
         "image_search" -> ToolCallPresentation(ToolCallLabel.ImageSearch(args?.stringArgument("query")))
         "web_fetch" -> ToolCallPresentation(ToolCallLabel.ViewWebPage, args?.stringArgument("url"))
+        "browser_navigate" -> ToolCallPresentation(ToolCallLabel.BrowserNavigate(args?.stringArgument("url")))
+        "browser_snapshot" -> ToolCallPresentation(ToolCallLabel.BrowserSnapshot)
+        "browser_click" -> ToolCallPresentation(ToolCallLabel.BrowserClick)
+        "browser_type" -> ToolCallPresentation(ToolCallLabel.BrowserType)
+        "browser_get_text" -> ToolCallPresentation(ToolCallLabel.BrowserGetText)
+        "browser_back" -> ToolCallPresentation(ToolCallLabel.BrowserBack)
+        "browser_screenshot" -> ToolCallPresentation(ToolCallLabel.BrowserScreenshot)
+        "browser_close" -> ToolCallPresentation(ToolCallLabel.BrowserClose)
         "present_files" -> ToolCallPresentation(ToolCallLabel.PresentFiles)
         "ls" -> ToolCallPresentation(
             label = description?.let(ToolCallLabel::Description) ?: ToolCallLabel.ListFolder,

@@ -38,7 +38,17 @@ class MessageCacheCodecTest {
                 MessageBlock.Quote("Keep the structure"),
                 MessageBlock.Reasoning("Inspect the cache first"),
                 MessageBlock.ToolCall("search", "{\"query\":\"Room\"}", "call-1"),
-                MessageBlock.ToolResult("call-1", "search", "Found one result", failed = false),
+                MessageBlock.ToolResult(
+                    "call-1",
+                    "search",
+                    "Found one result",
+                    failed = false,
+                    browserView = BrowserViewSnapshot(
+                        screenshot = "/mnt/user-data/browser/step.jpg",
+                        url = "https://example.com",
+                        title = "Example",
+                    ),
+                ),
                 MessageBlock.Subtask(
                     callId = "call-2",
                     subagentType = "researcher",

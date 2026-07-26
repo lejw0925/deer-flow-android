@@ -58,4 +58,22 @@ class ToolCallPresentationTest {
             toolCallPresentation(MessageBlock.ToolCall("tool", "{}", "unknown-1")),
         )
     }
+
+    @Test
+    fun browserToolsUseDedicatedLabelsAndKeepNavigationUrl() {
+        assertEquals(
+            ToolCallPresentation(ToolCallLabel.BrowserNavigate("https://example.com")),
+            toolCallPresentation(
+                MessageBlock.ToolCall("browser_navigate", "{\"url\":\"https://example.com\"}", "browser-1"),
+            ),
+        )
+        assertEquals(
+            ToolCallPresentation(ToolCallLabel.BrowserClick),
+            toolCallPresentation(MessageBlock.ToolCall("browser_click", "{}", "browser-2")),
+        )
+        assertEquals(
+            ToolCallPresentation(ToolCallLabel.BrowserClose),
+            toolCallPresentation(MessageBlock.ToolCall("browser_close", "{}", "browser-3")),
+        )
+    }
 }

@@ -3,8 +3,10 @@
 package com.deerflow.mobile.ui
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,18 +31,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.CallSplit
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.IndeterminateCheckBox
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Psychology
-import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -73,7 +73,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
@@ -85,11 +88,19 @@ import androidx.compose.ui.unit.dp
 import com.deerflow.mobile.R
 import com.deerflow.mobile.data.ChatMessage
 import com.deerflow.mobile.data.ChatMessageGroup
+import com.deerflow.mobile.data.BrowserViewSnapshot
 import com.deerflow.mobile.data.HumanInputRequest
 import com.deerflow.mobile.data.MessageBlock
 import com.deerflow.mobile.data.MessageRole
 import com.deerflow.mobile.data.TokenUsage
+import com.deerflow.mobile.data.ToolIconKind
+import com.deerflow.mobile.data.drawableResId
+import com.deerflow.mobile.data.isInlineDisplayableImageUrl
+import com.deerflow.mobile.data.resolveMessageImageURL
+import com.deerflow.mobile.data.toolIconKind
 import com.deerflow.mobile.ui.theme.ExpressiveMotion
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun ChatMessageGroupItem(
@@ -100,6 +111,7 @@ fun ChatMessageGroupItem(
     onCopy: (String) -> Unit = {},
     onBranch: (String) -> Unit = {},
     onArtifact: (String) -> Unit = {},
+    onBrowser: (BrowserViewSnapshot) -> Unit = {},
     processingStepsExpanded: Boolean? = null,
     onProcessingStepsExpandedChange: (String, Boolean) -> Unit = { _, _ -> },
 ) {
@@ -117,6 +129,7 @@ fun ChatMessageGroupItem(
             group = group,
             runActive = runActive,
             onArtifact = onArtifact,
+            onBrowser = onBrowser,
             expanded = processingStepsExpanded,
             onExpandedChange = onProcessingStepsExpandedChange,
         )
@@ -274,6 +287,7 @@ private fun ProcessingMessageGroup(
     group: ChatMessageGroup.Processing,
     runActive: Boolean,
     onArtifact: (String) -> Unit,
+    onBrowser: (BrowserViewSnapshot) -> Unit,
     expanded: Boolean?,
     onExpandedChange: (String, Boolean) -> Unit,
 ) {
@@ -317,11 +331,17 @@ private fun ProcessingMessageGroup(
             } else {
                 aboveLastTool.filterIsInstance<ProcessingStep.AssistantText>()
             }
-            visibleAboveLastTool.forEach { ProcessingStepView(it, runActive = false, onArtifact) }
-            lastTool?.let { ProcessingStepView(it, runActive = runActive, onArtifact) }
+            visibleAboveLastTool.forEach {
+                ProcessingStepView(step = it, runActive = false, onArtifact = onArtifact, onBrowser = onBrowser)
+            }
+            lastTool?.let {
+                ProcessingStepView(step = it, runActive = runActive, onArtifact = onArtifact, onBrowser = onBrowser)
+            }
             steps.drop(lastToolIndex + 1)
                 .filterNot { it == stepReasoning }
-                .forEach { ProcessingStepView(it, runActive = false, onArtifact) }
+                .forEach {
+                    ProcessingStepView(step = it, runActive = false, onArtifact = onArtifact, onBrowser = onBrowser)
+                }
             finalReasoning?.let { FinalReasoningDisclosure(it) }
             if (runActive && (steps.isEmpty() || lastTool?.result != null)) {
                 ThinkingIndicator()
@@ -390,7 +410,12 @@ private fun processingSteps(messages: List<ChatMessage>): List<ProcessingStep> {
 }
 
 @Composable
-private fun ProcessingStepView(step: ProcessingStep, runActive: Boolean, onArtifact: (String) -> Unit) {
+private fun ProcessingStepView(
+    step: ProcessingStep,
+    runActive: Boolean,
+    onArtifact: (String) -> Unit,
+    onBrowser: (BrowserViewSnapshot) -> Unit,
+) {
     when (step) {
         is ProcessingStep.AssistantText -> MessageBlockView(step.block, onArtifact)
         is ProcessingStep.Reasoning -> MarkdownContent(
@@ -398,7 +423,7 @@ private fun ProcessingStepView(step: ProcessingStep, runActive: Boolean, onArtif
             Modifier.padding(start = 28.dp),
             onArtifact,
         )
-        is ProcessingStep.Tool -> ToolCallSummary(step.call, step.result, active = runActive)
+        is ProcessingStep.Tool -> ToolCallSummary(step.call, step.result, active = runActive, onBrowser = onBrowser)
         is ProcessingStep.Subtask -> SubtaskStep(step.value)
     }
 }
@@ -485,38 +510,105 @@ private fun SubtaskStep(subtask: MessageBlock.Subtask) {
 }
 
 @Composable
-private fun ToolCallSummary(call: MessageBlock.ToolCall, result: MessageBlock.ToolResult?, active: Boolean) {
+private fun ToolCallSummary(
+    call: MessageBlock.ToolCall,
+    result: MessageBlock.ToolResult?,
+    active: Boolean,
+    onBrowser: (BrowserViewSnapshot) -> Unit,
+) {
     val failed = result?.failed == true
     val presentation = remember(call.name, call.detail) { toolCallPresentation(call) }
     val label = localizedToolCallLabel(presentation.label)
 
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(
+                painter = painterResource(toolCallIconRes(call.name)),
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Column(Modifier.weight(1f)) {
+                Text(label, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                presentation.detail?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            when {
+                failed -> Icon(Icons.Outlined.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                active -> LoadingIndicator(Modifier.size(20.dp))
+                else -> Unit
+            }
+        }
+        result?.browserView?.let { BrowserToolPreview(it, onBrowser) }
+    }
+}
+
+@Composable
+private fun BrowserToolPreview(browserView: BrowserViewSnapshot, onBrowser: (BrowserViewSnapshot) -> Unit) {
+    val imageContext = LocalMarkdownImageContext.current
+    val resolvedScreenshot = remember(browserView, imageContext.serverUrl, imageContext.threadId, imageContext.artifactPaths) {
+        if (imageContext.serverUrl.isBlank() || imageContext.threadId.isBlank()) {
+            browserView.screenshot
+        } else {
+            resolveMessageImageURL(
+                browserView.screenshot,
+                imageContext.serverUrl,
+                imageContext.threadId,
+                imageContext.artifactPaths,
+            )
+        }
+    }
+    var bitmap by remember(resolvedScreenshot) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(resolvedScreenshot) {
+        bitmap = if (isInlineDisplayableImageUrl(resolvedScreenshot)) {
+            withContext(Dispatchers.IO) { loadCachedDisplayBitmap(resolvedScreenshot) }
+        } else {
+            null
+        }
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 32.dp, top = 2.dp, bottom = 6.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .clickable { onBrowser(browserView) },
     ) {
-        Icon(
-            toolCallIcon(presentation.label),
-            contentDescription = null,
-            modifier = Modifier.size(20.dp),
-            tint = MaterialTheme.colorScheme.primary,
-        )
-        Column(Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            presentation.detail?.let {
+        bitmap?.let { image ->
+            Image(
+                bitmap = image.asImageBitmap(),
+                contentDescription = stringResource(R.string.browser_live_frame),
+                modifier = Modifier.fillMaxWidth().height(148.dp),
+                contentScale = ContentScale.Crop,
+            )
+        }
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(Icons.Outlined.Language, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+            Column(Modifier.weight(1f)) {
+                Text(stringResource(R.string.tool_open_browser), style = MaterialTheme.typography.labelLarge)
                 Text(
-                    it,
-                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                    browserView.title.ifBlank { browserView.url },
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-        }
-        when {
-            failed -> Icon(Icons.Outlined.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-            active -> LoadingIndicator(Modifier.size(20.dp))
-            else -> Unit
+            Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = stringResource(R.string.tool_open_browser), modifier = Modifier.size(18.dp))
         }
     }
 }
@@ -747,6 +839,15 @@ private fun localizedToolCallLabel(label: ToolCallLabel): String = when (label) 
     is ToolCallLabel.ImageSearch -> label.query?.let { stringResource(R.string.tool_search_related_images_for, it) }
         ?: stringResource(R.string.tool_search_related_images)
     ToolCallLabel.ViewWebPage -> stringResource(R.string.tool_view_web_page)
+    is ToolCallLabel.BrowserNavigate -> label.url?.let { stringResource(R.string.tool_browser_navigate_url, it) }
+        ?: stringResource(R.string.tool_browser_navigate)
+    ToolCallLabel.BrowserSnapshot -> stringResource(R.string.tool_browser_snapshot)
+    ToolCallLabel.BrowserClick -> stringResource(R.string.tool_browser_click)
+    ToolCallLabel.BrowserType -> stringResource(R.string.tool_browser_type)
+    ToolCallLabel.BrowserGetText -> stringResource(R.string.tool_browser_get_text)
+    ToolCallLabel.BrowserBack -> stringResource(R.string.tool_browser_back)
+    ToolCallLabel.BrowserScreenshot -> stringResource(R.string.tool_browser_screenshot)
+    ToolCallLabel.BrowserClose -> stringResource(R.string.tool_browser_close)
     ToolCallLabel.PresentFiles -> stringResource(R.string.tool_present_files)
     ToolCallLabel.ListFolder -> stringResource(R.string.tool_list_folder)
     ToolCallLabel.ReadFile -> stringResource(R.string.tool_read_file)
@@ -761,14 +862,5 @@ private fun localizedToolCallLabel(label: ToolCallLabel): String = when (label) 
     is ToolCallLabel.UseTool -> stringResource(R.string.tool_use, label.name)
 }
 
-private fun toolCallIcon(label: ToolCallLabel): ImageVector = when (label) {
-    is ToolCallLabel.WebSearch, is ToolCallLabel.ImageSearch -> Icons.Outlined.Search
-    ToolCallLabel.ViewWebPage -> Icons.Outlined.Language
-    ToolCallLabel.PresentFiles, ToolCallLabel.ListFolder -> Icons.Outlined.FolderOpen
-    ToolCallLabel.ReadFile, is ToolCallLabel.ReadSkill -> Icons.Outlined.Description
-    ToolCallLabel.WriteFile -> Icons.Outlined.EditNote
-    ToolCallLabel.ExecuteCommand -> Icons.Outlined.Code
-    ToolCallLabel.NeedYourHelp -> Icons.AutoMirrored.Outlined.HelpOutline
-    ToolCallLabel.WriteTodos -> Icons.Outlined.IndeterminateCheckBox
-    ToolCallLabel.GenericTool, is ToolCallLabel.Description, is ToolCallLabel.UseTool -> Icons.Outlined.Code
-}
+private fun toolCallIconRes(toolName: String): Int =
+    (toolIconKind(toolName) ?: ToolIconKind.ExecuteCommand).drawableResId()

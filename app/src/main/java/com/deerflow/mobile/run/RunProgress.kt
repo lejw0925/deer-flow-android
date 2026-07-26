@@ -1,6 +1,8 @@
 package com.deerflow.mobile.run
 
 import com.deerflow.mobile.data.TodoItem
+import com.deerflow.mobile.data.ToolIconKind
+import com.deerflow.mobile.data.toolIconKind
 
 /** Stable milestones used by the notification and the foreground run UI. */
 enum class RunProgress(val percent: Int) {
@@ -31,42 +33,27 @@ data class RunProgressUpdate(
     val todoChip: String? get() = if (indeterminate) null else "$completedTodos/$totalTodos"
 }
 
-internal enum class RunNotificationIcon {
-    Thinking,
-    Search,
-    Browse,
-    Code,
-    Terminal,
-    Files,
-    Task,
-    Upload,
-    Reconnect,
-    Completed,
+/** A completed notification must show its final value rather than keep animating. */
+internal fun RunProgressUpdate.usesIndeterminateNotificationProgress(ongoing: Boolean): Boolean =
+    ongoing && indeterminate
+
+internal sealed interface RunNotificationIcon {
+    data object Thinking : RunNotificationIcon
+    data class Tool(val icon: ToolIconKind) : RunNotificationIcon
+    data object Upload : RunNotificationIcon
+    data object Reconnect : RunNotificationIcon
+    data object Completed : RunNotificationIcon
 }
 
 internal fun RunProgressUpdate.notificationIcon(): RunNotificationIcon = when (phase) {
     RunProgress.Uploading -> RunNotificationIcon.Upload
     RunProgress.Reconnecting -> RunNotificationIcon.Reconnect
     RunProgress.Finalizing, RunProgress.Completed -> RunNotificationIcon.Completed
-    RunProgress.Working, RunProgress.Responding -> toolNotificationIcon(latestToolName)
+    RunProgress.Working, RunProgress.Responding -> toolIconKind(latestToolName)
+        ?.let(RunNotificationIcon::Tool)
         ?: RunNotificationIcon.Thinking
     RunProgress.Preparing, RunProgress.Connecting -> RunNotificationIcon.Thinking
 }
-
-private fun toolNotificationIcon(toolName: String?): RunNotificationIcon? {
-    val normalized = toolName?.trim()?.lowercase()?.replace('-', '_') ?: return null
-    return when {
-        normalized.containsAny("search", "query", "image") -> RunNotificationIcon.Search
-        normalized.containsAny("browser", "web", "navigate", "fetch", "url") -> RunNotificationIcon.Browse
-        normalized.containsAny("terminal", "command", "shell", "exec", "bash", "python") -> RunNotificationIcon.Terminal
-        normalized.containsAny("patch", "edit", "code", "write") -> RunNotificationIcon.Code
-        normalized.containsAny("file", "folder", "directory", "list", "read", "glob", "grep", "find") -> RunNotificationIcon.Files
-        normalized.containsAny("todo", "task") -> RunNotificationIcon.Task
-        else -> null
-    }
-}
-
-private fun String.containsAny(vararg values: String): Boolean = values.any(::contains)
 
 /** The only foreground-notification details that may trigger an in-run update. */
 internal data class RunNotificationProjection(

@@ -50,6 +50,7 @@ internal fun encodeWorkspaceCapabilities(value: WorkspaceCapabilities): String =
         },
     )
     .put("agentsEnabled", value.agentsEnabled)
+    .put("browserControlEnabled", value.browserControlEnabled)
     .toString()
 
 internal fun decodeWorkspaceCapabilities(payload: String): WorkspaceCapabilities? = runCatching {
@@ -82,6 +83,7 @@ internal fun decodeWorkspaceCapabilities(payload: String): WorkspaceCapabilities
             )
         },
         agentsEnabled = root.optBoolean("agentsEnabled"),
+        browserControlEnabled = root.optBoolean("browserControlEnabled"),
     )
 }.getOrNull()
 

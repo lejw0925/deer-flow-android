@@ -5,6 +5,7 @@ import android.app.Notification
 import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.drawable.Icon
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
@@ -15,6 +16,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -54,10 +56,11 @@ class RunServiceLiveUpdateTest {
         assertTrue(preparing.flags and Notification.FLAG_ONGOING_EVENT != 0)
         assertTrue(preparing.extras.getBoolean(RunService.EXTRA_REQUEST_PROMOTED_ONGOING))
         assertTrue(preparing.flags and Notification.FLAG_PROMOTED_ONGOING != 0)
-        assertEquals(RunProgress.Preparing.percent, preparing.extras.getInt(Notification.EXTRA_PROGRESS))
+        assertEquals(0, preparing.extras.getInt(Notification.EXTRA_PROGRESS))
+        assertTrue(preparing.extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE))
         assertEquals(Notification.ProgressStyle::class.java.name, preparing.extras.getString(Notification.EXTRA_TEMPLATE))
         assertTrue(preparing.hasPromotableCharacteristics())
-        assertEquals("Prep", preparing.shortCriticalText)
+        assertEquals(context.getString(com.deerflow.mobile.R.string.run_chip_preparing), preparing.shortCriticalText)
         assertEquals(expectedLiveUpdateColor(), preparing.color)
         assertNotNull(preparing.smallIcon)
         assertNotNull(preparing.actions.single().icon)
@@ -69,13 +72,43 @@ class RunServiceLiveUpdateTest {
                 completedTodos = 1,
                 totalTodos = 3,
                 currentTodo = "Write report",
+                latestToolName = "read_file",
             ),
             "Research workspace",
         )
         val working = awaitRunNotification(expectedProgress = 33)
         assertEquals("1/3", working.shortCriticalText)
-        assertEquals("Working: Write report", working.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+        assertEquals(
+            context.getString(com.deerflow.mobile.R.string.run_current_step, "Write report"),
+            working.extras.getCharSequence(Notification.EXTRA_TEXT).toString(),
+        )
         assertNotNull(working.smallIcon)
+        assertEquals(
+            com.deerflow.mobile.R.drawable.ic_notification_transparent,
+            working.extras.getParcelable("android.progressTrackerIcon", Icon::class.java)?.resId,
+        )
+    }
+
+    @Test
+    fun indeterminateRunKeepsTheProgressEndClearAndUsesTheLatestToolAsItsStatusIcon() {
+        assumeTrue(notifications.canPostPromotedNotifications())
+        RunService.start(context, "Research workspace")
+        awaitRunNotification(isOngoing = true)
+
+        RunService.update(
+            context,
+            RunProgressUpdate(
+                phase = RunProgress.Working,
+                latestToolName = "web_search",
+            ),
+            "Research workspace",
+        )
+
+        val working = awaitRunNotification(isOngoing = true)
+        assertTrue(working.extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE))
+        assertEquals(Notification.ProgressStyle::class.java.name, working.extras.getString(Notification.EXTRA_TEMPLATE))
+        val endIcon = working.extras.getParcelable("android.progressEndIcon", Icon::class.java)
+        assertNull(endIcon)
     }
 
     @Test
@@ -84,6 +117,8 @@ class RunServiceLiveUpdateTest {
         val ongoing = awaitRunNotification(isOngoing = true)
         assertEquals(context.getColor(com.deerflow.mobile.R.color.ic_launcher_background), ongoing.color)
         assertEquals("Research workspace", ongoing.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertTrue(ongoing.extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE))
+        assertEquals(0, ongoing.extras.getInt(Notification.EXTRA_PROGRESS))
 
         RunService.complete(context, "Research workspace")
 
@@ -91,7 +126,14 @@ class RunServiceLiveUpdateTest {
         assertTrue(completed.flags and Notification.FLAG_ONGOING_EVENT == 0)
         assertEquals(context.getColor(com.deerflow.mobile.R.color.ic_launcher_background), completed.color)
         assertEquals("Research workspace", completed.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
-        assertNotNull(completed.smallIcon)
+        assertEquals(Notification.ProgressStyle::class.java.name, completed.extras.getString(Notification.EXTRA_TEMPLATE))
+        assertEquals(100, completed.extras.getInt(Notification.EXTRA_PROGRESS))
+        assertFalse(completed.extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE))
+        assertEquals(com.deerflow.mobile.R.drawable.ic_notification_completed, completed.smallIcon.resId)
+        assertEquals(
+            com.deerflow.mobile.R.drawable.ic_notification_completed,
+            completed.extras.getParcelable("android.progressEndIcon", Icon::class.java)?.resId,
+        )
     }
 
     @Test

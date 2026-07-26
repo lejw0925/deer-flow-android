@@ -391,6 +391,26 @@ class ChatControlsTest {
     }
 
     @Test
+    fun composerCollapsesQuickCapabilitiesInsideConversation() {
+        var state by mutableStateOf(AppUiState(serverUrl = "http://10.0.2.2:2027"))
+        compose.setContent {
+            MaterialTheme {
+                TestComposer(state = state, editorValue = TextFieldValue(state.composer.text))
+            }
+        }
+
+        compose.onNodeWithTag(UiTags.QuickCapabilities).assertIsDisplayed()
+
+        compose.runOnIdle { state = state.copy(route = AppRoute.Conversation) }
+        compose.waitForIdle()
+        compose.onNodeWithTag(UiTags.QuickCapabilities).assertDoesNotExist()
+
+        compose.runOnIdle { state = state.copy(route = AppRoute.Workspace) }
+        compose.waitForIdle()
+        compose.onNodeWithTag(UiTags.QuickCapabilities).assertIsDisplayed()
+    }
+
+    @Test
     fun composerSendsNonEmptyDraftAndDisablesBlankSend() {
         var sends = 0
         var state by mutableStateOf(
@@ -431,6 +451,38 @@ class ChatControlsTest {
 
         compose.onNodeWithTag(UiTags.SendStopButton).assertIsEnabled().performClick()
         compose.runOnIdle { assertEquals(1, stops) }
+    }
+
+    @Test
+    fun newConversationDropsPreviousThreadStopState() {
+        var state by mutableStateOf(
+            AppUiState(
+                serverUrl = "http://10.0.2.2:2027",
+                route = AppRoute.Conversation,
+                conversationPageTarget = ConversationPageTarget.Conversation,
+                run = RunState(RunStatus.Streaming, runId = "previous-run"),
+            ),
+        )
+        compose.setContent {
+            MaterialTheme {
+                TestComposer(state, TextFieldValue(state.composer.text))
+            }
+        }
+
+        compose.onNodeWithContentDescription(context.getString(R.string.stop_run)).assertIsDisplayed()
+
+        compose.runOnIdle {
+            state = state.copy(
+                selectedThread = null,
+                run = RunState(),
+                messageActionBusy = false,
+            )
+        }
+        compose.waitForIdle()
+
+        compose.onNodeWithContentDescription(context.getString(R.string.stop_run)).assertDoesNotExist()
+        compose.onNodeWithContentDescription(context.getString(R.string.send_message)).assertIsDisplayed()
+        compose.onNodeWithTag(UiTags.SendStopButton).assertIsNotEnabled()
     }
 
     @Test

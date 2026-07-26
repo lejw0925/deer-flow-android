@@ -14,6 +14,7 @@ import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import android.util.Log
 import com.deerflow.mobile.BuildConfig
 import kotlinx.coroutines.CancellationException
@@ -31,6 +32,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.ResponseBody
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSink
 import okio.source
@@ -215,6 +218,15 @@ internal data class StreamReconnectPolicy(
     val maxResumeDurationMs: Long = 30_000L,
 )
 
+private fun notifyBrowserClosed(
+    code: Int,
+    reason: String,
+    terminal: AtomicBoolean,
+    onEvent: (BrowserLiveEvent) -> Unit,
+) {
+    if (terminal.compareAndSet(false, true)) onEvent(BrowserLiveEvent.Closed(code, reason))
+}
+
 private fun JSONObject.toGatewayRunInfo(): GatewayRunInfo? {
     val runId = optString("run_id").takeIf { it.isNotBlank() } ?: return null
     return GatewayRunInfo(
@@ -257,6 +269,56 @@ class DeerFlowApi(
 
     fun updateServerUrl(value: String) {
         serverUrl = normalizeServerUrl(value)
+    }
+
+    /** Opens the Gateway's per-thread Browser Live socket with the current session cookie. */
+    internal fun openBrowserLive(
+        threadId: String,
+        seedUrl: String? = null,
+        onEvent: (BrowserLiveEvent) -> Unit,
+    ): BrowserLiveConnection {
+        val terminal = AtomicBoolean(false)
+        val streamUrl = browserStreamUrl(serverUrl, threadId, seedUrl)
+        val requestBuilder = Request.Builder().url(streamUrl).get()
+        cookies.cookieHeader(browserHandshakeCookieUrl(streamUrl))?.let { cookie ->
+            requestBuilder.header("Cookie", cookie)
+        }
+        val request = requestBuilder.build()
+        val socket = client.newWebSocket(
+            request,
+            object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
+                    onEvent(BrowserLiveEvent.Opened)
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    if (!terminal.get()) parseBrowserLiveEvent(text)?.let(onEvent)
+                }
+
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    webSocket.close(code, reason)
+                    notifyBrowserClosed(code, reason, terminal, onEvent)
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    notifyBrowserClosed(code, reason, terminal, onEvent)
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) {
+                    if (terminal.compareAndSet(false, true)) {
+                        onEvent(BrowserLiveEvent.Failure(t.message ?: "Browser Live connection failed."))
+                    }
+                }
+            },
+        )
+        return object : BrowserLiveConnection {
+            override fun send(input: BrowserInput): Boolean =
+                input.toBrowserWirePayload()?.let(socket::send) ?: false
+
+            override fun close() {
+                socket.close(1000, "")
+            }
+        }
     }
 
     suspend fun currentUser(): DeerFlowUser? = try {
@@ -357,12 +419,19 @@ class DeerFlowApi(
     suspend fun loadCapabilities(): WorkspaceCapabilities {
         val features = JSONObject(request("GET", "/api/features"))
         val agentsEnabled = features.optJSONObject("agents_api")?.optBoolean("enabled") == true
+        val browserControlEnabled = features.optJSONObject("browser_control")?.optBoolean("enabled") == true
         val models = parseModels(request("GET", "/api/models"))
         val agents = if (agentsEnabled) {
             parseAgents(request("GET", "/api/agents"))
         } else emptyList()
         val skills = parseSkills(request("GET", "/api/skills"))
-        return WorkspaceCapabilities(models, agents, skills, agentsEnabled)
+        return WorkspaceCapabilities(
+            models = models,
+            agents = agents,
+            skills = skills,
+            agentsEnabled = agentsEnabled,
+            browserControlEnabled = browserControlEnabled,
+        )
     }
 
     suspend fun setSkillEnabled(skillName: String, enabled: Boolean): SkillInfo {
@@ -1279,11 +1348,11 @@ class DeerFlowApi(
 
     private fun parseChannelProvider(provider: JSONObject): ChannelProviderInfo = ChannelProviderInfo(
         provider = provider.getString("provider"),
-        displayName = provider.optString("display_name"),
+        displayName = nullableJsonString(provider.opt("display_name")) ?: provider.getString("provider"),
         enabled = provider.optBoolean("enabled"),
         configured = provider.optBoolean("configured"),
         connectable = provider.optBoolean("connectable"),
-        unavailableReason = provider.optString("unavailable_reason").takeIf { it.isNotBlank() },
+        unavailableReason = nullableJsonString(provider.opt("unavailable_reason")),
         authMode = provider.optString("auth_mode"),
         connectionStatus = provider.optString("connection_status"),
         credentialFields = provider.optJSONArray("credential_fields")?.let { fields ->

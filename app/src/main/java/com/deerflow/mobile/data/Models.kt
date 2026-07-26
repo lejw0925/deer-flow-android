@@ -47,6 +47,7 @@ sealed interface MessageBlock {
         val name: String,
         val detail: String,
         val failed: Boolean = false,
+        val browserView: BrowserViewSnapshot? = null,
     ) : MessageBlock
     enum class SubtaskStatus { InProgress, Completed, Failed }
     data class SubtaskStep(
@@ -377,6 +378,7 @@ data class WorkspaceCapabilities(
     val agents: List<AgentInfo> = emptyList(),
     val skills: List<SkillInfo> = emptyList(),
     val agentsEnabled: Boolean = false,
+    val browserControlEnabled: Boolean = false,
 ) {
     fun selectedModel(modelName: String?): ModelInfo? =
         models.firstOrNull { it.name == modelName } ?: models.firstOrNull()
@@ -389,6 +391,13 @@ data class WorkspaceCapabilities(
     fun supportsReasoningEffort(modelName: String?): Boolean =
         selectedModel(modelName)?.supportsReasoningEffort ?: true
 }
+
+/** A tool-scoped browser screenshot and page metadata supplied by the Gateway. */
+data class BrowserViewSnapshot(
+    val screenshot: String,
+    val url: String = "",
+    val title: String = "",
+)
 
 data class UploadedFileInfo(
     val filename: String,
@@ -638,12 +647,14 @@ internal fun JSONObject.toChatMessage(): ChatMessage? {
                 }
         }
         if (role == MessageRole.Tool) {
+            val browserView = additional?.optJSONObject("browser_view")?.toBrowserViewSnapshot()
             add(
                 MessageBlock.ToolResult(
                     callId = optString("tool_call_id"),
                     name = optString("name").ifBlank { "Tool" },
                     detail = text,
                     failed = optString("status").equals("error", ignoreCase = true),
+                    browserView = browserView,
                 ),
             )
             if (optString("name") == "task" || additional?.has("subagent_status") == true) {
@@ -691,6 +702,16 @@ internal fun JSONObject.toChatMessage(): ChatMessage? {
         attachments = attachments,
         hiddenFromUi = hiddenFromUi,
         tokenUsage = tokenUsage,
+    )
+}
+
+private fun JSONObject.toBrowserViewSnapshot(): BrowserViewSnapshot? {
+    val screenshot = optString("screenshot").trim()
+    if (screenshot.isBlank()) return null
+    return BrowserViewSnapshot(
+        screenshot = screenshot,
+        url = optString("url").trim(),
+        title = optString("title").trim(),
     )
 }
 

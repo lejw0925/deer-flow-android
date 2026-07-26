@@ -88,13 +88,8 @@ internal fun MarkdownMessageImage(
     var failed by remember(resolved) { mutableStateOf(false) }
     LaunchedEffect(resolved) {
         if (bitmap != null) return@LaunchedEffect
-        val loaded = withContext(Dispatchers.IO) { loadMarkdownBitmap(resolved) }
-        if (loaded != null) {
-            bitmapCache[resolved] = loaded
-            bitmap = loaded
-        } else {
-            failed = true
-        }
+        val loaded = withContext(Dispatchers.IO) { loadCachedDisplayBitmap(resolved) }
+        if (loaded != null) bitmap = loaded else failed = true
     }
 
     when {
@@ -131,6 +126,14 @@ internal fun MarkdownMessageImage(
             }
         }
     }
+}
+
+/** Shared by Markdown and Browser Live so both use the authenticated WebView cookie jar. */
+internal fun loadCachedDisplayBitmap(url: String): Bitmap? {
+    bitmapCache[url]?.let { return it }
+    val loaded = loadMarkdownBitmap(url) ?: return null
+    bitmapCache.putIfAbsent(url, loaded)
+    return bitmapCache[url] ?: loaded
 }
 
 private fun loadMarkdownBitmap(url: String): Bitmap? = runCatching {

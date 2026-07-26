@@ -63,6 +63,15 @@ private fun MessageBlock.toCacheJson(): JSONObject = JSONObject().apply {
             put("name", block.name)
             put("detail", block.detail)
             put("failed", block.failed)
+            block.browserView?.let { browserView ->
+                put(
+                    "browserView",
+                    JSONObject()
+                        .put("screenshot", browserView.screenshot)
+                        .put("url", browserView.url)
+                        .put("title", browserView.title),
+                )
+            }
         }
         is MessageBlock.Subtask -> {
             put("type", "subtask")
@@ -133,6 +142,16 @@ private fun JSONObject.toMessageBlock(): MessageBlock? = runCatching {
             getString("name"),
             getString("detail"),
             getBoolean("failed"),
+            optJSONObject("browserView")?.let { browserView ->
+                val screenshot = browserView.optString("screenshot").trim()
+                screenshot.takeIf(String::isNotBlank)?.let {
+                    BrowserViewSnapshot(
+                        screenshot = it,
+                        url = browserView.optString("url").trim(),
+                        title = browserView.optString("title").trim(),
+                    )
+                }
+            },
         )
         "subtask" -> MessageBlock.Subtask(
             callId = getString("callId"),

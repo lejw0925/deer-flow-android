@@ -25,7 +25,9 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -210,32 +212,73 @@ private fun WorkspacePage(
     onOpenDrawer: () -> Unit,
     contentPadding: androidx.compose.foundation.layout.PaddingValues,
 ) {
+    val routeSnapshots = remember { mutableStateMapOf<AppRoute, AppUiState>() }
+    val targetRoute = state.workspacePageRoute()
+    SideEffect {
+        if (routeSnapshots[targetRoute] != state) routeSnapshots[targetRoute] = state
+    }
     AnimatedContent(
-        targetState = state.route.workspacePageRoute(),
+        targetState = targetRoute,
         modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
         transitionSpec = {
-            val enteringDrawerDestination = targetState != AppRoute.Workspace
-            (
-                fadeIn(initialAlpha = 0.4f, animationSpec = tween(durationMillis = 210)) +
-                    slideInHorizontally(
-                        animationSpec = tween(durationMillis = 240),
-                        initialOffsetX = { width -> if (enteringDrawerDestination) width / 6 else -width / 12 },
+            when {
+                initialState == AppRoute.Workspace && targetState == AppRoute.Conversation -> {
+                    (
+                        fadeIn(initialAlpha = 0.4f, animationSpec = tween(durationMillis = 210)) +
+                            slideInHorizontally(
+                                animationSpec = tween(durationMillis = 240),
+                                initialOffsetX = { width -> width / 6 },
+                            )
+                    ).togetherWith(
+                        fadeOut(animationSpec = tween(durationMillis = 120)) +
+                            slideOutHorizontally(
+                                animationSpec = tween(durationMillis = 180),
+                                targetOffsetX = { width -> -width / 12 },
+                            ),
                     )
-            ).togetherWith(
-                fadeOut(animationSpec = tween(durationMillis = 120)) +
-                    slideOutHorizontally(
-                        animationSpec = tween(durationMillis = 180),
-                        targetOffsetX = { width -> if (enteringDrawerDestination) -width / 12 else width / 12 },
-                    ),
-            )
+                }
+                initialState == AppRoute.Conversation && targetState == AppRoute.Workspace -> {
+                    (
+                        fadeIn(initialAlpha = 0.4f, animationSpec = tween(durationMillis = 210)) +
+                            slideInHorizontally(
+                                animationSpec = tween(durationMillis = 240),
+                                initialOffsetX = { width -> -width / 12 },
+                            )
+                    ).togetherWith(
+                        fadeOut(animationSpec = tween(durationMillis = 120)) +
+                            slideOutHorizontally(
+                                animationSpec = tween(durationMillis = 180),
+                                targetOffsetX = { width -> width / 6 },
+                            ),
+                    )
+                }
+                else -> {
+                    val enteringDrawerDestination = targetState != AppRoute.Workspace
+                    (
+                        fadeIn(initialAlpha = 0.4f, animationSpec = tween(durationMillis = 210)) +
+                            slideInHorizontally(
+                                animationSpec = tween(durationMillis = 240),
+                                initialOffsetX = { width -> if (enteringDrawerDestination) width / 6 else -width / 12 },
+                            )
+                    ).togetherWith(
+                        fadeOut(animationSpec = tween(durationMillis = 120)) +
+                            slideOutHorizontally(
+                                animationSpec = tween(durationMillis = 180),
+                                targetOffsetX = { width -> if (enteringDrawerDestination) -width / 12 else width / 12 },
+                            ),
+                    )
+                }
+            }
         },
         contentKey = { it },
         label = "workspace-child-hero",
     ) { route ->
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             when (route) {
-                AppRoute.Workspace -> ChatScreen(state, viewModel, onOpenDrawer, contentPadding)
-                AppRoute.Conversation -> error("Conversation shares the workspace page target")
+                AppRoute.Workspace, AppRoute.Conversation -> {
+                    val routeState = if (route == targetRoute) state else routeSnapshots[route] ?: state
+                    ChatScreen(routeState.copy(route = state.route), viewModel, onOpenDrawer, contentPadding)
+                }
                 AppRoute.Agents -> AgentsScreen(state, viewModel, viewModel::closeWorkspaceChild, contentPadding)
                 AppRoute.Tasks -> TasksScreen(state, viewModel, viewModel::closeWorkspaceChild, contentPadding)
                 AppRoute.Memory -> MemoryScreen(

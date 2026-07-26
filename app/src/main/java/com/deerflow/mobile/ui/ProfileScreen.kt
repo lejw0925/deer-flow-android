@@ -29,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.CleaningServices
+import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Info
@@ -509,7 +510,7 @@ private fun AboutScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        BuildConfig.APPLICATION_ID,
+                        stringResource(R.string.package_name, BuildConfig.APPLICATION_ID),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -537,7 +538,7 @@ private fun AboutScreen(
                     ListItem(
                         headlineContent = { Text(stringResource(R.string.source_code)) },
                         supportingContent = { Text(SOURCE_CODE_URL) },
-                        leadingContent = { Icon(Icons.Outlined.Info, contentDescription = null) },
+                        leadingContent = { Icon(Icons.Outlined.Code, contentDescription = null) },
                         trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -741,4 +742,4 @@ private fun CacheRetentionPolicy.label(): String = when (this) {
     CacheRetentionPolicy.ClearOnSignOut -> stringResource(R.string.cache_clear_on_sign_out)
 }
 
-private const val SOURCE_CODE_URL = "https://github.com/bytedance/deer-flow"
+private const val SOURCE_CODE_URL = "https://github.com/lejw0925/deer-flow-android"

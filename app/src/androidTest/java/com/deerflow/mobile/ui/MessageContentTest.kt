@@ -1,13 +1,23 @@
 package com.deerflow.mobile.ui
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
+import androidx.compose.ui.unit.dp
+import androidx.test.platform.app.InstrumentationRegistry
+import com.deerflow.mobile.R
 import com.deerflow.mobile.data.ChatMessage
 import com.deerflow.mobile.data.ChatMessageGroup
 import com.deerflow.mobile.data.HumanInputOption
@@ -15,6 +25,7 @@ import com.deerflow.mobile.data.HumanInputRequest
 import com.deerflow.mobile.data.MessageBlock
 import com.deerflow.mobile.data.MessageRole
 import com.deerflow.mobile.data.AttachmentStatus
+import com.deerflow.mobile.data.BrowserViewSnapshot
 import com.deerflow.mobile.data.PendingAttachment
 import com.deerflow.mobile.data.TokenUsage
 import com.deerflow.mobile.data.groupChatMessages
@@ -25,6 +36,7 @@ import org.junit.Test
 
 class MessageContentTest {
     @get:Rule val compose = createComposeRule()
+    private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Test
     fun processingGroupCollapsesPreviousStepsAndKeepsLatestToolVisible() {
@@ -113,6 +125,47 @@ class MessageContentTest {
         compose.onNodeWithText("Execute command").assertExists()
         compose.onNodeWithText("echo hello").assertExists()
         compose.onNodeWithText("hello").assertDoesNotExist()
+    }
+
+    @Test
+    fun browserToolPreviewOpensTheMatchingLiveBrowserSnapshot() {
+        val browserView = BrowserViewSnapshot(
+            screenshot = "/mnt/user-data/browser/step.jpg",
+            url = "https://example.com",
+            title = "Example",
+        )
+        var opened: BrowserViewSnapshot? = null
+        val group = ChatMessageGroup.Processing(
+            key = "browser-processing",
+            messages = listOf(
+                ChatMessage(
+                    id = "browser-call",
+                    role = MessageRole.Assistant,
+                    text = "",
+                    blocks = listOf(MessageBlock.ToolCall("browser_navigate", "{\"url\":\"https://example.com\"}", "browser-1")),
+                ),
+                ChatMessage(
+                    id = "browser-result",
+                    role = MessageRole.Tool,
+                    text = "Opened page",
+                    blocks = listOf(MessageBlock.ToolResult("browser-1", "browser_navigate", "Opened page", browserView = browserView)),
+                ),
+            ),
+        )
+        compose.setContent {
+            MaterialTheme {
+                ChatMessageGroupItem(
+                    group = group,
+                    runActive = false,
+                    onHumanInput = { _, _, _ -> },
+                    onBrowser = { opened = it },
+                )
+            }
+        }
+
+        compose.onNodeWithText(context.getString(R.string.tool_open_browser)).performClick()
+
+        compose.runOnIdle { assertEquals(browserView, opened) }
     }
 
     @Test
@@ -380,6 +433,36 @@ class MessageContentTest {
         compose.onNodeWithText("Flow").assertExists()
         compose.onNodeWithText("Download report").performClick()
         compose.runOnIdle { assertEquals("/mnt/user-data/outputs/report.md", opened) }
+    }
+
+    @Test
+    fun citationTapBringsItsMatchingSourceIntoView() {
+        val sourceTag = UiTags.CitationSourcePrefix + "1"
+        val supportingText = List(24) { index ->
+            "Supporting detail $index keeps the source below the initial viewport."
+        }.joinToString(separator = "\n\n")
+        val markdown = listOf(
+            "[citation: API](https://example.com/api)",
+            supportingText,
+            "## Sources:\n- [citation: Docs](https://example.com/docs)\n- [citation: API](https://example.com/api)",
+        ).joinToString(separator = "\n\n")
+        compose.setContent {
+            MaterialTheme {
+                LazyColumn(Modifier.height(180.dp)) {
+                    item {
+                        MarkdownContent(markdown)
+                    }
+                }
+            }
+        }
+
+        compose.onNodeWithTag(UiTags.CitationInline, useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag(sourceTag, useUnmergedTree = true).assertIsNotDisplayed()
+
+        compose.onNodeWithTag(UiTags.CitationInline, useUnmergedTree = true).performTouchInput { click(center) }
+        compose.waitForIdle()
+
+        compose.onNodeWithTag(sourceTag, useUnmergedTree = true).assertIsDisplayed()
     }
 
     @Test

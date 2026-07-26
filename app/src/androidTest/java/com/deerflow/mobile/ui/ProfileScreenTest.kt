@@ -9,7 +9,9 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.test.platform.app.InstrumentationRegistry
 import com.deerflow.mobile.BuildConfig
+import com.deerflow.mobile.R
 import com.deerflow.mobile.data.ArtifactDownloadLimits
 import com.deerflow.mobile.data.CacheRetentionPolicy
 import com.deerflow.mobile.data.CacheStats
@@ -24,6 +26,7 @@ import org.junit.Test
 
 class ProfileScreenTest {
     @get:Rule val compose = createComposeRule()
+    private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Test
     fun languageNotificationAndCachePolicySelectionsDispatchCallbacks() {
@@ -86,9 +89,11 @@ class ProfileScreenTest {
     fun cacheClearRequiresConfirmationAndAboutExposesLicenseActions() {
         val clearCalls = AtomicInteger()
         val openSourceCalls = AtomicInteger()
+        val sourceCodeCalls = AtomicInteger()
         setProfile(
             onClearCache = { clearCalls.incrementAndGet() },
             onOpenSourceLicenses = { openSourceCalls.incrementAndGet() },
+            onOpenSourceCode = { sourceCodeCalls.incrementAndGet() },
         )
 
         scrollToProfileItem(UiTags.ProfileCacheClear)
@@ -101,10 +106,13 @@ class ProfileScreenTest {
         compose.onNodeWithTag(UiTags.ProfileAbout).performClick()
         compose.onNodeWithTag(UiTags.AboutScreen).assertExists()
         compose.onNodeWithText("DeerFlow Android ${BuildConfig.VERSION_NAME}").assertExists()
+        compose.onNodeWithText(BuildConfig.APPLICATION_ID, substring = true).assertExists()
+        compose.onNodeWithTag(UiTags.AboutSourceCode).performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(1, sourceCodeCalls.get()) }
         compose.onNodeWithTag(UiTags.AboutDeerFlowLicense).performScrollTo().performClick()
         compose.onNodeWithTag(UiTags.AboutLicenseDialog).assertExists()
         compose.onNodeWithText("Permission is hereby granted", substring = true).assertExists()
-        compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithText(context.getString(R.string.close)).performClick()
         compose.onNodeWithTag(UiTags.AboutOpenSourceLicenses).performScrollTo().performClick()
         compose.onNodeWithTag(UiTags.ThirdPartyLicensesScreen).assertExists()
         compose.runOnIdle { assertEquals(1, openSourceCalls.get()) }
@@ -119,6 +127,7 @@ class ProfileScreenTest {
         onClearCache: () -> Unit = {},
         onOpenChannels: () -> Unit = {},
         onOpenSourceLicenses: () -> Unit = {},
+        onOpenSourceCode: () -> Unit = {},
     ) {
         compose.setContent {
             MaterialTheme {
@@ -147,7 +156,7 @@ class ProfileScreenTest {
                     onSignOut = {},
                     onOpenChannels = onOpenChannels,
                     onOpenSourceLicenses = onOpenSourceLicenses,
-                    onOpenSourceCode = {},
+                    onOpenSourceCode = onOpenSourceCode,
                     contentPadding = PaddingValues(),
                 )
             }

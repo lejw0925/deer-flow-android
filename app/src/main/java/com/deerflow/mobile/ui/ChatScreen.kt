@@ -13,7 +13,13 @@ import android.text.format.Formatter
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -54,6 +60,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CollectionsBookmark
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.DesktopWindows
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Image
@@ -198,6 +205,7 @@ fun ChatScreen(
                 val title = state.selectedThread?.title ?: "deerflow-conversation"
                 exportLauncher.launch(conversationExportFileName(title, format))
             },
+            onOpenBrowser = viewModel::openBrowser,
             expandedSelector = expandedTopSelector,
             onExpandedSelectorChange = { expandedTopSelector = it },
         )
@@ -230,6 +238,7 @@ fun ChatScreen(
                         onCopy = { viewModel.showNotice(context.getString(R.string.copied_to_clipboard)) },
                         onBranch = viewModel::branchConversation,
                         onArtifact = viewModel::openArtifact,
+                        onBrowser = viewModel::openBrowser,
                         modifier = Modifier.fillMaxSize().widthIn(max = 900.dp),
                     )
                 }
@@ -295,6 +304,15 @@ fun ChatScreen(
             },
         )
     }
+    if (state.browser.visible) {
+        BrowserLiveSheet(
+            browser = state.browser,
+            serverUrl = state.serverUrl,
+            onDismiss = viewModel::closeBrowser,
+            onLiveControlChange = viewModel::setBrowserLiveControl,
+            onInput = viewModel::sendBrowserInput,
+        )
+    }
     state.artifactSession?.let { session ->
         if (session.phase != ArtifactSessionPhase.Probing) {
             ArtifactSessionDialog(
@@ -330,6 +348,7 @@ internal fun ConversationMessageList(
     onCopy: (String) -> Unit,
     onBranch: (String) -> Unit,
     onArtifact: (String) -> Unit,
+    onBrowser: (com.deerflow.mobile.data.BrowserViewSnapshot) -> Unit = {},
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
 ) {
@@ -404,6 +423,7 @@ internal fun ConversationMessageList(
                 onCopy = onCopy,
                 onBranch = onBranch,
                 onArtifact = onArtifact,
+                onBrowser = onBrowser,
                 processingStepsExpanded = group.key in expandedProcessingGroups,
                 onProcessingStepsExpandedChange = { groupKey, expanded ->
                     expandedProcessingGroups = if (expanded) {
@@ -507,6 +527,7 @@ internal fun ChatTopBar(
     onModelSelected: (String?) -> Unit,
     onModeSelected: (RunMode) -> Unit,
     onExport: (ConversationExportFormat) -> Unit,
+    onOpenBrowser: () -> Unit = {},
     expandedSelector: TopSelectorKind?,
     onExpandedSelectorChange: (TopSelectorKind?) -> Unit,
 ) {
@@ -530,6 +551,21 @@ internal fun ChatTopBar(
             }
         },
         actions = {
+            if (
+                state.route == AppRoute.Conversation &&
+                state.selectedThread != null &&
+                state.capabilities.browserControlEnabled
+            ) {
+                IconButton(
+                    onClick = onOpenBrowser,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag(UiTags.BrowserOpenButton)
+                        .semantics { traversalIndex = 2f },
+                ) {
+                    Icon(Icons.Outlined.DesktopWindows, contentDescription = stringResource(R.string.browser_live_open))
+                }
+            }
             if (state.route == AppRoute.Conversation && state.messages.isNotEmpty()) {
                 Box {
                     IconButton(
@@ -1029,6 +1065,12 @@ internal fun MessageComposer(
     onSend: () -> Unit,
     onStop: () -> Unit,
 ) {
+    val quickCapabilitiesVisible = state.route != AppRoute.Conversation
+    val composerTopPadding by animateDpAsState(
+        targetValue = if (quickCapabilitiesVisible) 4.dp else 14.dp,
+        animationSpec = ExpressiveMotion.fastSpatial(),
+        label = "composer-top-padding",
+    )
     Surface(tonalElevation = 2.dp) {
         Column(
             modifier = Modifier
@@ -1036,11 +1078,24 @@ internal fun MessageComposer(
                 .testTag(UiTags.Composer)
                 .navigationBarsPadding()
                 .imePadding()
-                .padding(start = 12.dp, top = 4.dp, end = 12.dp, bottom = 14.dp),
+                .padding(start = 12.dp, top = composerTopPadding, end = 12.dp, bottom = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Column(Modifier.widthIn(max = 820.dp).fillMaxWidth()) {
-                CapabilityRow(state, onAgent, onQuickAction)
+                AnimatedVisibility(
+                    visible = quickCapabilitiesVisible,
+                    enter = expandVertically(
+                        animationSpec = ExpressiveMotion.fastSpatial(),
+                        expandFrom = Alignment.Bottom,
+                    ) + fadeIn(animationSpec = ExpressiveMotion.fastSpatial()),
+                    exit = shrinkVertically(
+                        animationSpec = ExpressiveMotion.fastSpatial(),
+                        shrinkTowards = Alignment.Bottom,
+                    ) + fadeOut(animationSpec = ExpressiveMotion.fastSpatial()),
+                    label = "composer-quick-capabilities",
+                ) {
+                    CapabilityRow(state, onAgent, onQuickAction)
+                }
                 if (state.composer.attachments.isNotEmpty()) {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 6.dp)) {
                         items(state.composer.attachments, key = { it.uri }) { file ->

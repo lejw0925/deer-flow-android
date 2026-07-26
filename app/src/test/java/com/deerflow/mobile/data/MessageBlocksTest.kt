@@ -101,6 +101,33 @@ class MessageBlocksTest {
     }
 
     @Test
+    fun preservesBrowserViewMetadataOnToolResults() {
+        val message = JSONObject(
+            """{
+                "id":"browser-result",
+                "type":"tool",
+                "name":"browser_navigate",
+                "tool_call_id":"browser-call",
+                "content":"Opened page",
+                "additional_kwargs":{"browser_view":{
+                    "screenshot":"/mnt/user-data/browser/step.jpg",
+                    "url":"https://example.com/path",
+                    "title":"Example page"
+                }}
+            }""".trimIndent(),
+        ).toChatMessage()
+
+        assertEquals(
+            BrowserViewSnapshot(
+                screenshot = "/mnt/user-data/browser/step.jpg",
+                url = "https://example.com/path",
+                title = "Example page",
+            ),
+            message?.blocks?.filterIsInstance<MessageBlock.ToolResult>()?.single()?.browserView,
+        )
+    }
+
+    @Test
     fun mergesStreamingToolCallChunksWithoutReplacingTheToolNameOrArguments() {
         val first = JSONObject()
             .put("id", "ai-1")

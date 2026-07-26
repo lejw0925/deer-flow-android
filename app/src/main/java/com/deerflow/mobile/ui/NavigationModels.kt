@@ -12,9 +12,22 @@ enum class AppRoute(val path: String) {
 internal val AppRoute.isWorkspaceChild: Boolean
     get() = this in setOf(AppRoute.Agents, AppRoute.Tasks, AppRoute.Memory, AppRoute.Profile)
 
-/** Workspace and conversation share ChatScreen, so switching between them must not animate a page swap. */
-internal fun AppRoute.workspacePageRoute(): AppRoute =
-    if (isWorkspaceChild) this else AppRoute.Workspace
+/** Existing threads animate on their own page; a new draft stays on its current chat page. */
+enum class ConversationPageTarget {
+    Workspace,
+    Conversation,
+}
+
+internal fun AppUiState.workspacePageRoute(): AppRoute = when (route) {
+    AppRoute.Conversation -> when (conversationPageTarget) {
+        ConversationPageTarget.Workspace -> AppRoute.Workspace
+        ConversationPageTarget.Conversation -> AppRoute.Conversation
+    }
+    else -> route
+}
+
+internal fun AppRoute.asConversationPageTarget(): ConversationPageTarget =
+    if (this == AppRoute.Conversation) ConversationPageTarget.Conversation else ConversationPageTarget.Workspace
 
 enum class DrawerDestination {
     NewConversation,
@@ -34,6 +47,13 @@ object UiTags {
     const val ChatTopBar = "chat-top-bar"
     const val ChatNavigationButton = "chat-navigation-button"
     const val ConversationExportButton = "conversation-export-button"
+    const val BrowserOpenButton = "browser-open-button"
+    const val BrowserSheet = "browser-sheet"
+    const val BrowserViewport = "browser-viewport"
+    const val BrowserAddressInput = "browser-address-input"
+    const val BrowserLiveControl = "browser-live-control"
+    const val BrowserTextInput = "browser-text-input"
+    const val BrowserTextSend = "browser-text-send"
     const val ThreadRowPrefix = "thread-row-"
     const val ThreadPinAction = "thread-pin-action"
     const val ThreadRenameAction = "thread-rename-action"
@@ -53,6 +73,8 @@ object UiTags {
     const val ModelSelector = "model-selector"
     const val ModeSelector = "mode-selector"
     const val ConversationList = "conversation-list"
+    const val CitationInline = "citation-inline"
+    const val CitationSourcePrefix = "citation-source-"
     const val ProcessingCard = "processing-card"
     const val QuickCapabilities = "quick-capabilities"
     const val SkillsSheet = "skills-sheet"

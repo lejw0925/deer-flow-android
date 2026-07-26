@@ -443,6 +443,7 @@ class DeerFlowApiStreamingTest {
             assertEquals("password", initial.providers.single().credentialFields.first().type)
             assertTrue(updated.configured)
             assertEquals("********", updated.credentialValues["bot_token"])
+            assertNull(updated.unavailableReason)
             assertFalse(disabled.configured)
             assertEquals("bind-telegram", binding.code)
             assertEquals("https://channels.example.test/telegram", binding.url)

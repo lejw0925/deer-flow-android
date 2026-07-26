@@ -20,6 +20,7 @@ import androidx.core.content.ContextCompat
 import com.deerflow.mobile.MainActivity
 import com.deerflow.mobile.R
 import com.deerflow.mobile.data.SettingsStore
+import com.deerflow.mobile.data.drawableResId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -35,7 +36,7 @@ class RunService : Service() {
     private var threadId: String? = null
     private var notificationSurfaceColor: Int = 0xFFDCE8D8.toInt()
     private var notificationAccentColor: Int = 0xFF234D37.toInt()
-    private var terminalSmallIconRes: Int = android.R.drawable.stat_sys_upload_done
+    private var terminalSmallIconRes: Int = R.drawable.ic_notification_completed
     private var liveUpdateDismissed = false
     private var lastPublishedSignature: String? = null
     private var lastNotificationProjection: RunNotificationProjection? = null
@@ -80,7 +81,7 @@ class RunService : Service() {
             ACTION_COMPLETE -> {
                 title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { title }
                 progress = progress.copy(phase = RunProgress.Completed, currentTodo = null)
-                terminalSmallIconRes = android.R.drawable.stat_sys_upload_done
+                terminalSmallIconRes = R.drawable.ic_notification_completed
                 finish(getString(R.string.run_completed))
                 return START_NOT_STICKY
             }
@@ -193,41 +194,72 @@ class RunService : Service() {
         dismissIntent: PendingIntent,
         ongoing: Boolean,
         detail: String?,
+    ): Notification = buildProgressNotification(
+        openIntent = openIntent,
+        stopIntent = stopIntent,
+        dismissIntent = dismissIntent,
+        ongoing = ongoing,
+        detail = detail,
+        requestPromotion = true,
+        iconRes = statusChipSmallIconRes(),
+    )
+
+    @RequiresApi(36)
+    private fun buildProgressNotification(
+        openIntent: PendingIntent,
+        stopIntent: PendingIntent?,
+        dismissIntent: PendingIntent?,
+        ongoing: Boolean,
+        detail: String?,
+        requestPromotion: Boolean,
+        iconRes: Int,
     ): Notification {
+        val indeterminate = progress.usesIndeterminateNotificationProgress(ongoing)
         val style = Notification.ProgressStyle()
-            .setProgressIndeterminate(progress.indeterminate)
+            .setProgressIndeterminate(indeterminate)
             .addProgressSegment(Notification.ProgressStyle.Segment(100).setColor(notificationAccentColor))
             .apply {
-                if (!this@RunService.progress.indeterminate) {
+                if (!indeterminate) {
                     setProgress(this@RunService.progress.percent)
                     setStyledByProgress(true)
-                    setProgressTrackerIcon(progressTrackerIcon())
+                    // Oplus inserts a default tracker when none is supplied. An explicit
+                    // transparent tracker keeps the progress bar free of a right-side glyph.
+                    setProgressTrackerIcon(
+                        Icon.createWithResource(
+                            this@RunService,
+                            R.drawable.ic_notification_transparent,
+                        ),
+                    )
+                }
+                if (!ongoing && iconRes == R.drawable.ic_notification_completed) {
+                    setProgressEndIcon(Icon.createWithResource(this@RunService, iconRes))
                 }
             }
         return Notification.Builder(this, CHANNEL_ID)
             // The small icon is what Android renders at the left of a Live Update status chip.
-            .setSmallIcon(statusChipSmallIconRes())
+            .setSmallIcon(iconRes)
             .setContentTitle(title.ifBlank { getString(R.string.run_in_progress) })
             .setContentText(detail ?: progressLabel())
             .setContentIntent(openIntent)
             .setOngoing(ongoing)
+            .setAutoCancel(!ongoing)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
-            .apply {
-                // System UI derives the app-title contrast from this surface color.
-                setColor(notificationSurfaceColor)
-            }
+            // A Live Update may use an accent color, but must not be colorized.
+            .setColor(notificationSurfaceColor)
             .setShortCriticalText(statusChip())
             .setStyle(style)
-            .addExtras(Bundle().apply { putBoolean(EXTRA_REQUEST_PROMOTED_ONGOING, ongoing) })
-            .setDeleteIntent(dismissIntent)
             .apply {
-                if (ongoing) {
+                if (requestPromotion) {
+                    addExtras(Bundle().apply { putBoolean(EXTRA_REQUEST_PROMOTED_ONGOING, true) })
+                }
+                dismissIntent?.let(::setDeleteIntent)
+                stopIntent?.let {
                     addAction(
                         Notification.Action.Builder(
                             Icon.createWithResource(this@RunService, android.R.drawable.ic_media_pause),
                             getString(R.string.stop_run),
-                            stopIntent,
+                            it,
                         ).build(),
                     )
                 }
@@ -248,11 +280,26 @@ class RunService : Service() {
             .setOngoing(ongoing)
             .setOnlyAlertOnce(true)
             .setColor(notificationSurfaceColor)
-            .setProgress(if (progress.indeterminate) 0 else 100, progress.percent, progress.indeterminate)
+            .setProgress(
+                if (progress.indeterminate) 0 else 100,
+                if (progress.indeterminate) 0 else progress.percent,
+                progress.indeterminate,
+            )
             .apply { if (ongoing) addAction(0, getString(R.string.stop_run), stopIntent) }
             .build()
 
     private fun buildTerminalNotification(openIntent: PendingIntent, detail: String?): Notification {
+        if (Build.VERSION.SDK_INT >= 36) {
+            return buildProgressNotification(
+                openIntent = openIntent,
+                stopIntent = null,
+                dismissIntent = null,
+                ongoing = false,
+                detail = detail,
+                requestPromotion = false,
+                iconRes = terminalSmallIconRes,
+            )
+        }
         val terminalTitle = title.ifBlank { getString(R.string.run_in_progress) }
         val terminalDetail = detail ?: progressLabel()
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -263,6 +310,7 @@ class RunService : Service() {
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
             .setColor(notificationSurfaceColor)
+            .setProgress(100, progress.percent, false)
             .setStyle(NotificationCompat.BigTextStyle().bigText(terminalDetail))
             .build()
     }
@@ -298,20 +346,12 @@ class RunService : Service() {
         },
     )
 
-    @RequiresApi(36)
-    private fun progressTrackerIcon(): Icon = Icon.createWithResource(this, statusChipSmallIconRes())
-
-    private fun statusChipSmallIconRes(): Int = when (progress.notificationIcon()) {
+    private fun statusChipSmallIconRes(): Int = when (val icon = progress.notificationIcon()) {
         RunNotificationIcon.Thinking -> R.drawable.ic_notification_thinking
-        RunNotificationIcon.Search -> android.R.drawable.ic_menu_search
-        RunNotificationIcon.Browse -> android.R.drawable.ic_menu_view
-        RunNotificationIcon.Code -> android.R.drawable.ic_menu_edit
-        RunNotificationIcon.Terminal -> android.R.drawable.ic_menu_manage
-        RunNotificationIcon.Files -> android.R.drawable.ic_menu_agenda
-        RunNotificationIcon.Task -> android.R.drawable.ic_menu_my_calendar
+        is RunNotificationIcon.Tool -> icon.icon.drawableResId()
         RunNotificationIcon.Upload -> android.R.drawable.stat_sys_upload
         RunNotificationIcon.Reconnect -> android.R.drawable.ic_menu_revert
-        RunNotificationIcon.Completed -> android.R.drawable.stat_sys_upload_done
+        RunNotificationIcon.Completed -> R.drawable.ic_notification_completed
     }
 
     private fun finish(detail: String) {
@@ -319,9 +359,10 @@ class RunService : Service() {
             pendingPublish?.cancel()
             pendingPublish = null
             if (SettingsStore(this@RunService).read().notifyOnRunCompletion) {
-                // Stop the foreground notification first. Some OEMs remove a terminal result
-                // published before the foreground-service teardown completes.
-                stopForeground(STOP_FOREGROUND_REMOVE)
+                // A completed activity can no longer remain a promoted Live Update, but keeping
+                // this notification attached through the foreground teardown prevents the visual
+                // jump to a separate generic completion card.
+                stopForeground(STOP_FOREGROUND_DETACH)
                 getSystemService(NotificationManager::class.java).notify(
                     NOTIFICATION_ID,
                     buildTerminalNotification(

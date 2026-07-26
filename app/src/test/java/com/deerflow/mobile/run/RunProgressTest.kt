@@ -1,6 +1,7 @@
 package com.deerflow.mobile.run
 
 import com.deerflow.mobile.data.TodoItem
+import com.deerflow.mobile.data.ToolIconKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -35,6 +36,8 @@ class RunProgressTest {
 
         assertTrue(update.indeterminate)
         assertEquals(RunProgress.Responding.percent, update.percent)
+        assertTrue(update.usesIndeterminateNotificationProgress(ongoing = true))
+        assertFalse(update.usesIndeterminateNotificationProgress(ongoing = false))
     }
 
     @Test
@@ -78,16 +81,20 @@ class RunProgressTest {
     @Test
     fun notificationIconsFollowTheLatestToolAndRunPhase() {
         assertEquals(
-            RunNotificationIcon.Search,
+            RunNotificationIcon.Tool(ToolIconKind.Search),
             RunProgressUpdate(RunProgress.Working, latestToolName = "web_search").notificationIcon(),
         )
         assertEquals(
-            RunNotificationIcon.Terminal,
+            RunNotificationIcon.Tool(ToolIconKind.ExecuteCommand),
             RunProgressUpdate(RunProgress.Working, latestToolName = "execute_command").notificationIcon(),
         )
         assertEquals(
-            RunNotificationIcon.Files,
+            RunNotificationIcon.Tool(ToolIconKind.ReadFile),
             RunProgressUpdate(RunProgress.Responding, latestToolName = "read_file").notificationIcon(),
+        )
+        assertEquals(
+            RunNotificationIcon.Tool(ToolIconKind.Browser),
+            RunProgressUpdate(RunProgress.Working, latestToolName = "browser_click").notificationIcon(),
         )
         assertEquals(
             RunNotificationIcon.Thinking,
@@ -96,6 +103,10 @@ class RunProgressTest {
         assertEquals(
             RunNotificationIcon.Reconnect,
             RunProgressUpdate(RunProgress.Reconnecting, latestToolName = "web_search").notificationIcon(),
+        )
+        assertEquals(
+            RunNotificationIcon.Tool(ToolIconKind.ExecuteCommand),
+            RunProgressUpdate(RunProgress.Working, latestToolName = "custom_tool").notificationIcon(),
         )
     }
 

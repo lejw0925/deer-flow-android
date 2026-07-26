@@ -3,6 +3,9 @@ package com.deerflow.mobile.ui
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.commonmark.node.Heading
+import org.commonmark.node.Node
+import org.commonmark.node.Text
 
 class CitationSourcesTest {
     @Test
@@ -34,4 +37,69 @@ class CitationSourcesTest {
         assertEquals("example.com", source.title)
         assertEquals("example.com", source.domain)
     }
+
+    @Test
+    fun removesSourcesSectionWithoutReplacingBodyCitationSources() {
+        val presentation = citationPresentation(
+            """
+            Summary [citation: Inline](https://example.com/inline)
+
+            ### Sources
+            - [Docs](https://example.com/docs)
+            - [API](https://example.com/api)
+
+            ## Follow-up
+            This remains in the body.
+            """.trimIndent(),
+        )
+
+        assertEquals(3, presentation.bodyNodes.size)
+        assertEquals(listOf("Follow-up"), headingTitles(presentation.bodyNodes))
+        assertEquals(listOf("Inline"), presentation.sources.map(CitationSource::title))
+    }
+
+    @Test
+    fun movesOrdinarySourceLinksIntoTheCitationCard() {
+        val presentation = citationPresentation(
+            """
+            Summary
+
+            ## Sources
+            - [Annual report](https://example.com/report) - Company filing
+            - [Careers](https://jobs.example.com/openings) - Open roles
+            """.trimIndent(),
+        )
+
+        assertEquals(1, presentation.bodyNodes.size)
+        assertTrue(headingTitles(presentation.bodyNodes).isEmpty())
+        assertEquals(listOf("Annual report", "Careers"), presentation.sources.map(CitationSource::title))
+    }
+
+    @Test
+    fun keepsSourcesSectionWhenItDoesNotContainExternalLinks() {
+        val presentation = citationPresentation(
+            """
+            Summary
+
+            ## Sources
+            These notes do not contain a source link.
+            """.trimIndent(),
+        )
+
+        assertEquals(3, presentation.bodyNodes.size)
+        assertEquals(listOf("Sources"), headingTitles(presentation.bodyNodes))
+        assertTrue(presentation.sources.isEmpty())
+    }
+
+    @Test
+    fun keepsWholeDocumentCitationBehaviorWithoutSourcesSection() {
+        val presentation = citationPresentation("Evidence [citation: Docs](https://example.com/docs)")
+
+        assertEquals(1, presentation.bodyNodes.size)
+        assertEquals(listOf("Docs"), presentation.sources.map(CitationSource::title))
+    }
+
+    private fun headingTitles(nodes: List<Node>): List<String> = nodes
+        .filterIsInstance<Heading>()
+        .map { (it.firstChild as? Text)?.literal.orEmpty() }
 }

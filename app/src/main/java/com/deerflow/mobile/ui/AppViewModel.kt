@@ -16,6 +16,11 @@ import com.deerflow.mobile.data.ApiException
 import com.deerflow.mobile.data.ArtifactDownloadLimits
 import com.deerflow.mobile.data.ArtifactProbe
 import com.deerflow.mobile.data.AttachmentStatus
+import com.deerflow.mobile.data.BrowserInput
+import com.deerflow.mobile.data.BrowserLiveConnection
+import com.deerflow.mobile.data.BrowserLiveEvent
+import com.deerflow.mobile.data.BrowserTab
+import com.deerflow.mobile.data.BrowserViewSnapshot
 import com.deerflow.mobile.data.ChatMessage
 import com.deerflow.mobile.data.ChannelConnectResult
 import com.deerflow.mobile.data.ChannelProviderInfo
@@ -28,6 +33,7 @@ import com.deerflow.mobile.data.DeerFlowApi
 import com.deerflow.mobile.data.GatewayRunStatus
 import com.deerflow.mobile.data.DeerFlowUser
 import com.deerflow.mobile.data.MessageAttachment
+import com.deerflow.mobile.data.MessageBlock
 import com.deerflow.mobile.data.MessageRole
 import com.deerflow.mobile.data.MemoryData
 import com.deerflow.mobile.data.MemoryFact
@@ -88,6 +94,7 @@ data class AppUiState(
     val serverUrl: String,
     val user: DeerFlowUser? = null,
     val route: AppRoute = AppRoute.Workspace,
+    val conversationPageTarget: ConversationPageTarget = ConversationPageTarget.Workspace,
     val checkingSession: Boolean = true,
     val loginBusy: Boolean = false,
     val loadingSsoProviders: Boolean = false,
@@ -116,6 +123,7 @@ data class AppUiState(
     val artifacts: List<String> = emptyList(),
     val artifactBusy: Boolean = false,
     val artifactSession: ArtifactSession? = null,
+    val browser: BrowserUiState = BrowserUiState(),
     val composer: ComposerState = ComposerState(),
     /** Storage follows the conversation, while this key belongs to the editor session. */
     val draftStorageKey: String = NEW_DRAFT_KEY,
@@ -149,6 +157,26 @@ data class AppUiState(
 ) {
     val inConversation: Boolean get() = selectedThread != null
 }
+
+enum class BrowserLiveStatus {
+    Idle,
+    Connecting,
+    Live,
+    Error,
+}
+
+/** Ephemeral Browser Live state. Frames are deliberately never persisted with a thread. */
+data class BrowserUiState(
+    val visible: Boolean = false,
+    val threadId: String? = null,
+    val preview: BrowserViewSnapshot? = null,
+    val frameBase64: String? = null,
+    val url: String = "",
+    val tabs: List<BrowserTab> = emptyList(),
+    val liveControlEnabled: Boolean = false,
+    val status: BrowserLiveStatus = BrowserLiveStatus.Idle,
+    val error: String? = null,
+)
 
 enum class ArtifactSessionPhase {
     Probing,
@@ -241,6 +269,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var attachmentJob: Job? = null
     private var threadLoadJob: Job? = null
     private var artifactDownloadJob: Job? = null
+    private var browserConnection: BrowserLiveConnection? = null
+    private var browserConnectionId = 0L
     @Volatile private var artifactOperationId = 0L
     private var pendingRunDestination: PendingRunDestination? = null
     private var pendingNewConversation = false
@@ -428,6 +458,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun connectAndLogin(serverUrl: String, email: String, password: String) {
         val normalized = normalizeOrReport(serverUrl) ?: return
         disconnectRun()
+        closeBrowser()
         cancelArtifactWork()
         conversationShortcuts.clear()
         api.updateServerUrl(normalized)
@@ -439,6 +470,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun saveServerUrl(value: String) {
         val normalized = normalizeOrReport(value) ?: return
         disconnectRun()
+        disconnectBrowserLive()
         cancelArtifactWork()
         conversationShortcuts.clear()
         api.updateServerUrl(normalized)
@@ -516,6 +548,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun logout() {
         viewModelScope.launch {
             disconnectRun()
+            disconnectBrowserLive()
             cancelArtifactWork()
             conversationShortcuts.clear()
             api.logout()
@@ -871,11 +904,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createThread() {
         threadLoadJob?.cancel()
+        closeBrowser()
         cancelArtifactWork()
         val sessionKey = newDraftSessionKey()
-        val assistant = mutableState.value.defaultAgentId
+        val current = mutableState.value
+        val assistant = current.defaultAgentId
+        val pageTarget = current.workspacePageRoute().asConversationPageTarget()
         mutableState.update {
             it.copy(
+                conversationPageTarget = pageTarget,
                 selectedThread = null,
                 messages = emptyList(),
                 todos = emptyList(),
@@ -891,6 +928,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 draftStorageKey = NEW_DRAFT_KEY,
                 draftSessionKey = sessionKey,
                 composerResetToken = it.composerResetToken + 1,
+                run = RunState(),
+                messageActionBusy = false,
                 route = AppRoute.Conversation,
                 error = null,
             )
@@ -898,13 +937,161 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         restoreNewDraft(sessionKey)
     }
 
+    fun openBrowser(browserView: BrowserViewSnapshot? = mutableState.value.messages.latestBrowserView()) {
+        connectBrowser(browserView, browserView?.url)
+    }
+
+    fun setBrowserLiveControl(enabled: Boolean) {
+        val browser = mutableState.value.browser
+        if (!browser.visible || browser.liveControlEnabled == enabled) return
+
+        if (enabled) {
+            connectBrowser(browser.preview, browser.url)
+        } else {
+            disconnectBrowserLive()
+            mutableState.update { current ->
+                if (current.browser.visible && current.browser.threadId == browser.threadId) {
+                    current.copy(
+                        browser = current.browser.copy(
+                            liveControlEnabled = false,
+                            status = BrowserLiveStatus.Idle,
+                            error = null,
+                        ),
+                    )
+                } else {
+                    current
+                }
+            }
+        }
+    }
+
+    private fun connectBrowser(browserView: BrowserViewSnapshot?, initialUrl: String?) {
+        val current = mutableState.value
+        val thread = current.selectedThread ?: return
+        if (!current.capabilities.browserControlEnabled) {
+            mutableState.update { it.copy(error = getApplication<Application>().getString(R.string.browser_live_unavailable)) }
+            return
+        }
+
+        val connectionId = replaceBrowserConnection()
+        val existingBrowser = current.browser.takeIf { it.visible && it.threadId == thread.id }
+        val previewUrl = initialUrl?.takeIf(String::isNotBlank) ?: existingBrowser?.url.orEmpty()
+        mutableState.update { state ->
+            if (state.selectedThread?.id != thread.id) {
+                state
+            } else {
+                state.copy(
+                    browser = BrowserUiState(
+                        visible = true,
+                        threadId = thread.id,
+                        preview = browserView ?: existingBrowser?.preview,
+                        frameBase64 = existingBrowser?.frameBase64,
+                        url = previewUrl,
+                        tabs = existingBrowser?.tabs.orEmpty(),
+                        liveControlEnabled = true,
+                        status = BrowserLiveStatus.Connecting,
+                    ),
+                )
+            }
+        }
+        try {
+            val connection = api.openBrowserLive(thread.id, previewUrl.takeIf(String::isNotBlank)) { event ->
+                viewModelScope.launch { handleBrowserLiveEvent(connectionId, event) }
+            }
+            if (connectionId == browserConnectionId) {
+                browserConnection = connection
+            } else {
+                connection.close()
+            }
+        } catch (_: Exception) {
+            handleBrowserLiveEvent(
+                connectionId,
+                BrowserLiveEvent.Failure(getApplication<Application>().getString(R.string.browser_live_connection_failed)),
+            )
+        }
+    }
+
+    fun closeBrowser() {
+        disconnectBrowserLive()
+        mutableState.update { it.copy(browser = BrowserUiState()) }
+    }
+
+    fun sendBrowserInput(input: BrowserInput) {
+        val browser = mutableState.value.browser
+        if (!browser.visible || !browser.liveControlEnabled || browserConnection?.send(input) == true) return
+        mutableState.update { current ->
+            if (current.browser.visible) {
+                current.copy(browser = current.browser.copy(error = getApplication<Application>().getString(R.string.browser_live_input_failed)))
+            } else {
+                current
+            }
+        }
+    }
+
+    private fun replaceBrowserConnection(): Long {
+        browserConnectionId += 1L
+        browserConnection?.close()
+        browserConnection = null
+        return browserConnectionId
+    }
+
+    private fun disconnectBrowserLive() {
+        replaceBrowserConnection()
+    }
+
+    private fun handleBrowserLiveEvent(connectionId: Long, event: BrowserLiveEvent) {
+        if (connectionId != browserConnectionId) return
+        if (event is BrowserLiveEvent.Closed || event is BrowserLiveEvent.Failure) browserConnection = null
+        mutableState.update { current ->
+            val browser = current.browser
+            if (!browser.visible || browser.threadId != current.selectedThread?.id) {
+                current
+            } else {
+                val updatedBrowser = when (event) {
+                    BrowserLiveEvent.Opened -> browser.copy(status = BrowserLiveStatus.Live, error = null)
+                    is BrowserLiveEvent.Frame -> browser.copy(
+                        frameBase64 = event.jpegBase64,
+                        status = BrowserLiveStatus.Live,
+                        error = null,
+                    )
+                    is BrowserLiveEvent.Url -> browser.copy(url = event.value, status = BrowserLiveStatus.Live, error = null)
+                    is BrowserLiveEvent.Tabs -> browser.copy(tabs = event.values, status = BrowserLiveStatus.Live)
+                    is BrowserLiveEvent.NavigationRejected -> browser.copy(
+                        status = BrowserLiveStatus.Live,
+                        error = event.message ?: getApplication<Application>().getString(R.string.browser_live_navigation_rejected),
+                    )
+                    is BrowserLiveEvent.Closed -> browser.copy(
+                        status = BrowserLiveStatus.Error,
+                        error = browserCloseMessage(event.code, event.reason),
+                    )
+                    is BrowserLiveEvent.Failure -> browser.copy(
+                        status = BrowserLiveStatus.Error,
+                        error = event.message.ifBlank { getApplication<Application>().getString(R.string.browser_live_connection_failed) },
+                    )
+                }
+                current.copy(browser = updatedBrowser)
+            }
+        }
+    }
+
+    private fun browserCloseMessage(code: Int, reason: String): String = when (code) {
+        4401 -> getApplication<Application>().getString(R.string.browser_live_unauthenticated)
+        4404, 4501 -> getApplication<Application>().getString(R.string.browser_live_unavailable)
+        4409 -> getApplication<Application>().getString(R.string.browser_live_in_use)
+        4429 -> getApplication<Application>().getString(R.string.browser_live_capacity_reached)
+        else -> reason.takeIf(String::isNotBlank)
+            ?: getApplication<Application>().getString(R.string.browser_live_disconnected)
+    }
+
     fun openThread(thread: ThreadSummary) {
         if (mutableState.value.selectedThread?.id == thread.id && mutableState.value.route == AppRoute.Conversation) return
         threadLoadJob?.cancel()
+        closeBrowser()
         cancelArtifactWork()
         mutableState.update {
             it.copy(
                 route = AppRoute.Conversation,
+                conversationPageTarget = ConversationPageTarget.Conversation,
                 selectedThread = thread,
                 messages = emptyList(),
                 todos = emptyList(),
@@ -915,6 +1102,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 draftStorageKey = thread.id,
                 draftSessionKey = "thread-draft-${thread.id}",
                 composerResetToken = it.composerResetToken + 1,
+                run = RunState(),
+                messageActionBusy = false,
                 error = null,
             )
         }
@@ -964,11 +1153,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closeConversation() {
         threadLoadJob?.cancel()
+        closeBrowser()
         cancelArtifactWork()
         if (mutableState.value.run.active) {
             mutableState.update {
                 it.copy(
                     route = AppRoute.Workspace,
+                    conversationPageTarget = ConversationPageTarget.Workspace,
                     artifactBusy = false,
                     artifactSession = null,
                     error = null,
@@ -980,6 +1171,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.update {
             it.copy(
                 route = AppRoute.Workspace,
+                conversationPageTarget = ConversationPageTarget.Workspace,
                 selectedThread = null,
                 messages = emptyList(),
                 todos = emptyList(),
@@ -994,6 +1186,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 draftStorageKey = NEW_DRAFT_KEY,
                 draftSessionKey = sessionKey,
                 composerResetToken = it.composerResetToken + 1,
+                run = RunState(),
+                messageActionBusy = false,
                 error = null,
             )
         }
@@ -1006,7 +1200,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             mutableState.update { it.copy(error = "Stop the active run before deleting this conversation.") }
             return
         }
-        if (current.selectedThread?.id == thread.id) cancelArtifactWork()
+        if (current.selectedThread?.id == thread.id) {
+            closeBrowser()
+            cancelArtifactWork()
+        }
         viewModelScope.launch {
             try {
                 threads.delete(thread.id)
@@ -2232,6 +2429,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        disconnectBrowserLive()
         cancelArtifactWork()
         super.onCleared()
     }
@@ -2308,3 +2506,11 @@ private fun currentLanguagePreference(): LanguagePreference =
 
 internal fun isCurrentThreadLoad(selectedThreadId: String?, loadedThreadId: String): Boolean =
     selectedThreadId == loadedThreadId
+
+private fun List<ChatMessage>.latestBrowserView(): BrowserViewSnapshot? =
+    asReversed()
+        .asSequence()
+        .flatMap { message -> message.blocks.asReversed().asSequence() }
+        .filterIsInstance<MessageBlock.ToolResult>()
+        .mapNotNull(MessageBlock.ToolResult::browserView)
+        .firstOrNull()
