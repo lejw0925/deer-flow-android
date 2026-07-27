@@ -7,8 +7,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.viewModels
+import androidx.core.content.IntentCompat
 import com.deerflow.mobile.ui.AppViewModel
 import com.deerflow.mobile.ui.DeerFlowApp
+import com.deerflow.mobile.ui.SharedConversationContent
 
 class MainActivity : AppCompatActivity() {
     private val viewModel: AppViewModel by viewModels()
@@ -29,6 +31,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openDestination(intent: Intent?) {
+        intent?.consumeSharedConversationContent()?.let { sharedContent ->
+            viewModel.openSharedConversation(sharedContent)
+            return
+        }
         when (intent?.action) {
             ACTION_NEW_CONVERSATION -> viewModel.openNewConversationShortcut()
             ACTION_OPEN_CONVERSATION -> viewModel.openRunDestination(
@@ -64,4 +70,37 @@ class MainActivity : AppCompatActivity() {
                 .putExtra(EXTRA_SHORTCUT_SERVER_URL, serverUrl)
                 .putExtra(EXTRA_SHORTCUT_THREAD_ID, threadId)
     }
+}
+
+internal fun Intent.consumeSharedConversationContent(): SharedConversationContent? {
+    if (action !in setOf(Intent.ACTION_SEND, Intent.ACTION_SEND_MULTIPLE)) return null
+
+    val text = getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty()
+    val streams = buildList {
+        when (action) {
+            Intent.ACTION_SEND -> {
+                IntentCompat.getParcelableExtra(this@consumeSharedConversationContent, Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                    ?.let(::add)
+            }
+
+            Intent.ACTION_SEND_MULTIPLE -> {
+                addAll(
+                    IntentCompat.getParcelableArrayListExtra(
+                        this@consumeSharedConversationContent,
+                        Intent.EXTRA_STREAM,
+                        android.net.Uri::class.java,
+                    ).orEmpty(),
+                )
+            }
+        }
+        clipData?.let { clip ->
+            for (index in 0 until clip.itemCount) {
+                clip.getItemAt(index).uri?.let(::add)
+            }
+        }
+    }.distinct()
+    if (text.isBlank() && streams.isEmpty()) return null
+
+    action = null
+    return SharedConversationContent(text = text, attachmentUris = streams)
 }

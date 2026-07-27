@@ -54,6 +54,11 @@ DeerFlow Android 是 DeerFlow 工作区的原生 Android 客户端，而不是 W
 - **工作区管理**：管理自定义 Agent 与执行历史、周期或一次性定时任务、Memory 摘要和事实、MCP 服务器/工具，以及 Channels 运行时配置。
 - **本地优先的阅读体验**：Room 缓存按服务器隔离的会话、消息、草稿、附件、运行恢复标记和工作区元数据。离线时可浏览已缓存内容，但应用不会离线排队发送提示词。
 
+### 1.1.2 更新
+
+- **多文件回传**：助手消息中的多个产物文件收拢为单行横向列表，可左右滑动浏览并打开目标文件，避免长文件列表挤占对话空间。
+- **系统分享预填草稿**：可从其他应用向 DeerFlow 分享文本或文件；应用会创建新的本地会话草稿并预填内容，保留由用户手动发送的控制权。
+
 ### 1.1.1 更新
 
 - **运行详情与审计**：会话右上角三点菜单可打开运行详情，查看最近运行、事件、LLM/Token 用量与工作区变更；浏览器实时控制入口仍保持独立。
@@ -183,6 +188,11 @@ DeerFlow Android is the native Android workspace client for DeerFlow, not a WebV
 - **Rich output and files**: Markdown, code blocks, citations, tool calls, approval and human-input cards, subtasks, Todo state, image results, attachments, Artifact preview/download/open, camera/photo/document upload, and conversation export.
 - **Workspace management**: Manage custom Agents and their execution history, cron or one-time tasks, memory summaries and facts, MCP servers/tools, and Channels runtime configuration.
 - **Offline reading without surprise sends**: Room caches server-scoped conversations, messages, drafts, attachments, run markers, and workspace metadata. Cached content remains readable offline, but prompts are never queued for later transmission.
+
+### What's New in 1.1.2
+
+- **Returned files**: Multiple artifacts in an assistant message now share one horizontally scrollable row, keeping long file lists compact while preserving direct open actions.
+- **System-share drafts**: Share text or files to DeerFlow from another app to create a new local conversation draft with the content prefilled; nothing is sent until the user chooses to send it.
 
 ### What's New in 1.1.1
 

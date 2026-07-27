@@ -73,6 +73,8 @@ object UiTags {
     const val ComposerAttachmentButton = "composer-attachment-button"
     const val SendStopButton = "send-stop-button"
     const val AttachmentSheet = "attachment-sheet"
+    const val PresentedArtifactRow = "presented-artifact-row"
+    const val PresentedArtifactPrefix = "presented-artifact-"
     const val TopSelectors = "top-selectors"
     const val ModelSelector = "model-selector"
     const val ModeSelector = "mode-selector"

@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.CircleShape
@@ -199,9 +201,9 @@ private fun MessageItem(
                                         it is MessageBlock.ToolResult
                                 }
                                 .forEach { MessageBlockView(it, onArtifact) }
-                            trailingArtifacts.forEach { MessageBlockView(it, onArtifact) }
                         }
                     }
+                    PresentedArtifactRow(trailingArtifacts, onArtifact)
                 }
                 MessageAttachments(message)
                 if (message.role == MessageRole.Assistant) {
@@ -783,6 +785,36 @@ internal fun CodeDetail(code: String, language: String? = null) {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             language?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.labelMedium) }
             Text(code, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace))
+        }
+    }
+}
+
+@Composable
+private fun PresentedArtifactRow(
+    artifacts: List<MessageBlock.Artifact>,
+    onArtifact: (String) -> Unit,
+) {
+    if (artifacts.isEmpty()) return
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(UiTags.PresentedArtifactRow),
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        itemsIndexed(
+            items = artifacts,
+            key = { index, artifact -> "${artifact.path}:$index" },
+        ) { index, artifact ->
+            FileAttachmentChip(
+                filename = artifact.title,
+                leadingIcon = {
+                    Icon(Icons.Outlined.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                },
+                modifier = Modifier.testTag(UiTags.PresentedArtifactPrefix + index),
+                expandable = false,
+                onClick = { onArtifact(artifact.path) },
+            )
         }
     }
 }

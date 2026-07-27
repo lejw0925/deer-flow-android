@@ -15,6 +15,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import com.deerflow.mobile.R
@@ -568,6 +569,39 @@ class MessageContentTest {
         compose.onNodeWithText("The report is ready.").assertExists()
         compose.onNodeWithText("report.md").performClick()
         compose.runOnIdle { assertEquals("mnt/user-data/outputs/report.md", opened) }
+    }
+
+    @Test
+    fun multiplePresentedFilesShareOneHorizontallyScrollableRow() {
+        var opened = ""
+        val artifacts = listOf(
+            MessageBlock.Artifact("first-long-report-name.pdf", "/mnt/user-data/outputs/first.pdf"),
+            MessageBlock.Artifact("second-long-report-name.pdf", "/mnt/user-data/outputs/second.pdf"),
+            MessageBlock.Artifact("third-long-report-name.pdf", "/mnt/user-data/outputs/third.pdf"),
+        )
+        compose.setContent {
+            MaterialTheme {
+                ChatMessageGroupItem(
+                    group = ChatMessageGroup.Message(
+                        message = ChatMessage("ai-final", MessageRole.Assistant, "The files are ready."),
+                        trailingArtifacts = artifacts,
+                    ),
+                    runActive = false,
+                    onHumanInput = { _, _, _ -> },
+                    onArtifact = { opened = it },
+                )
+            }
+        }
+
+        compose.onNodeWithTag(UiTags.PresentedArtifactRow).assertIsDisplayed()
+        compose.onNodeWithTag(UiTags.PresentedArtifactPrefix + "0").assertIsDisplayed()
+        repeat(3) {
+            compose.onNodeWithTag(UiTags.PresentedArtifactRow).performTouchInput { swipeLeft() }
+            compose.waitForIdle()
+        }
+        compose.onNodeWithTag(UiTags.PresentedArtifactPrefix + "2").assertIsDisplayed().performClick()
+
+        compose.runOnIdle { assertEquals("/mnt/user-data/outputs/third.pdf", opened) }
     }
 
     private fun setProcessingToolResult(call: MessageBlock.ToolCall, result: MessageBlock.ToolResult) {

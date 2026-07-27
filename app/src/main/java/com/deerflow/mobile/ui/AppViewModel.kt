@@ -238,6 +238,11 @@ private data class PendingRunDestination(
     val threadId: String,
 )
 
+data class SharedConversationContent(
+    val text: String,
+    val attachmentUris: List<Uri>,
+)
+
 internal fun applyQuickActionToComposer(
     composer: ComposerState,
     capabilities: WorkspaceCapabilities,
@@ -294,6 +299,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     @Volatile private var artifactOperationId = 0L
     private var pendingRunDestination: PendingRunDestination? = null
     private var pendingNewConversation = false
+    private var pendingSharedConversation: SharedConversationContent? = null
     private var runRecoveryAttemptedForServer: String? = null
     private var runDetailsRequestId = 0L
 
@@ -515,6 +521,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun openRunDestination(serverUrl: String?, threadId: String?) {
         val normalizedServerUrl = serverUrl?.let { value -> runCatching { normalizeServerUrl(value) }.getOrNull() }
         if (normalizedServerUrl.isNullOrBlank() || threadId.isNullOrBlank()) return
+        pendingSharedConversation = null
         pendingNewConversation = false
         pendingRunDestination = PendingRunDestination(normalizedServerUrl, threadId)
         consumePendingShortcutDestination()
@@ -522,13 +529,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openNewConversationShortcut() {
         pendingRunDestination = null
+        pendingSharedConversation = null
         pendingNewConversation = true
+        consumePendingShortcutDestination()
+    }
+
+    fun openSharedConversation(content: SharedConversationContent) {
+        if (content.text.isBlank() && content.attachmentUris.isEmpty()) return
+        pendingRunDestination = null
+        pendingNewConversation = false
+        pendingSharedConversation = content
         consumePendingShortcutDestination()
     }
 
     private fun consumePendingShortcutDestination() {
         val current = mutableState.value
         if (current.checkingSession || current.user == null) return
+        pendingSharedConversation?.let { sharedContent ->
+            pendingSharedConversation = null
+            createThread(sharedContent)
+            return
+        }
         if (pendingNewConversation) {
             pendingNewConversation = false
             createThread()
@@ -1191,7 +1212,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun createThread() {
+    fun createThread(sharedContent: SharedConversationContent? = null) {
         threadLoadJob?.cancel()
         closeBrowser()
         cancelArtifactWork()
@@ -1200,6 +1221,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val current = mutableState.value
         val assistant = current.defaultAgentId
         val pageTarget = current.workspacePageRoute().asConversationPageTarget()
+        val sharedText = sharedContent?.text.orEmpty()
         mutableState.update {
             it.copy(
                 conversationPageTarget = pageTarget,
@@ -1211,7 +1233,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 artifactBusy = false,
                 artifactSession = null,
                 composer = it.composer.copy(
-                    text = "",
+                    text = sharedText,
                     attachments = emptyList(),
                     options = it.composer.options.copy(assistantId = assistant),
                 ),
@@ -1225,7 +1247,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 error = null,
             )
         }
-        restoreNewDraft(sessionKey)
+        if (sharedContent == null) {
+            restoreNewDraft(sessionKey)
+        } else {
+            draftJob?.cancel()
+            draftJob = viewModelScope.launch {
+                threads.saveDraft(NEW_DRAFT_KEY, sharedText)
+            }
+            if (sharedContent.attachmentUris.isEmpty()) {
+                persistAttachmentDraft(NEW_DRAFT_KEY, emptyList())
+            } else {
+                sharedContent.attachmentUris.forEach(::addAttachment)
+            }
+        }
     }
 
     fun openBrowser(browserView: BrowserViewSnapshot? = mutableState.value.messages.latestBrowserView()) {
@@ -1568,17 +1602,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         runCatching {
             resolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        val metadata = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
-            if (!cursor.moveToFirst()) null else {
-                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
-                (if (nameIndex >= 0) cursor.getString(nameIndex) else null) to
-                    (if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) cursor.getLong(sizeIndex) else -1L)
+        val metadata = runCatching {
+            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                if (!cursor.moveToFirst()) null else {
+                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    (if (nameIndex >= 0) cursor.getString(nameIndex) else null) to
+                        (if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) cursor.getLong(sizeIndex) else -1L)
+                }
             }
-        }
+        }.getOrNull()
         val filename = metadata?.first ?: uri.lastPathSegment ?: "attachment"
         val size = metadata?.second ?: -1L
-        val mime = resolver.getType(uri) ?: "application/octet-stream"
+        val mime = runCatching { resolver.getType(uri) }.getOrNull() ?: "application/octet-stream"
         val attachment = PendingAttachment(uri.toString(), filename, mime, size)
         mutableState.update { current ->
             if (current.composer.attachments.any { it.uri == attachment.uri }) current
