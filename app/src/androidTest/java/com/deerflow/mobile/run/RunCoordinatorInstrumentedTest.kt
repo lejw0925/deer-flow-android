@@ -40,12 +40,12 @@ class RunCoordinatorInstrumentedTest {
 
     @After
     fun cleanUp() {
-        coordinator.abandonActive()
+        coordinator.abandonAll()
     }
 
     @Test
     fun applicationCoordinatorCompletesAfterCallerReturns() = runBlocking {
-        coordinator.abandonActive()
+        coordinator.abandonAll()
         val serverUrl = "http://10.0.2.2:2027"
         val api = DeerFlowApi(serverUrl, WebViewSessionCookieStore())
         val thread = api.createThread()
@@ -63,8 +63,8 @@ class RunCoordinatorInstrumentedTest {
         var completed: CoordinatedRunState? = null
         withTimeout(20_000) {
             while (completed == null) {
-                val current = coordinator.state.value
-                if (current?.threadId == thread.id && !current.run.active && current.messages.isNotEmpty()) {
+                val current = coordinator.stateFor(serverUrl, thread.id)
+                if (current != null && !current.run.active && current.messages.isNotEmpty()) {
                     completed = current
                 } else {
                     delay(100)
@@ -76,44 +76,55 @@ class RunCoordinatorInstrumentedTest {
         assertFalse(result.run.active)
         assertTrue(result.messages.any { it.text.contains("concise plan") })
         assertNull(WorkspaceCache(context).loadRun(serverUrl, thread.id))
-        assertEquals(thread.id, coordinator.state.value?.threadId)
+        assertEquals(thread.id, coordinator.stateFor(serverUrl, thread.id)?.threadId)
     }
 
     @Test
-    fun serviceRecoveryResumesRunRecordedBeforeProcessRestart() = runBlocking {
-        coordinator.abandonActive()
+    fun serviceRecoveryResumesEveryRunRecordedBeforeProcessRestart() = runBlocking {
+        coordinator.abandonAll()
         val serverUrl = "http://10.0.2.2:2027"
         val api = DeerFlowApi(serverUrl, WebViewSessionCookieStore())
-        val thread = api.createThread()
+        val first = api.createThread()
+        val second = api.createThread()
         val cache = WorkspaceCache(context)
-        cache.saveThreads(serverUrl, listOf(thread))
+        cache.saveThreads(serverUrl, listOf(first, second))
         cache.saveRun(
             serverUrl,
-            thread.id,
-            RunState(RunStatus.Reconnecting, runId = "fixture-recovered-run", lastEventId = "event-2"),
+            first.id,
+            RunState(RunStatus.Reconnecting, runId = "fixture-recovered-run-${first.id}", lastEventId = "event-2"),
+        )
+        cache.saveRun(
+            serverUrl,
+            second.id,
+            RunState(RunStatus.Reconnecting, runId = "fixture-recovered-run-${second.id}", lastEventId = "event-3"),
         )
 
         assertTrue(RunService.recover(context, serverUrl))
-        var completed: CoordinatedRunState? = null
+        var completedFirst: CoordinatedRunState? = null
+        var completedSecond: CoordinatedRunState? = null
         withTimeout(10_000) {
-            while (completed == null) {
-                val current = coordinator.state.value
-                if (current?.threadId == thread.id && !current.run.active && current.messages.isNotEmpty()) {
-                    completed = current
-                } else {
-                    delay(100)
+            while (completedFirst == null || completedSecond == null) {
+                coordinator.stateFor(serverUrl, first.id)?.let { current ->
+                    if (!current.run.active && current.messages.isNotEmpty()) completedFirst = current
                 }
+                coordinator.stateFor(serverUrl, second.id)?.let { current ->
+                    if (!current.run.active && current.messages.isNotEmpty()) completedSecond = current
+                }
+                delay(100)
             }
         }
 
-        assertTrue(checkNotNull(completed).messages.any { it.text.contains("process restart") })
-        assertNull(cache.loadRun(serverUrl, thread.id))
-        cache.deleteThread(serverUrl, thread.id)
+        assertTrue(checkNotNull(completedFirst).messages.any { it.text.contains("process restart") })
+        assertTrue(checkNotNull(completedSecond).messages.any { it.text.contains("process restart") })
+        assertNull(cache.loadRun(serverUrl, first.id))
+        assertNull(cache.loadRun(serverUrl, second.id))
+        cache.deleteThread(serverUrl, first.id)
+        cache.deleteThread(serverUrl, second.id)
     }
 
     @Test
     fun patchSequenceKeepsOptimisticPromptAndAccumulatesReasoningAndTools() = runBlocking {
-        coordinator.abandonActive()
+        coordinator.abandonAll()
         val serverUrl = "http://10.0.2.2:2027"
         val api = DeerFlowApi(serverUrl, WebViewSessionCookieStore())
         val thread = api.createThread()
@@ -139,8 +150,8 @@ class RunCoordinatorInstrumentedTest {
         var completed: CoordinatedRunState? = null
         withTimeout(20_000) {
             while (completed == null) {
-                val current = coordinator.state.value
-                if (current?.threadId == thread.id) {
+                val current = coordinator.stateFor(serverUrl, thread.id)
+                if (current != null) {
                     userWasVisibleAtEveryStage = userWasVisibleAtEveryStage && current.messages.any { it.id == clientMessageId }
                     val assistant = current.messages.firstOrNull { it.role == MessageRole.Assistant }
                     val blocks = assistant?.blocks.orEmpty()
@@ -160,5 +171,76 @@ class RunCoordinatorInstrumentedTest {
         assertTrue(sawToolResult)
         assertEquals(1, result.messages.count { it.id == clientMessageId })
         assertNull(result.pendingUserMessage)
+    }
+
+    @Test
+    fun stoppingOneConcurrentConversationDoesNotInterruptTheOther() = runBlocking {
+        coordinator.abandonAll()
+        val serverUrl = "http://10.0.2.2:2027"
+        val api = DeerFlowApi(serverUrl, WebViewSessionCookieStore())
+        val first = api.createThread()
+        val second = api.createThread()
+        val firstPrompt = "Concurrent conversation A"
+        val secondPrompt = "Concurrent conversation B"
+        val firstClientMessageId = "concurrent-client-a"
+        val secondClientMessageId = "concurrent-client-b"
+
+        assertTrue(
+            coordinator.start(
+                CoordinatedRunRequest(
+                    serverUrl = serverUrl,
+                    threadId = first.id,
+                    title = first.title,
+                    message = firstPrompt,
+                    options = RunOptions(),
+                    clientMessageId = firstClientMessageId,
+                    initialMessages = listOf(ChatMessage(firstClientMessageId, MessageRole.User, firstPrompt)),
+                ),
+            ),
+        )
+        assertTrue(
+            coordinator.start(
+                CoordinatedRunRequest(
+                    serverUrl = serverUrl,
+                    threadId = second.id,
+                    title = second.title,
+                    message = secondPrompt,
+                    options = RunOptions(),
+                    clientMessageId = secondClientMessageId,
+                    initialMessages = listOf(ChatMessage(secondClientMessageId, MessageRole.User, secondPrompt)),
+                ),
+            ),
+        )
+
+        withTimeout(5_000) {
+            while (
+                coordinator.stateFor(serverUrl, first.id)?.run?.active != true ||
+                coordinator.stateFor(serverUrl, second.id)?.run?.active != true
+            ) {
+                delay(25)
+            }
+        }
+
+        coordinator.cancel(RunKey(serverUrl, second.id))
+
+        assertFalse(checkNotNull(coordinator.stateFor(serverUrl, second.id)).run.active)
+        assertTrue(checkNotNull(coordinator.stateFor(serverUrl, first.id)).run.active)
+
+        var completedFirst: CoordinatedRunState? = null
+        withTimeout(20_000) {
+            while (completedFirst == null) {
+                coordinator.stateFor(serverUrl, first.id)?.let { current ->
+                    if (!current.run.active && current.messages.isNotEmpty()) completedFirst = current
+                }
+                delay(50)
+            }
+        }
+
+        val firstMessages = checkNotNull(completedFirst).messages
+        val secondMessages = checkNotNull(coordinator.stateFor(serverUrl, second.id)).messages
+        assertTrue(firstMessages.any { it.text.contains(firstPrompt) })
+        assertFalse(firstMessages.any { it.text.contains(secondPrompt) })
+        assertTrue(secondMessages.any { it.text.contains(secondPrompt) })
+        assertFalse(secondMessages.any { it.text.contains(firstPrompt) })
     }
 }

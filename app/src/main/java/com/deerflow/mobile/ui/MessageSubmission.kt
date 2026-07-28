@@ -3,18 +3,16 @@ package com.deerflow.mobile.ui
 import com.deerflow.mobile.data.AttachmentStatus
 import com.deerflow.mobile.data.ComposerState
 
-/** Serializes taps until the current prompt has entered the run coordinator. */
+/** Serializes taps per editor/conversation until that prompt enters the run coordinator. */
 internal class MessageSubmissionGate {
-    private var locked = false
+    private val lockedKeys = mutableSetOf<String>()
 
-    fun tryAcquire(): Boolean {
-        if (locked) return false
-        locked = true
-        return true
-    }
+    @Synchronized
+    fun tryAcquire(key: String): Boolean = lockedKeys.add(key)
 
-    fun release() {
-        locked = false
+    @Synchronized
+    fun release(key: String) {
+        lockedKeys.remove(key)
     }
 }
 

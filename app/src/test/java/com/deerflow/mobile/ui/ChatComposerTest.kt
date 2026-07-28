@@ -61,6 +61,28 @@ class ChatComposerTest {
     }
 
     @Test
+    fun `submission result only applies to its original conversation editor`() {
+        val thread = ThreadSummary("thread-1", "Thread", "idle", "2026-07-25T00:00:00Z")
+        val original = AppUiState(
+            serverUrl = "http://example.test",
+            selectedThread = thread,
+            draftStorageKey = thread.id,
+            draftSessionKey = "editor-1",
+        )
+
+        assertTrue(isCurrentConversationSession(original, original.serverUrl, thread.id, "editor-1"))
+        assertFalse(
+            isCurrentConversationSession(
+                original.copy(selectedThread = thread.copy(id = "thread-2"), draftSessionKey = "editor-2"),
+                original.serverUrl,
+                thread.id,
+                "editor-1",
+            ),
+        )
+        assertFalse(isCurrentConversationSession(original, "http://other.test", thread.id, "editor-1"))
+    }
+
+    @Test
     fun `quick action replaces non-empty draft and adds matching enabled skill`() {
         val updated = applyQuickActionToComposer(
             composer = ComposerState(

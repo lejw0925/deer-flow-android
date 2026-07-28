@@ -1101,6 +1101,7 @@ internal fun MessageComposer(
     onStop: () -> Unit,
 ) {
     val quickCapabilitiesVisible = state.route != AppRoute.Conversation
+    val awaitingHumanInput = state.run.awaitingInput
     val composerTopPadding by animateDpAsState(
         targetValue = if (quickCapabilitiesVisible) 4.dp else 14.dp,
         animationSpec = ExpressiveMotion.fastSpatial(),
@@ -1146,13 +1147,14 @@ internal fun MessageComposer(
                     OutlinedTextField(
                         value = editorValue,
                         onValueChange = onDraftChange,
+                        enabled = !awaitingHumanInput,
                         placeholder = { Text(stringResource(R.string.message_deerflow)) },
                         minLines = 1,
                         maxLines = 6,
                         leadingIcon = {
                             IconButton(
                                 onClick = onAttachment,
-                                enabled = !state.composer.uploading,
+                                enabled = !state.composer.uploading && !awaitingHumanInput,
                                 modifier = Modifier.size(48.dp).testTag(UiTags.ComposerAttachmentButton),
                             ) {
                                 Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.add_attachment))
@@ -1163,7 +1165,11 @@ internal fun MessageComposer(
                     Spacer(Modifier.width(8.dp))
                     FilledIconButton(
                         onClick = if (state.run.active) onStop else onSend,
-                        enabled = state.run.active || (!state.composer.uploading && (state.composer.text.isNotBlank() || state.composer.attachments.isNotEmpty())),
+                        enabled = state.run.active || (
+                            !awaitingHumanInput &&
+                                !state.composer.uploading &&
+                                (state.composer.text.isNotBlank() || state.composer.attachments.isNotEmpty())
+                            ),
                         modifier = Modifier
                             .size(52.dp)
                             .testTag(UiTags.SendStopButton),

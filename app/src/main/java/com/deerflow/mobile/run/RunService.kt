@@ -19,6 +19,8 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.deerflow.mobile.MainActivity
 import com.deerflow.mobile.R
+import com.deerflow.mobile.data.GatewayRunStatus
+import com.deerflow.mobile.data.RunStatus
 import com.deerflow.mobile.data.SettingsStore
 import com.deerflow.mobile.data.drawableResId
 import kotlinx.coroutines.CoroutineScope
@@ -28,6 +30,100 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private data class ManagedRunNotification(
+    val key: RunKey,
+    val title: String,
+    val progress: RunProgressUpdate,
+    val startedAtEpochMs: Long,
+    val error: String?,
+    val revision: Long,
+)
+
+private data class ManagedRunSnapshot(
+    val active: List<ManagedRunNotification> = emptyList(),
+    val terminal: ManagedRunNotification? = null,
+)
+
+private fun ManagedRunNotification.toBundle(): Bundle = Bundle().apply {
+    putString(MANAGED_SERVER_URL, key.serverUrl)
+    putString(MANAGED_THREAD_ID, key.threadId)
+    putString(MANAGED_TITLE, title)
+    putString(MANAGED_PHASE, progress.phase.name)
+    putInt(MANAGED_COMPLETED_TODOS, progress.completedTodos)
+    putInt(MANAGED_TOTAL_TODOS, progress.totalTodos)
+    putString(MANAGED_CURRENT_TODO, progress.currentTodo)
+    putString(MANAGED_LATEST_TOOL, progress.latestToolName)
+    putLong(MANAGED_STARTED_AT, startedAtEpochMs)
+    putString(MANAGED_ERROR, error)
+    putLong(MANAGED_REVISION, revision)
+}
+
+private fun Bundle.toManagedRunNotification(): ManagedRunNotification? {
+    val serverUrl = getString(MANAGED_SERVER_URL).orEmpty()
+    val threadId = getString(MANAGED_THREAD_ID).orEmpty()
+    val phase = getString(MANAGED_PHASE)?.let { value ->
+        runCatching { RunProgress.valueOf(value) }.getOrNull()
+    } ?: return null
+    if (serverUrl.isBlank() || threadId.isBlank()) return null
+    return ManagedRunNotification(
+        key = RunKey(serverUrl, threadId),
+        title = getString(MANAGED_TITLE).orEmpty(),
+        progress = RunProgressUpdate(
+            phase = phase,
+            completedTodos = getInt(MANAGED_COMPLETED_TODOS),
+            totalTodos = getInt(MANAGED_TOTAL_TODOS),
+            currentTodo = getString(MANAGED_CURRENT_TODO),
+            latestToolName = getString(MANAGED_LATEST_TOOL),
+        ),
+        startedAtEpochMs = getLong(MANAGED_STARTED_AT),
+        error = getString(MANAGED_ERROR),
+        revision = getLong(MANAGED_REVISION),
+    )
+}
+
+@Suppress("DEPRECATION")
+private fun Intent.managedRunSnapshotOrNull(): ManagedRunSnapshot? {
+    if (!getBooleanExtra(MANAGED_SNAPSHOT_PRESENT, false)) return null
+    val activeBundles = if (Build.VERSION.SDK_INT >= 33) {
+        getParcelableArrayListExtra(MANAGED_ACTIVE_LIST, Bundle::class.java)
+    } else {
+        getParcelableArrayListExtra(MANAGED_ACTIVE_LIST)
+    }.orEmpty()
+    val terminalBundle = if (Build.VERSION.SDK_INT >= 33) {
+        getParcelableExtra(MANAGED_TERMINAL_ITEM, Bundle::class.java)
+    } else {
+        getParcelableExtra(MANAGED_TERMINAL_ITEM)
+    }
+    return ManagedRunSnapshot(
+        active = activeBundles.mapNotNull(Bundle::toManagedRunNotification),
+        terminal = terminalBundle?.toManagedRunNotification(),
+    )
+}
+
+private fun CoordinatedRunState.toManagedNotification(): ManagedRunNotification = ManagedRunNotification(
+    key = key,
+    title = title,
+    progress = runProgressUpdate(
+        phase = when (run.status) {
+            RunStatus.Connecting -> RunProgress.Connecting
+            RunStatus.Streaming -> RunProgress.Working
+            RunStatus.Reconnecting -> RunProgress.Reconnecting
+            RunStatus.Stopping -> RunProgress.Finalizing
+            RunStatus.Idle, RunStatus.AwaitingInput, RunStatus.Failed -> RunProgress.Completed
+        },
+        todos = todos,
+        latestToolName = latestToolName,
+    ),
+    startedAtEpochMs = run.startedAtEpochMs ?: 0L,
+    error = error ?: when (run.gatewayStatus) {
+        GatewayRunStatus.Error -> "The run failed."
+        GatewayRunStatus.Timeout -> "The run timed out."
+        GatewayRunStatus.Interrupted -> "The run was interrupted."
+        else -> null
+    },
+    revision = revision,
+)
 
 class RunService : Service() {
     private var title: String = ""
@@ -42,6 +138,10 @@ class RunService : Service() {
     private var lastNotificationProjection: RunNotificationProjection? = null
     private var lastPublishedAtMs: Long = 0
     private var pendingPublish: Job? = null
+    private var showStopAction = true
+    private var managedDetail: String? = null
+    private var managedActiveKeys: Set<RunKey> = emptySet()
+    private var serviceManagedSnapshot = ManagedRunSnapshot()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     override fun onCreate() {
@@ -56,13 +156,22 @@ class RunService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_SYNCHRONIZE -> {
+                serviceManagedSnapshot = intent.managedRunSnapshotOrNull() ?: ManagedRunSnapshot()
+                applyManagedSnapshot(startId, serviceManagedSnapshot)
+                return if (serviceManagedSnapshot.active.isEmpty()) START_NOT_STICKY else START_STICKY
+            }
             ACTION_STOP -> {
+                val requestedKey = intent.runKeyOrNull() ?: serviceManagedSnapshot.active.singleOrNull()?.key
                 serviceScope.launch {
-                    RunCoordinator.get(applicationContext).cancelActive()
-                    removeNotification()
-                    stopSelf(startId)
+                    if (requestedKey != null) {
+                        RunCoordinator.get(applicationContext).cancel(requestedKey)
+                    } else {
+                        removeNotification()
+                        stopSelf(startId)
+                    }
                 }
-                return START_NOT_STICKY
+                return START_STICKY
             }
             ACTION_UPDATE -> {
                 title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { title }.ifBlank { getString(R.string.run_in_progress) }
@@ -79,6 +188,10 @@ class RunService : Service() {
                 publish(ongoing = true)
             }
             ACTION_COMPLETE -> {
+                if (serviceManagedSnapshot.active.isNotEmpty()) {
+                    applyManagedSnapshot(startId, serviceManagedSnapshot)
+                    return START_STICKY
+                }
                 title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { title }
                 progress = progress.copy(phase = RunProgress.Completed, currentTodo = null)
                 terminalSmallIconRes = R.drawable.ic_notification_completed
@@ -86,6 +199,10 @@ class RunService : Service() {
                 return START_NOT_STICKY
             }
             ACTION_FAILED -> {
+                if (serviceManagedSnapshot.active.isNotEmpty()) {
+                    applyManagedSnapshot(startId, serviceManagedSnapshot)
+                    return START_STICKY
+                }
                 title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { title }
                 terminalSmallIconRes = android.R.drawable.ic_dialog_alert
                 finish(intent.getStringExtra(EXTRA_DETAIL).orEmpty().ifBlank { getString(R.string.run_failed) })
@@ -112,11 +229,58 @@ class RunService : Service() {
                 serverUrl = intent.getStringExtra(EXTRA_SERVER_URL).orEmpty().ifBlank { serverUrl }
                 threadId = intent.getStringExtra(EXTRA_THREAD_ID).orEmpty().ifBlank { threadId }
                 progress = RunProgressUpdate(RunProgress.Preparing)
+                managedDetail = null
+                showStopAction = true
                 liveUpdateDismissed = false
                 publish(ongoing = true)
             }
         }
         return START_STICKY
+    }
+
+    private fun applyManagedSnapshot(startId: Int, snapshot: ManagedRunSnapshot) {
+        val active = snapshot.active
+        if (active.isNotEmpty()) {
+            val activeKeys = active.mapTo(mutableSetOf(), ManagedRunNotification::key)
+            val topologyChanged = activeKeys != managedActiveKeys
+            managedActiveKeys = activeKeys
+            val focused = active.maxByOrNull(ManagedRunNotification::startedAtEpochMs) ?: return
+            title = if (active.size == 1) focused.title else getString(R.string.run_in_progress)
+            progress = focused.progress
+            serverUrl = focused.key.serverUrl
+            threadId = focused.key.threadId
+            managedDetail = if (active.size == 1) null else getString(R.string.run_count_in_progress, active.size)
+            showStopAction = active.size == 1
+            terminalSmallIconRes = R.drawable.ic_notification_completed
+            publish(ongoing = true, detail = managedDetail, force = topologyChanged)
+            return
+        }
+
+        managedActiveKeys = emptySet()
+        val terminal = snapshot.terminal
+        if (terminal != null) {
+            title = terminal.title
+            progress = terminal.progress.copy(phase = RunProgress.Completed, currentTodo = null)
+            serverUrl = terminal.key.serverUrl
+            threadId = terminal.key.threadId
+            managedDetail = null
+            showStopAction = false
+            terminalSmallIconRes = if (terminal.error == null) {
+                R.drawable.ic_notification_completed
+            } else {
+                android.R.drawable.ic_dialog_alert
+            }
+            finish(terminal.error ?: getString(R.string.run_completed))
+        } else {
+            removeNotification()
+            stopSelf(startId)
+        }
+    }
+
+    private fun Intent.runKeyOrNull(): RunKey? {
+        val server = getStringExtra(EXTRA_SERVER_URL).orEmpty()
+        val thread = getStringExtra(EXTRA_THREAD_ID).orEmpty()
+        return if (server.isBlank() || thread.isBlank()) null else RunKey(server, thread)
     }
 
     private fun publish(ongoing: Boolean, detail: String? = null, force: Boolean = false) {
@@ -135,7 +299,7 @@ class RunService : Service() {
             pendingPublish = serviceScope.launch {
                 delay(remainingInterval)
                 pendingPublish = null
-                publish(ongoing = true)
+                publish(ongoing = true, detail = managedDetail)
             }
             return
         }
@@ -146,12 +310,19 @@ class RunService : Service() {
             MainActivity.runDestinationIntent(this, serverUrl, threadId),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val stopIntent = PendingIntent.getService(
-            this,
-            1,
-            Intent(this, RunService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
+        val stopIntent = if (showStopAction) {
+            PendingIntent.getService(
+                this,
+                (threadId?.hashCode() ?: 0) xor STOP_REQUEST_CODE_SALT,
+                Intent(this, RunService::class.java)
+                    .setAction(ACTION_STOP)
+                    .putExtra(EXTRA_SERVER_URL, serverUrl)
+                    .putExtra(EXTRA_THREAD_ID, threadId),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        } else {
+            null
+        }
         val dismissIntent = PendingIntent.getService(
             this,
             2,
@@ -190,7 +361,7 @@ class RunService : Service() {
     @RequiresApi(36)
     private fun buildLiveUpdate(
         openIntent: PendingIntent,
-        stopIntent: PendingIntent,
+        stopIntent: PendingIntent?,
         dismissIntent: PendingIntent,
         ongoing: Boolean,
         detail: String?,
@@ -245,6 +416,9 @@ class RunService : Service() {
             .setAutoCancel(!ongoing)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
+            .setForegroundServiceBehavior(
+                if (ongoing) Notification.FOREGROUND_SERVICE_IMMEDIATE else Notification.FOREGROUND_SERVICE_DEFAULT,
+            )
             // A Live Update may use an accent color, but must not be colorized.
             .setColor(notificationSurfaceColor)
             .setShortCriticalText(statusChip())
@@ -269,7 +443,7 @@ class RunService : Service() {
 
     private fun buildCompatNotification(
         openIntent: PendingIntent,
-        stopIntent: PendingIntent,
+        stopIntent: PendingIntent?,
         ongoing: Boolean,
         detail: String?,
     ): Notification = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -279,13 +453,20 @@ class RunService : Service() {
             .setContentIntent(openIntent)
             .setOngoing(ongoing)
             .setOnlyAlertOnce(true)
+            .setForegroundServiceBehavior(
+                if (ongoing) {
+                    NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE
+                } else {
+                    NotificationCompat.FOREGROUND_SERVICE_DEFAULT
+                },
+            )
             .setColor(notificationSurfaceColor)
             .setProgress(
                 if (progress.indeterminate) 0 else 100,
                 if (progress.indeterminate) 0 else progress.percent,
                 progress.indeterminate,
             )
-            .apply { if (ongoing) addAction(0, getString(R.string.stop_run), stopIntent) }
+            .apply { if (ongoing && stopIntent != null) addAction(0, getString(R.string.stop_run), stopIntent) }
             .build()
 
     private fun buildTerminalNotification(openIntent: PendingIntent, detail: String?): Notification {
@@ -350,7 +531,7 @@ class RunService : Service() {
         RunNotificationIcon.Thinking -> R.drawable.ic_notification_thinking
         is RunNotificationIcon.Tool -> icon.icon.drawableResId()
         RunNotificationIcon.Upload -> android.R.drawable.stat_sys_upload
-        RunNotificationIcon.Reconnect -> android.R.drawable.ic_menu_revert
+        RunNotificationIcon.Reconnect -> R.drawable.ic_notification_thinking
         RunNotificationIcon.Completed -> R.drawable.ic_notification_completed
     }
 
@@ -405,7 +586,9 @@ class RunService : Service() {
     companion object {
         private const val CHANNEL_ID = "deerflow-runs"
         private const val NOTIFICATION_ID = 2026
+        private const val STOP_REQUEST_CODE_SALT = 0x51A7
         private const val ACTION_STOP = "com.deerflow.mobile.action.STOP_RUN"
+        private const val ACTION_SYNCHRONIZE = "com.deerflow.mobile.action.SYNCHRONIZE_RUNS"
         private const val ACTION_UPDATE = "com.deerflow.mobile.action.UPDATE_RUN"
         private const val ACTION_COMPLETE = "com.deerflow.mobile.action.COMPLETE_RUN"
         private const val ACTION_FAILED = "com.deerflow.mobile.action.FAILED_RUN"
@@ -420,6 +603,33 @@ class RunService : Service() {
         private const val EXTRA_CURRENT_TODO = "current_todo"
         private const val EXTRA_LATEST_TOOL_NAME = "latest_tool_name"
         internal const val EXTRA_REQUEST_PROMOTED_ONGOING = "android.requestPromotedOngoing"
+
+        fun synchronize(context: Context, states: Map<RunKey, CoordinatedRunState>) {
+            val notifications = states.values.map(CoordinatedRunState::toManagedNotification)
+            val snapshot = ManagedRunSnapshot(
+                active = notifications.filter { states[it.key]?.run?.active == true },
+                terminal = notifications
+                    .filter {
+                        states[it.key]?.run?.let { run ->
+                            !run.active && !run.awaitingInput
+                        } == true
+                    }
+                    .maxWithOrNull(compareBy<ManagedRunNotification> { it.revision }.thenBy { it.startedAtEpochMs }),
+            )
+            val intent = Intent(context, RunService::class.java)
+                .setAction(ACTION_SYNCHRONIZE)
+                .putExtra(MANAGED_SNAPSHOT_PRESENT, true)
+                .putParcelableArrayListExtra(
+                    MANAGED_ACTIVE_LIST,
+                    ArrayList(snapshot.active.map(ManagedRunNotification::toBundle)),
+                )
+                .putExtra(MANAGED_TERMINAL_ITEM, snapshot.terminal?.toBundle())
+            if (snapshot.active.isNotEmpty()) {
+                ContextCompat.startForegroundService(context, intent)
+            } else {
+                context.startService(intent)
+            }
+        }
 
         fun start(context: Context, title: String, serverUrl: String? = null, threadId: String? = null) {
             ContextCompat.startForegroundService(
@@ -470,6 +680,21 @@ class RunService : Service() {
         }
 
         suspend fun recover(context: Context, serverUrl: String? = null): Boolean =
-            RunCoordinator.get(context).recoverLatest(serverUrl)
+            RunCoordinator.get(context).recoverAll(serverUrl)
     }
 }
+
+private const val MANAGED_SERVER_URL = "server_url"
+private const val MANAGED_SNAPSHOT_PRESENT = "managed_snapshot"
+private const val MANAGED_ACTIVE_LIST = "managed_active"
+private const val MANAGED_TERMINAL_ITEM = "managed_terminal"
+private const val MANAGED_THREAD_ID = "thread_id"
+private const val MANAGED_TITLE = "title"
+private const val MANAGED_PHASE = "phase"
+private const val MANAGED_COMPLETED_TODOS = "completed_todos"
+private const val MANAGED_TOTAL_TODOS = "total_todos"
+private const val MANAGED_CURRENT_TODO = "current_todo"
+private const val MANAGED_LATEST_TOOL = "latest_tool"
+private const val MANAGED_STARTED_AT = "started_at"
+private const val MANAGED_ERROR = "error"
+private const val MANAGED_REVISION = "revision"

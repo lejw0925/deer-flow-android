@@ -191,7 +191,7 @@ data class RunOptions(
     val reasoningEffortEnabled: Boolean = true,
 )
 
-enum class RunStatus { Idle, Connecting, Streaming, Reconnecting, Stopping, Failed }
+enum class RunStatus { Idle, Connecting, Streaming, Reconnecting, Stopping, AwaitingInput, Failed }
 
 /** The Gateway's persisted lifecycle is authoritative when an SSE connection is interrupted. */
 enum class GatewayRunStatus {
@@ -232,6 +232,8 @@ data class RunState(
     val startedAtEpochMs: Long? = null,
 ) {
     val active: Boolean get() = status in setOf(RunStatus.Connecting, RunStatus.Streaming, RunStatus.Reconnecting, RunStatus.Stopping)
+    /** A clarification turn is complete locally, but its structured reply is still required. */
+    val awaitingInput: Boolean get() = status == RunStatus.AwaitingInput
 }
 
 fun RunState.ensureStartedAt(now: Long = System.currentTimeMillis()): RunState =
@@ -530,6 +532,12 @@ sealed interface StreamResult {
         val runId: String?,
         val lastEventId: String?,
         val gatewayStatus: GatewayRunStatus = GatewayRunStatus.Unknown,
+    ) : StreamResult
+
+    /** A structured human-input request completed the current turn before an SSE `end` frame arrived. */
+    data class AwaitingHumanInput(
+        val runId: String?,
+        val lastEventId: String?,
     ) : StreamResult
 
     /** The run may still be executing and must retain its persisted resume coordinates. */
@@ -898,6 +906,7 @@ private fun mergeToolArgumentText(existing: String, incoming: String, appendChun
 }
 
 internal fun stripUploadedFilesTag(content: String): String = content
+    .replace(Regex("<current_uploads>[\\s\\S]*?</current_uploads>"), "")
     .replace(Regex("<uploaded_files>[\\s\\S]*?</uploaded_files>"), "")
     .replace(Regex("<slash_skill_activation>[\\s\\S]*?</slash_skill_activation>"), "")
     .trim()

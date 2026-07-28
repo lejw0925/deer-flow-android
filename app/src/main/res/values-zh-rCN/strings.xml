@@ -462,4 +462,5 @@
     <string name="theme_dark">深色</string>
     <string name="run_channel">Agent 运行</string>
     <string name="run_in_progress">DeerFlow 正在运行</string>
+    <string name="run_count_in_progress">%1$d 个会话正在运行</string>
 </resources>

@@ -75,6 +75,7 @@ import com.deerflow.mobile.data.resolveAgentSelection
 import com.deerflow.mobile.run.CoordinatedRunRequest
 import com.deerflow.mobile.run.CoordinatedRunState
 import com.deerflow.mobile.run.RunCoordinator
+import com.deerflow.mobile.run.RunKey
 import com.deerflow.mobile.run.RunProgress
 import com.deerflow.mobile.run.RunService
 import java.io.IOException
@@ -126,6 +127,7 @@ data class AppUiState(
     val exportBusy: Boolean = false,
     val offline: Boolean = false,
     val threads: List<ThreadSummary> = emptyList(),
+    val activeRunThreadIds: Set<String> = emptySet(),
     val selectedThread: ThreadSummary? = null,
     val messages: List<ChatMessage> = emptyList(),
     val todos: List<com.deerflow.mobile.data.TodoItem> = emptyList(),
@@ -238,6 +240,19 @@ private data class PendingRunDestination(
     val threadId: String,
 )
 
+private data class ConversationSession(
+    val serverUrl: String,
+    val threadId: String?,
+    val draftStorageKey: String,
+    val draftSessionKey: String,
+    val messages: List<ChatMessage>,
+    val todos: List<com.deerflow.mobile.data.TodoItem>,
+    val artifacts: List<String>,
+) {
+    val submissionKey: String
+        get() = "$serverUrl|${threadId ?: "draft:$draftSessionKey"}"
+}
+
 data class SharedConversationContent(
     val text: String,
     val attachmentUris: List<Uri>,
@@ -270,6 +285,15 @@ internal fun isCurrentNewDraftLoad(state: AppUiState, sessionKey: String): Boole
         state.draftSessionKey == sessionKey &&
         state.composer.text.isBlank() &&
         state.composer.attachments.isEmpty()
+
+internal fun isCurrentConversationSession(
+    state: AppUiState,
+    serverUrl: String,
+    threadId: String?,
+    draftSessionKey: String,
+): Boolean = state.serverUrl == serverUrl &&
+    state.selectedThread?.id == threadId &&
+    state.draftSessionKey == draftSessionKey
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = SettingsStore(application)
@@ -325,7 +349,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     ),
                 )
             }
-            runCoordinator.state.value?.let(::applyCoordinatedRunState)
+            applyCoordinatedRunStates(runCoordinator.states.value)
             if (configuredServerUrl == null) {
                 mutableState.update { it.copy(checkingSession = false, ssoProviders = emptyList()) }
                 consumePendingShortcutDestination()
@@ -337,10 +361,33 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun observeCoordinatedRun() {
         viewModelScope.launch {
-            runCoordinator.state.collect { coordinated ->
-                coordinated?.let(::applyCoordinatedRunState)
+            runCoordinator.states.collect { coordinated ->
+                applyCoordinatedRunStates(coordinated)
             }
         }
+    }
+
+    private fun applyCoordinatedRunStates(coordinated: Map<RunKey, CoordinatedRunState>) {
+        val serverUrl = mutableState.value.serverUrl
+        mutableState.update { current ->
+            current.copy(
+                activeRunThreadIds = coordinated
+                    .filter { (key, state) -> key.serverUrl == current.serverUrl && state.run.active }
+                    .keys
+                    .mapTo(mutableSetOf(), RunKey::threadId),
+            )
+        }
+        var terminalStateApplied = false
+        coordinated.values
+            .filter { it.serverUrl == serverUrl }
+            .forEach { state ->
+                applyCoordinatedRunState(state)
+                if (!state.run.active && !state.run.awaitingInput) {
+                    terminalStateApplied = true
+                    runCoordinator.acknowledgeTerminal(state.key, state.revision)
+                }
+            }
+        if (terminalStateApplied) refreshThreads()
     }
 
     private fun applyCoordinatedRunState(coordinated: CoordinatedRunState) {
@@ -369,7 +416,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
-        if (!coordinated.run.active) refreshThreads()
     }
 
     fun checkSession() {
@@ -572,20 +618,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val serverUrl = api.serverUrl
         if (runRecoveryAttemptedForServer == serverUrl) return
         runRecoveryAttemptedForServer = serverUrl
-        if (!runCoordinator.recoverLatest(serverUrl)) return
-
-        val recovered = runCoordinator.state.value
-            ?.takeIf { it.serverUrl == serverUrl }
-            ?: return
-        val thread = mutableState.value.threads.firstOrNull { it.id == recovered.threadId }
-            ?: cache.loadThreads(serverUrl).firstOrNull { it.id == recovered.threadId }
-            ?: ThreadSummary(
-                id = recovered.threadId,
-                title = recovered.title.ifBlank { "Run in progress" },
-                status = "running",
-                updatedAt = "",
-            )
-        openThread(thread)
+        runCoordinator.recoverAll(serverUrl)
     }
 
     fun logout() {
@@ -1427,7 +1460,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 artifactSession = null,
                 loadingChat = true,
                 draftStorageKey = thread.id,
-                draftSessionKey = "thread-draft-${thread.id}",
+                draftSessionKey = "thread-draft-${thread.id}-${UUID.randomUUID()}",
                 composerResetToken = it.composerResetToken + 1,
                 run = RunState(),
                 messageActionBusy = false,
@@ -1525,7 +1558,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteThread(thread: ThreadSummary) {
         val current = mutableState.value
-        if (current.run.active && current.selectedThread?.id == thread.id) {
+        if (runCoordinator.isActive(api.serverUrl, thread.id)) {
             mutableState.update { it.copy(error = "Stop the active run before deleting this conversation.") }
             return
         }
@@ -2043,12 +2076,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (
             (text.isBlank() && state.composer.attachments.isEmpty()) ||
             state.run.active ||
-            state.selectedThread?.let { runCoordinator.isActive(api.serverUrl, it.id) } == true
+            state.run.awaitingInput ||
+            state.selectedThread?.let { thread ->
+                runCoordinator.isActive(api.serverUrl, thread.id) ||
+                    runCoordinator.stateFor(api.serverUrl, thread.id)?.run?.awaitingInput == true
+            } == true
         ) return
 
-        if (!submissionGate.tryAcquire()) return
         val composer = state.composer
-        val draftKey = state.draftStorageKey
         val clientMessageId = UUID.randomUUID().toString()
         val optimistic = ChatMessage(
             id = clientMessageId,
@@ -2056,9 +2091,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             text = text,
             attachments = composer.attachments.map { MessageAttachment(it.filename, it.size, null) },
         )
+        val session = ConversationSession(
+            serverUrl = api.serverUrl,
+            threadId = state.selectedThread?.id,
+            draftStorageKey = state.draftStorageKey,
+            draftSessionKey = state.draftSessionKey,
+            messages = state.messages + optimistic,
+            todos = state.todos,
+            artifacts = state.artifacts,
+        )
+        if (!submissionGate.tryAcquire(session.submissionKey)) return
         mutableState.update {
             it.copy(
-                messages = it.messages + optimistic,
+                messages = session.messages,
                 composer = it.composer.copy(text = "", attachments = emptyList(), uploading = composer.attachments.isNotEmpty()),
                 composerResetToken = it.composerResetToken + 1,
                 error = null,
@@ -2066,28 +2111,48 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         viewModelScope.launch {
+            val acquiredSubmissionKeys = mutableSetOf(session.submissionKey)
             try {
-                runCatching { threads.saveDraft(draftKey, "") }
-                runCatching { threads.saveAttachments(draftKey, composer.attachments) }
-                val thread = mutableState.value.selectedThread ?: try {
+                runCatching { threads.saveDraft(session.draftStorageKey, "") }
+                runCatching { threads.saveAttachments(session.draftStorageKey, composer.attachments) }
+                var boundSession = session
+                val thread = state.selectedThread ?: try {
                     val created = threads.create(composer.options.assistantId)
-                    mutableState.update {
-                        it.copy(
-                            threads = listOf(created) + it.threads,
-                            selectedThread = created,
-                            draftStorageKey = created.id,
-                            route = AppRoute.Conversation,
+                    boundSession = session.copy(threadId = created.id, draftStorageKey = created.id)
+                    check(submissionGate.tryAcquire(boundSession.submissionKey)) {
+                        "The created conversation already has a pending submission."
+                    }
+                    acquiredSubmissionKeys += boundSession.submissionKey
+                    runCatching { threads.saveAttachments(created.id, composer.attachments) }
+                    mutableState.update { current ->
+                        val updated = current.copy(
+                            threads = listOf(created) + current.threads.filterNot { it.id == created.id },
                         )
+                        if (isCurrentConversationSession(current, session.serverUrl, session.threadId, session.draftSessionKey)) {
+                            updated.copy(
+                                selectedThread = created,
+                                draftStorageKey = created.id,
+                                route = AppRoute.Conversation,
+                            )
+                        } else {
+                            updated
+                        }
                     }
                     publishConversationShortcuts()
                     created
                 } catch (error: Exception) {
-                    restoreSubmissionDraft(clientMessageId, draftKey, text, composer, error.userMessage("Could not create a conversation."))
+                    restoreSubmissionDraft(
+                        session = session,
+                        clientMessageId = clientMessageId,
+                        text = text,
+                        composer = composer,
+                        message = error.userMessage("Could not create a conversation."),
+                    )
                     return@launch
                 }
-                startRun(thread, text, composer, draftKey, clientMessageId)
+                startRun(thread, text, composer, boundSession, clientMessageId)
             } finally {
-                submissionGate.release()
+                acquiredSubmissionKeys.forEach(submissionGate::release)
             }
         }
     }
@@ -2096,25 +2161,29 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         thread: ThreadSummary,
         text: String,
         composer: ComposerState,
-        draftKey: String,
+        session: ConversationSession,
         clientMessageId: String,
     ) {
         val pending = composer.attachments
-        mutableState.update {
-            it.copy(
-                run = RunState(RunStatus.Connecting, startedAtEpochMs = System.currentTimeMillis()),
-                composer = it.composer.copy(uploading = pending.isNotEmpty()),
-                error = null,
-            )
+        mutableState.update { current ->
+            if (!isCurrentConversationSession(current, session.serverUrl, session.threadId, session.draftSessionKey)) {
+                current
+            } else {
+                current.copy(
+                    run = RunState(RunStatus.Connecting, startedAtEpochMs = System.currentTimeMillis()),
+                    composer = current.composer.copy(uploading = pending.isNotEmpty()),
+                    error = null,
+                )
+            }
         }
         runCatching {
             threads.saveAttachments(
-                draftKey,
+                session.draftStorageKey,
                 pending.map { file -> file.copy(status = AttachmentStatus.Uploading, error = null) },
             )
         }
         if (pending.isNotEmpty()) {
-            RunService.start(getApplication(), thread.title, api.serverUrl, thread.id)
+            RunService.start(getApplication(), thread.title, session.serverUrl, thread.id)
             RunService.update(getApplication(), RunProgress.Uploading, thread.title)
         }
         val uploaded = try {
@@ -2125,84 +2194,107 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
         } catch (error: Exception) {
             val message = error.userMessage("Upload failed.")
-            restoreSubmissionDraft(clientMessageId, draftKey, text, composer, message, error.message)
+            restoreSubmissionDraft(session, clientMessageId, text, composer, message, error.message)
             RunService.fail(getApplication(), message, thread.title)
             return
         }
-        mutableState.update {
-            it.copy(
-                messages = it.messages.map { message ->
-                    if (message.id == clientMessageId) {
-                        message.copy(attachments = uploaded.map { file -> MessageAttachment(file.filename, file.size, file.virtualPath) })
-                    } else {
-                        message
-                    }
-                },
-                composer = it.composer.copy(uploading = false),
-            )
+        val runMessages = session.messages.map { message ->
+            if (message.id == clientMessageId) {
+                message.copy(attachments = uploaded.map { file -> MessageAttachment(file.filename, file.size, file.virtualPath) })
+            } else {
+                message
+            }
         }
-        threads.saveDraft(draftKey, "")
+        mutableState.update { current ->
+            if (!isCurrentConversationSession(current, session.serverUrl, session.threadId, session.draftSessionKey)) {
+                current
+            } else {
+                current.copy(
+                    messages = runMessages,
+                    composer = current.composer.copy(uploading = false),
+                )
+            }
+        }
+        threads.saveDraft(session.draftStorageKey, "")
         runCatching {
-            threads.saveAttachments(draftKey, emptyList())
+            threads.saveAttachments(session.draftStorageKey, emptyList())
         }
-        val current = mutableState.value
-        runCoordinator.start(
+        val started = runCoordinator.start(
             CoordinatedRunRequest(
-                serverUrl = api.serverUrl,
+                serverUrl = session.serverUrl,
                 threadId = thread.id,
                 title = thread.title,
                 message = text,
                 options = composer.options,
                 clientMessageId = clientMessageId,
                 files = uploaded,
-                initialMessages = current.messages,
-                initialTodos = current.todos,
-                initialArtifacts = current.artifacts,
+                initialMessages = runMessages,
+                initialTodos = session.todos,
+                initialArtifacts = session.artifacts,
             ),
         )
+        if (!started) {
+            restoreSubmissionDraft(
+                session = session,
+                clientMessageId = clientMessageId,
+                text = text,
+                composer = composer,
+                message = "This conversation already has a run in progress.",
+            )
+        }
     }
 
     private fun restoreSubmissionDraft(
+        session: ConversationSession,
         clientMessageId: String,
-        draftKey: String,
         text: String,
         composer: ComposerState,
         message: String,
         attachmentError: String? = null,
     ) {
         val restoredComposer = restoreFailedComposer(composer, text, attachmentError)
-        mutableState.update {
-            it.copy(
-                run = RunState(),
-                messages = it.messages.filterNot { chat -> chat.id == clientMessageId },
-                composer = restoredComposer,
-                composerResetToken = it.composerResetToken + 1,
-                error = message,
-            )
+        mutableState.update { current ->
+            if (!isCurrentConversationSession(current, session.serverUrl, session.threadId, session.draftSessionKey)) {
+                current
+            } else {
+                current.copy(
+                    run = RunState(),
+                    messages = current.messages.filterNot { chat -> chat.id == clientMessageId },
+                    composer = restoredComposer,
+                    composerResetToken = current.composerResetToken + 1,
+                    error = message,
+                )
+            }
         }
         viewModelScope.launch {
-            threads.saveDraft(draftKey, text)
-            runCatching { threads.saveAttachments(draftKey, restoredComposer.attachments) }
+            threads.saveDraft(session.draftStorageKey, text)
+            runCatching { threads.saveAttachments(session.draftStorageKey, restoredComposer.attachments) }
         }
     }
 
     fun stopRun() {
         val current = mutableState.value
         val thread = current.selectedThread ?: return
-        if (!current.run.active) return
+        val key = RunKey(api.serverUrl, thread.id)
+        if (!runCoordinator.isActive(key.serverUrl, key.threadId)) return
+        val draftSessionKey = current.draftSessionKey
         mutableState.update { it.copy(run = it.run.copy(status = RunStatus.Stopping)) }
         viewModelScope.launch {
-            val snapshot = runCoordinator.cancelActive()
-            val coordinated = runCoordinator.state.value?.takeIf {
-                it.serverUrl == api.serverUrl && it.threadId == thread.id
-            }
-            mutableState.update {
-                it.copy(
-                    run = RunState(),
-                    messages = coordinated?.messages ?: snapshot?.messages ?: it.messages.map { message -> message.copy(isStreaming = false) },
-                    todos = coordinated?.todos ?: snapshot?.todos ?: it.todos,
-                    artifacts = coordinated?.artifacts ?: snapshot?.artifacts ?: it.artifacts,
-                )
+            val snapshot = runCoordinator.cancel(key)
+            val coordinated = runCoordinator.stateFor(key.serverUrl, key.threadId)
+            mutableState.update { state ->
+                if (!isCurrentConversationSession(state, key.serverUrl, key.threadId, draftSessionKey)) {
+                    state
+                } else {
+                    state.copy(
+                        run = RunState(),
+                        messages = coordinated?.messages
+                            ?: snapshot?.messages
+                            ?: state.messages.map { message -> message.copy(isStreaming = false) },
+                        todos = coordinated?.todos ?: snapshot?.todos ?: state.todos,
+                        artifacts = coordinated?.artifacts ?: snapshot?.artifacts ?: state.artifacts,
+                    )
+                }
             }
         }
     }
@@ -2211,7 +2303,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val answer = value.trim()
         val current = mutableState.value
         val thread = current.selectedThread ?: return
-        if (answer.isBlank() || current.run.active) return
+        val serverUrl = api.serverUrl
+        if (answer.isBlank() || runCoordinator.isActive(serverUrl, thread.id)) return
+        val draftSessionKey = current.draftSessionKey
         val response = HumanInputResponse(
             source = request.source,
             requestId = request.requestId,
@@ -2224,9 +2318,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(run = RunState(RunStatus.Connecting, startedAtEpochMs = System.currentTimeMillis()), error = null)
         }
         viewModelScope.launch {
-            runCoordinator.start(
+            val started = runCoordinator.start(
                 CoordinatedRunRequest(
-                    serverUrl = api.serverUrl,
+                    serverUrl = serverUrl,
                     threadId = thread.id,
                     title = thread.title,
                     message = message,
@@ -2237,35 +2331,72 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     initialArtifacts = current.artifacts,
                 ),
             )
+            if (!started) {
+                mutableState.update { state ->
+                    if (isCurrentConversationSession(state, serverUrl, thread.id, draftSessionKey)) {
+                        state.copy(
+                            run = runCoordinator.stateFor(serverUrl, thread.id)?.run ?: RunState(),
+                            error = "This conversation already has a run in progress.",
+                        )
+                    } else {
+                        state
+                    }
+                }
+            }
         }
     }
 
     fun branchConversation(messageId: String) {
         val current = mutableState.value
         val source = current.selectedThread ?: return
-        if (current.run.active || current.messageActionBusy) return
+        val serverUrl = api.serverUrl
+        if (runCoordinator.isActive(serverUrl, source.id) || current.messageActionBusy) return
         val turn = assistantTurnForMessage(current.messages, messageId) ?: return
+        val draftSessionKey = current.draftSessionKey
         viewModelScope.launch {
-            mutableState.update { it.copy(messageActionBusy = true, error = null) }
+            mutableState.update { state ->
+                if (isCurrentConversationSession(state, serverUrl, source.id, draftSessionKey)) {
+                    state.copy(messageActionBusy = true, error = null)
+                } else {
+                    state
+                }
+            }
             try {
                 val branch = createBranch(source, turn)
-                mutableState.update {
-                    it.copy(
-                        threads = listOf(branch.first) + it.threads.filterNot { item -> item.id == branch.first.id },
-                        selectedThread = branch.first,
-                        messages = branch.second.messages,
-                        todos = branch.second.todos,
-                        artifacts = branch.second.artifacts,
-                        composer = it.composer.copy(text = "", attachments = emptyList()),
-                        route = AppRoute.Conversation,
-                        messageActionBusy = false,
-                        offline = false,
-                        notice = getApplication<Application>().getString(R.string.conversation_branch_created),
+                mutableState.update { state ->
+                    val updated = state.copy(
+                        threads = listOf(branch.first) + state.threads.filterNot { item -> item.id == branch.first.id },
                     )
+                    if (isCurrentConversationSession(state, serverUrl, source.id, draftSessionKey)) {
+                        updated.copy(
+                            selectedThread = branch.first,
+                            messages = branch.second.messages,
+                            todos = branch.second.todos,
+                            artifacts = branch.second.artifacts,
+                            composer = state.composer.copy(text = "", attachments = emptyList()),
+                            draftStorageKey = branch.first.id,
+                            draftSessionKey = "thread-draft-${branch.first.id}-${UUID.randomUUID()}",
+                            route = AppRoute.Conversation,
+                            messageActionBusy = false,
+                            offline = false,
+                            notice = getApplication<Application>().getString(R.string.conversation_branch_created),
+                        )
+                    } else {
+                        updated
+                    }
                 }
                 refreshThreads()
             } catch (error: Exception) {
-                mutableState.update { it.copy(messageActionBusy = false, error = error.userMessage("Could not branch this conversation.")) }
+                mutableState.update { state ->
+                    if (isCurrentConversationSession(state, serverUrl, source.id, draftSessionKey)) {
+                        state.copy(
+                            messageActionBusy = false,
+                            error = error.userMessage("Could not branch this conversation."),
+                        )
+                    } else {
+                        state
+                    }
+                }
             }
         }
     }
@@ -2273,42 +2404,73 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun regenerateResponse(messageId: String) {
         val current = mutableState.value
         val thread = current.selectedThread ?: return
-        if (current.run.active || current.messageActionBusy) return
+        val serverUrl = api.serverUrl
+        if (runCoordinator.isActive(serverUrl, thread.id) || current.messageActionBusy) return
         val turn = assistantTurnForMessage(current.messages, messageId) ?: return
         if (!isLatestAssistantTurn(current.messages, turn)) return
         val originalMessages = current.messages
+        val regeneratedMessages = originalMessages.take(turn.firstMessageIndex)
+        val draftSessionKey = current.draftSessionKey
         viewModelScope.launch {
-            mutableState.update { it.copy(messageActionBusy = true, error = null) }
+            mutableState.update { state ->
+                if (isCurrentConversationSession(state, serverUrl, thread.id, draftSessionKey)) {
+                    state.copy(messageActionBusy = true, error = null)
+                } else {
+                    state
+                }
+            }
             try {
                 val preparation = runs.prepareRegenerate(thread.id, turn.targetMessageId)
-                mutableState.update {
-                    it.copy(
-                        messages = originalMessages.take(turn.firstMessageIndex),
-                        run = RunState(RunStatus.Connecting, startedAtEpochMs = System.currentTimeMillis()),
-                        messageActionBusy = false,
-                    )
+                mutableState.update { state ->
+                    if (isCurrentConversationSession(state, serverUrl, thread.id, draftSessionKey)) {
+                        state.copy(
+                            messages = regeneratedMessages,
+                            run = RunState(RunStatus.Connecting, startedAtEpochMs = System.currentTimeMillis()),
+                            messageActionBusy = false,
+                        )
+                    } else {
+                        state
+                    }
                 }
-                runCoordinator.start(
+                val started = runCoordinator.start(
                     CoordinatedRunRequest(
-                        serverUrl = api.serverUrl,
+                        serverUrl = serverUrl,
                         threadId = thread.id,
                         title = thread.title,
                         message = "",
                         options = current.composer.options,
                         regenerate = preparation,
-                        initialMessages = mutableState.value.messages,
+                        initialMessages = regeneratedMessages,
                         initialTodos = current.todos,
                         initialArtifacts = current.artifacts,
                         failureMessages = originalMessages,
                     ),
                 )
+                if (!started) {
+                    mutableState.update { state ->
+                        if (isCurrentConversationSession(state, serverUrl, thread.id, draftSessionKey)) {
+                            state.copy(
+                                messages = originalMessages,
+                                run = runCoordinator.stateFor(serverUrl, thread.id)?.run ?: RunState(),
+                                messageActionBusy = false,
+                                error = "This conversation already has a run in progress.",
+                            )
+                        } else {
+                            state
+                        }
+                    }
+                }
             } catch (error: Exception) {
-                mutableState.update {
-                    it.copy(
-                        messages = originalMessages,
-                        messageActionBusy = false,
-                        error = error.userMessage("Could not regenerate this response."),
-                    )
+                mutableState.update { state ->
+                    if (isCurrentConversationSession(state, serverUrl, thread.id, draftSessionKey)) {
+                        state.copy(
+                            messages = originalMessages,
+                            messageActionBusy = false,
+                            error = error.userMessage("Could not regenerate this response."),
+                        )
+                    } else {
+                        state
+                    }
                 }
             }
         }
@@ -2329,20 +2491,35 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun resumeRunIfNeeded(threadId: String) {
-        val coordinated = runCoordinator.state.value
-            ?.takeIf { it.serverUrl == api.serverUrl && it.threadId == threadId }
+        val serverUrl = api.serverUrl
+        val coordinated = runCoordinator.stateFor(serverUrl, threadId)
         if (coordinated != null) {
             applyCoordinatedRunState(coordinated)
-            if (coordinated.run.active) return
+            if (coordinated.run.active || coordinated.run.awaitingInput) return
         }
         val thread = mutableState.value.selectedThread?.takeIf { it.id == threadId } ?: return
-        val saved = cache.loadRun(api.serverUrl, threadId)
+        val saved = cache.loadRun(serverUrl, threadId)
         if (saved?.active == true) {
-            mutableState.update { it.copy(run = saved.copy(status = RunStatus.Reconnecting)) }
-            runCoordinator.resume(api.serverUrl, thread.id, thread.title, saved)
-            runCoordinator.state.value
-                ?.takeIf { it.serverUrl == api.serverUrl && it.threadId == threadId }
+            mutableState.update { state ->
+                if (state.serverUrl == serverUrl && state.selectedThread?.id == threadId) {
+                    state.copy(run = saved.copy(status = RunStatus.Reconnecting))
+                } else {
+                    state
+                }
+            }
+            runCoordinator.resume(serverUrl, thread.id, thread.title, saved)
+            runCoordinator.stateFor(serverUrl, threadId)
                 ?.let(::applyCoordinatedRunState)
+            return
+        }
+        if (saved?.awaitingInput == true) {
+            mutableState.update { state ->
+                if (state.serverUrl == serverUrl && state.selectedThread?.id == threadId) {
+                    state.copy(run = saved, messageActionBusy = false)
+                } else {
+                    state
+                }
+            }
             return
         }
 
@@ -2356,9 +2533,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (active == null) {
             if (coordinated?.run?.gatewayStatus != GatewayRunStatus.Unknown || coordinated?.error != null) return
-            cache.saveRun(api.serverUrl, threadId, RunState())
+            cache.saveRun(serverUrl, threadId, RunState())
             mutableState.update { current ->
-                if (current.selectedThread?.id == threadId && !runCoordinator.isActive(api.serverUrl, threadId)) {
+                if (
+                    current.serverUrl == serverUrl &&
+                    current.selectedThread?.id == threadId &&
+                    !runCoordinator.isActive(serverUrl, threadId)
+                ) {
                     current.copy(run = RunState(), messageActionBusy = false)
                 } else {
                     current
@@ -2371,11 +2552,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             runId = active.runId,
             startedAtEpochMs = System.currentTimeMillis(),
         )
-        cache.saveRun(api.serverUrl, threadId, recovered)
-        mutableState.update { it.copy(run = recovered) }
-        runCoordinator.resume(api.serverUrl, thread.id, thread.title, recovered)
-        runCoordinator.state.value
-            ?.takeIf { it.serverUrl == api.serverUrl && it.threadId == threadId }
+        cache.saveRun(serverUrl, threadId, recovered)
+        mutableState.update { state ->
+            if (state.serverUrl == serverUrl && state.selectedThread?.id == threadId) {
+                state.copy(run = recovered)
+            } else {
+                state
+            }
+        }
+        runCoordinator.resume(serverUrl, thread.id, thread.title, recovered)
+        runCoordinator.stateFor(serverUrl, threadId)
             ?.let(::applyCoordinatedRunState)
     }
 
@@ -2457,7 +2643,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearCache() {
         if (mutableState.value.clearingCache) return
-        if (mutableState.value.run.active) {
+        if (runCoordinator.hasActiveRuns(api.serverUrl)) {
             mutableState.update { it.copy(error = "Stop the active run before clearing cached data.") }
             return
         }
@@ -2808,8 +2994,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun disconnectRun() {
-        runCoordinator.abandonActive()
-        mutableState.update { it.copy(run = RunState()) }
+        runCoordinator.abandonAll()
+        mutableState.update { it.copy(run = RunState(), activeRunThreadIds = emptySet()) }
     }
 
     private fun handleAuthenticatedError(error: Exception, update: (AppUiState) -> AppUiState) {

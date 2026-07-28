@@ -442,7 +442,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             thread_id, run_id = parts[3], parts[5]
             # The instrumentation suite seeds this process-restart fixture directly in Room.
             # Model it as a still-running Gateway record so recovery exercises GET run then join.
-            if run_id == "fixture-recovered-run":
+            if run_id.startswith("fixture-recovered-run"):
                 RUNS.setdefault(run_id, {"thread_id": thread_id, "status": "running"})
             run = RUNS.get(run_id)
             if run is None or run.get("thread_id") != thread_id:

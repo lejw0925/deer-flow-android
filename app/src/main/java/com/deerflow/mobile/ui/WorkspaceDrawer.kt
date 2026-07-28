@@ -190,6 +190,7 @@ fun WorkspaceDrawer(
                     ThreadDrawerRow(
                         thread = thread,
                         selected = state.selectedThread?.id == thread.id,
+                        active = thread.id in state.activeRunThreadIds,
                         onClick = { onOpenThread(thread) },
                         onRename = { renameTarget = thread },
                         onDelete = { deleteTarget = thread },
@@ -259,6 +260,7 @@ private fun DrawerDestinationRow(icon: androidx.compose.ui.graphics.vector.Image
 private fun ThreadDrawerRow(
     thread: ThreadSummary,
     selected: Boolean,
+    active: Boolean,
     onClick: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
@@ -275,8 +277,11 @@ private fun ThreadDrawerRow(
             },
             leadingContent = {
                 StatusDot(
-                    status = thread.status,
-                    description = stringResource(R.string.status_description, thread.status),
+                    status = if (active) "running" else thread.status,
+                    description = stringResource(
+                        R.string.status_description,
+                        if (active) "running" else thread.status,
+                    ),
                 )
             },
             trailingContent = {

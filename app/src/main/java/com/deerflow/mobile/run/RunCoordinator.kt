@@ -23,6 +23,7 @@ import com.deerflow.mobile.data.UploadedFileInfo
 import com.deerflow.mobile.data.WebViewSessionCookieStore
 import com.deerflow.mobile.data.WorkspaceCache
 import com.deerflow.mobile.data.applySubagentProgress
+import com.deerflow.mobile.data.hasOpenHumanInputRequest
 import com.deerflow.mobile.data.mergeStreamChunk
 import com.deerflow.mobile.data.mergeStreamPatch
 import com.deerflow.mobile.data.mergeStreamSnapshot
@@ -32,14 +33,23 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+
+/** Identifies one independently resumable Gateway run. */
+data class RunKey(
+    val serverUrl: String,
+    val threadId: String,
+)
 
 data class CoordinatedRunRequest(
     val serverUrl: String,
@@ -55,7 +65,9 @@ data class CoordinatedRunRequest(
     val initialTodos: List<TodoItem> = emptyList(),
     val initialArtifacts: List<String> = emptyList(),
     val failureMessages: List<ChatMessage>? = null,
-)
+) {
+    val key: RunKey get() = RunKey(serverUrl, threadId)
+}
 
 data class CoordinatedRunState(
     val serverUrl: String,
@@ -74,9 +86,125 @@ data class CoordinatedRunState(
     val error: String? = null,
     val revision: Long = 0,
 ) {
+    val key: RunKey get() = RunKey(serverUrl, threadId)
+
     /** The UI sees canonical server history plus a single unconfirmed outgoing message. */
     val messages: List<ChatMessage>
         get() = projectVisibleMessages(serverMessages, pendingUserMessage, pendingUserIndex)
+}
+
+/**
+ * Application-wide registry for independently streaming conversations.
+ *
+ * A [RunSessionCoordinator] owns all mutable transport state for one [RunKey]. The registry only
+ * coordinates their lifecycle and publishes a keyed projection to the UI and foreground service.
+ */
+class RunCoordinator private constructor(context: Context) {
+    private val appContext = context.applicationContext
+    private val cache = WorkspaceCache(appContext)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val sessionLock = Any()
+    private val sessions = mutableMapOf<RunKey, RunSessionCoordinator>()
+    private val mutableStates = MutableStateFlow<Map<RunKey, CoordinatedRunState>>(emptyMap())
+
+    val states: StateFlow<Map<RunKey, CoordinatedRunState>> = mutableStates.asStateFlow()
+
+    suspend fun start(request: CoordinatedRunRequest): Boolean {
+        val session = sessionFor(request.key)
+        val started = session.start(request)
+        publishState(request.key, session.state.value)
+        return started
+    }
+
+    suspend fun resume(
+        serverUrl: String,
+        threadId: String,
+        title: String,
+        saved: RunState,
+    ): Boolean {
+        val key = RunKey(serverUrl, threadId)
+        val resumed = sessionFor(key).resume(serverUrl, threadId, title, saved)
+        sessionIfPresent(key)?.let { publishState(key, it.state.value) }
+        return resumed
+    }
+
+    /** Restores every persisted active conversation for this server, rather than only the newest. */
+    suspend fun recoverAll(serverUrlOverride: String? = null): Boolean {
+        val serverUrl = serverUrlOverride ?: SettingsStore(appContext).read().serverUrl
+        val recoverable = cache.loadActiveRuns(serverUrl)
+        var recovered = false
+        for (run in recoverable) {
+            recovered = resume(serverUrl, run.threadId, run.title, run.run) || recovered
+        }
+        return recovered
+    }
+
+    suspend fun cancel(key: RunKey): ThreadSnapshot? {
+        val session = sessionIfPresent(key) ?: return null
+        val snapshot = session.cancelActive()
+        publishState(key, session.state.value)
+        return snapshot
+    }
+
+    fun abandon(key: RunKey) {
+        val session = sessionIfPresent(key) ?: return
+        session.abandonActive()
+        publishState(key, session.state.value)
+    }
+
+    fun abandonAll(serverUrl: String? = null) {
+        val entries = synchronized(sessionLock) {
+            sessions.filterKeys { serverUrl == null || it.serverUrl == serverUrl }.toList()
+        }
+        entries.forEach { (key, session) ->
+            session.abandonActive()
+            publishState(key, session.state.value)
+        }
+    }
+
+    fun isActive(serverUrl: String, threadId: String): Boolean =
+        states.value[RunKey(serverUrl, threadId)]?.run?.active == true
+
+    fun hasActiveRuns(serverUrl: String? = null): Boolean = states.value.any { (key, state) ->
+        state.run.active && (serverUrl == null || key.serverUrl == serverUrl)
+    }
+
+    fun stateFor(serverUrl: String, threadId: String): CoordinatedRunState? =
+        states.value[RunKey(serverUrl, threadId)]
+
+    /** Releases a completed state after the UI has consumed it, including its cached message graph. */
+    fun acknowledgeTerminal(key: RunKey, revision: Long) {
+        val state = states.value[key] ?: return
+        if (state.run.active || state.run.awaitingInput || state.revision != revision) return
+        mutableStates.update { it - key }
+        synchronized(sessionLock) { sessions.remove(key) }?.dispose()
+    }
+
+    private fun sessionFor(key: RunKey): RunSessionCoordinator = synchronized(sessionLock) {
+        sessions[key] ?: RunSessionCoordinator(appContext).also { session ->
+            sessions[key] = session
+            session.attachStateObserver(scope.launch {
+                session.state.collect { state ->
+                    if (state != null) publishState(key, state)
+                }
+            })
+        }
+    }
+
+    private fun sessionIfPresent(key: RunKey): RunSessionCoordinator? = synchronized(sessionLock) { sessions[key] }
+
+    private fun publishState(key: RunKey, state: CoordinatedRunState?) {
+        mutableStates.update { current -> if (state == null) current - key else current + (key to state) }
+        RunService.synchronize(appContext, states.value)
+    }
+
+    companion object {
+        @Volatile private var instance: RunCoordinator? = null
+
+        fun get(context: Context): RunCoordinator = instance ?: synchronized(this) {
+            instance ?: RunCoordinator(context).also { instance = it }
+        }
+    }
 }
 
 private sealed interface ResumePreflight {
@@ -110,7 +238,7 @@ internal class PendingChunkState {
     }
 }
 
-class RunCoordinator private constructor(context: Context) {
+private class RunSessionCoordinator(context: Context) {
     private val appContext = context.applicationContext
     private val cache = WorkspaceCache(appContext)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -125,9 +253,15 @@ class RunCoordinator private constructor(context: Context) {
 
     @Volatile private var activeApi: DeerFlowApi? = null
     @Volatile private var streamJob: Job? = null
+    @Volatile private var stateObserverJob: Job? = null
 
-    suspend fun start(request: CoordinatedRunRequest) = operationMutex.withLock {
-        if (mutableState.value?.run?.active == true) return@withLock
+    fun attachStateObserver(job: Job) {
+        stateObserverJob?.cancel()
+        stateObserverJob = job
+    }
+
+    suspend fun start(request: CoordinatedRunRequest): Boolean = operationMutex.withLock {
+        if (mutableState.value?.run?.active == true) return@withLock false
         clearPendingChunks()
         val pending = request.initialMessages.firstOrNull {
             it.id == request.clientMessageId && it.role == com.deerflow.mobile.data.MessageRole.User
@@ -150,8 +284,8 @@ class RunCoordinator private constructor(context: Context) {
         )
         mutableState.value = initial
         persist(initial)
-        RunService.start(appContext, request.title, request.serverUrl, request.threadId)
         launchStream(request, resume = null)
+        true
     }
 
     suspend fun resume(
@@ -205,7 +339,6 @@ class RunCoordinator private constructor(context: Context) {
                     current = initial,
                     gatewayStatus = preflight.run.status,
                     stopReason = preflight.run.stopReason,
-                    updateService = false,
                 )
                 return@withLock false
             }
@@ -225,15 +358,8 @@ class RunCoordinator private constructor(context: Context) {
         )
         mutableState.value = reconnecting
         persist(reconnecting)
-        RunService.start(appContext, title, serverUrl, threadId)
         launchStream(request, resumable)
         true
-    }
-
-    suspend fun recoverLatest(serverUrlOverride: String? = null): Boolean {
-        val serverUrl = serverUrlOverride ?: SettingsStore(appContext).read().serverUrl
-        val recoverable = cache.loadLatestActiveRun(serverUrl) ?: return false
-        return resume(serverUrl, recoverable.threadId, recoverable.title, recoverable.run)
     }
 
     suspend fun cancelActive(): ThreadSnapshot? = operationMutex.withLock {
@@ -271,7 +397,6 @@ class RunCoordinator private constructor(context: Context) {
         persist(stopped, clearRun = true)
         activeApi = null
         streamJob = null
-        RunService.stop(appContext)
         snapshot
     }
 
@@ -295,7 +420,15 @@ class RunCoordinator private constructor(context: Context) {
                 }
             }
         }
-        RunService.stop(appContext)
+    }
+
+    fun dispose() {
+        clearPendingChunks()
+        activeApi?.cancelActiveStream()
+        streamJob?.cancel()
+        stateObserverJob?.cancel()
+        stateObserverJob = null
+        scope.cancel()
     }
 
     fun isActive(serverUrl: String, threadId: String): Boolean =
@@ -343,11 +476,7 @@ class RunCoordinator private constructor(context: Context) {
                         null -> Unit
                     }
 
-                    RunService.update(
-                        appContext,
-                        if (resumeState == null) RunProgress.Connecting else RunProgress.Reconnecting,
-                        request.title,
-                    )
+                    var awaitingHumanInput = false
                     val result = try {
                         api.streamMessage(
                             threadId = request.threadId,
@@ -358,7 +487,10 @@ class RunCoordinator private constructor(context: Context) {
                             resume = resumeState,
                             humanInputResponse = request.humanInputResponse,
                             regenerate = request.regenerate,
-                            onUpdate = { update -> applyStreamUpdate(request, update) },
+                            shouldStop = { awaitingHumanInput },
+                            onUpdate = { update ->
+                                awaitingHumanInput = applyStreamUpdate(request, update) || awaitingHumanInput
+                            },
                         )
                     } catch (error: CancellationException) {
                         throw error
@@ -379,6 +511,10 @@ class RunCoordinator private constructor(context: Context) {
                     flushPendingChunks(request.serverUrl, request.threadId)
                     val current = currentRunState(request) ?: return@launch
                     when (result) {
+                        is StreamResult.AwaitingHumanInput -> {
+                            finishAwaitingHumanInput(current, result)
+                            return@launch
+                        }
                         is StreamResult.TerminalEnd -> {
                             val serverRun = result.runId?.let { runId ->
                                 try {
@@ -495,11 +631,6 @@ class RunCoordinator private constructor(context: Context) {
         ).ensureStartedAt()
         val next = current.copy(run = retained, revision = current.revision + 1)
         persistAndPublish(next)
-        RunService.update(
-            appContext,
-            runProgressUpdate(RunProgress.Reconnecting, next.todos, next.latestToolName),
-            next.title,
-        )
         return retained
     }
 
@@ -509,10 +640,9 @@ class RunCoordinator private constructor(context: Context) {
         current: CoordinatedRunState,
         gatewayStatus: GatewayRunStatus,
         stopReason: String?,
-        updateService: Boolean = true,
     ) {
         val snapshot = try {
-            awaitTerminalSnapshot(api, request, current, updateService = updateService)
+            awaitTerminalSnapshot(api, request, current)
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
@@ -524,13 +654,6 @@ class RunCoordinator private constructor(context: Context) {
         } ?: completeWithoutSnapshot(current, gatewayStatus, terminalError)
         logUnconfirmedPending(current, completed)
         persistAndPublish(completed, clearRun = true)
-        when (gatewayStatus) {
-            GatewayRunStatus.Error,
-            GatewayRunStatus.Timeout,
-            GatewayRunStatus.Interrupted,
-            -> RunService.fail(appContext, terminalError ?: "The run failed.", completed.title)
-            else -> RunService.complete(appContext, completed.title)
-        }
     }
 
     private suspend fun finishMissingRun(
@@ -550,14 +673,25 @@ class RunCoordinator private constructor(context: Context) {
         } ?: completeWithoutSnapshot(current, GatewayRunStatus.Unknown, null)
         logUnconfirmedPending(current, completed)
         persistAndPublish(completed, clearRun = true)
-        RunService.complete(appContext, completed.title)
     }
 
     private suspend fun finishRejectedStream(current: CoordinatedRunState, message: String) {
         val completed = completeWithoutSnapshot(current, GatewayRunStatus.Error, message)
         logUnconfirmedPending(current, completed)
         persistAndPublish(completed, clearRun = true)
-        RunService.fail(appContext, message, completed.title)
+    }
+
+    private suspend fun finishAwaitingHumanInput(
+        current: CoordinatedRunState,
+        result: StreamResult.AwaitingHumanInput,
+    ) {
+        persistAndPublish(
+            awaitHumanInput(
+                current = current,
+                runId = result.runId,
+                lastEventId = result.lastEventId,
+            ),
+        )
     }
 
     private fun terminalErrorMessage(
@@ -574,80 +708,44 @@ class RunCoordinator private constructor(context: Context) {
     private fun reconnectDelay(attempt: Int): Long =
         RECONNECT_DELAY_MS * attempt.coerceIn(1, MAX_RECONNECT_DELAY_MULTIPLIER)
 
-    private fun applyStreamUpdate(request: CoordinatedRunRequest, update: StreamUpdate) {
+    private fun applyStreamUpdate(request: CoordinatedRunRequest, update: StreamUpdate): Boolean {
         if (update is StreamUpdate.MessageChunk) {
-            queueMessageChunk(request, update.value)
-            return
+            val next = queueMessageChunk(request, update.value)
+            if (next != null && hasOpenHumanInputRequest(next.messages)) {
+                flushPendingChunks(request.serverUrl, request.threadId)
+                return true
+            }
+            return false
         }
 
         flushPendingChunks(request.serverUrl, request.threadId)
-        val current = mutableState.value ?: return
-        if (current.serverUrl != request.serverUrl || current.threadId != request.threadId) return
+        val current = mutableState.value ?: return false
+        if (current.serverUrl != request.serverUrl || current.threadId != request.threadId) return false
         val next = reduceRunState(current, update)
         // `end` and SSE error frames are transport observations. The stream owner clears the
         // active Room row only after it receives TerminalEnd or a terminal run preflight.
         mutableState.value = next
         scope.launch { persist(next) }
-
-        when (update) {
-            is StreamUpdate.Started -> RunService.update(
-                appContext,
-                runProgressUpdate(RunProgress.Working, next.todos, next.latestToolName),
-                next.title,
-            )
-            is StreamUpdate.Reconnecting -> RunService.update(
-                appContext,
-                runProgressUpdate(RunProgress.Reconnecting, next.todos, next.latestToolName),
-                next.title,
-            )
-            is StreamUpdate.Patch -> RunService.update(
-                appContext,
-                runProgressUpdate(RunProgress.Working, next.todos, next.latestToolName),
-                next.title,
-            )
-            is StreamUpdate.SubagentProgress -> {
-                val toolName = update.step?.toolName
-                    ?: update.step?.toolCalls?.firstOrNull()
-                    ?: next.latestToolName
-                RunService.update(
-                    appContext,
-                    runProgressUpdate(RunProgress.Working, next.todos, toolName),
-                    next.title,
-                )
-            }
-            is StreamUpdate.RunNotice -> RunService.update(
-                appContext,
-                runProgressUpdate(RunProgress.Working, next.todos, next.latestToolName),
-                next.title,
-            )
-            StreamUpdate.Finished -> Unit
-            is StreamUpdate.Failure -> RunService.update(
-                appContext,
-                runProgressUpdate(RunProgress.Reconnecting, next.todos, next.latestToolName),
-                next.title,
-            )
-            is StreamUpdate.EventId -> Unit
-            is StreamUpdate.MessageChunk -> error("Message chunks are buffered above")
-        }
+        return hasOpenHumanInputRequest(next.messages)
     }
 
-    private fun queueMessageChunk(request: CoordinatedRunRequest, chunk: ChatMessage) {
+    private fun queueMessageChunk(request: CoordinatedRunRequest, chunk: ChatMessage): CoordinatedRunState? =
         synchronized(chunkUpdateLock) {
             val current = pendingChunks.peek()
                 ?.takeIf { it.serverUrl == request.serverUrl && it.threadId == request.threadId }
                 ?: mutableState.value
-                ?: return
-            if (current.serverUrl != request.serverUrl || current.threadId != request.threadId) return
+                ?: return@synchronized null
+            if (current.serverUrl != request.serverUrl || current.threadId != request.threadId) return@synchronized null
 
-            pendingChunks.append(current, chunk)
+            val next = pendingChunks.append(current, chunk)
             if (chunkFlushJob == null) {
                 chunkFlushJob = scope.launch {
                     delay(CHUNK_UI_PUBLISH_INTERVAL_MS)
                     flushPendingChunks(request.serverUrl, request.threadId, cancelScheduledJob = false)
                 }
             }
+            next
         }
-    }
 
     private fun flushPendingChunks(
         serverUrl: String,
@@ -665,11 +763,6 @@ class RunCoordinator private constructor(context: Context) {
         if (cancelScheduledJob) scheduledJob?.cancel()
         next?.let { state ->
             scope.launch { persist(state) }
-            RunService.update(
-                appContext,
-                runProgressUpdate(RunProgress.Responding, state.todos, state.latestToolName),
-                state.title,
-            )
         }
     }
 
@@ -693,9 +786,7 @@ class RunCoordinator private constructor(context: Context) {
         api: DeerFlowApi,
         request: CoordinatedRunRequest,
         initial: CoordinatedRunState,
-        updateService: Boolean = true,
     ): ThreadSnapshot {
-        if (updateService) RunService.update(appContext, RunProgress.Finalizing, initial.title)
         // Let the Gateway commit its final checkpoint before consuming the normal one-shot state read.
         delay(TERMINAL_STATE_INITIAL_DELAY_MS)
         var snapshot = api.threadState(request.threadId)
@@ -747,12 +838,6 @@ class RunCoordinator private constructor(context: Context) {
         private val TERMINAL_STATE_RETRY_DELAYS_MS = longArrayOf(500L, 1_000L, 2_000L)
         private const val RECONNECT_DELAY_MS = 700L
         private const val MAX_RECONNECT_DELAY_MULTIPLIER = 8
-
-        @Volatile private var instance: RunCoordinator? = null
-
-        fun get(context: Context): RunCoordinator = instance ?: synchronized(this) {
-            instance ?: RunCoordinator(context).also { instance = it }
-        }
     }
 }
 
@@ -788,6 +873,23 @@ internal fun completeWithoutSnapshot(
     run = RunState(gatewayStatus = gatewayStatus),
     serverMessages = current.serverMessages.map { it.copy(isStreaming = false) },
     error = terminalError,
+    revision = current.revision + 1,
+)
+
+/** Persist the acknowledged prompt so reopening the thread cannot lose the clarification card. */
+internal fun awaitHumanInput(
+    current: CoordinatedRunState,
+    runId: String?,
+    lastEventId: String?,
+): CoordinatedRunState = current.copy(
+    run = current.run.copy(
+        status = RunStatus.AwaitingInput,
+        runId = runId ?: current.run.runId,
+        lastEventId = lastEventId ?: current.run.lastEventId,
+    ),
+    serverMessages = current.messages.map { it.copy(isStreaming = false) },
+    pendingUserMessage = null,
+    pendingUserIndex = null,
     revision = current.revision + 1,
 )
 

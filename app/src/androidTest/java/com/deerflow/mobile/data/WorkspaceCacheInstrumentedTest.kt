@@ -50,7 +50,7 @@ class WorkspaceCacheInstrumentedTest {
         assertTrue(cache.loadThreads(serverUrl).isEmpty())
         assertTrue(cache.loadMessages(serverUrl, threadId).isEmpty())
         assertEquals("", cache.loadDraft(serverUrl, threadId))
-        assertNull(cache.loadLatestActiveRun(serverUrl))
+        assertTrue(cache.loadActiveRuns(serverUrl).isEmpty())
         assertTrue(cache.loadAttachments(serverUrl, threadId).isEmpty())
         assertNull(cache.loadCapabilities(serverUrl))
         assertFalse(artifact.exists())
@@ -173,14 +173,21 @@ class WorkspaceCacheInstrumentedTest {
     }
 
     @Test
-    fun latestActiveRunRestoresThreadTitleAndResumeCoordinates() = runBlocking {
+    fun allActiveRunsRestoreThreadTitlesAndResumeCoordinates() = runBlocking {
         val cache = WorkspaceCache(ApplicationProvider.getApplicationContext())
         val serverUrl = "http://run-cache-test-${UUID.randomUUID()}"
-        val threadId = "thread-${UUID.randomUUID()}"
-        cache.saveThreads(serverUrl, listOf(ThreadSummary(threadId, "Long research", "busy", "2026-07-19T20:00:00Z")))
+        val firstThreadId = "thread-${UUID.randomUUID()}"
+        val secondThreadId = "thread-${UUID.randomUUID()}"
+        cache.saveThreads(
+            serverUrl,
+            listOf(
+                ThreadSummary(firstThreadId, "Long research", "busy", "2026-07-19T20:00:00Z"),
+                ThreadSummary(secondThreadId, "Parallel summary", "busy", "2026-07-19T20:01:00Z"),
+            ),
+        )
         cache.saveRun(
             serverUrl,
-            threadId,
+            firstThreadId,
             RunState(
                 status = RunStatus.Reconnecting,
                 runId = "run-42",
@@ -188,15 +195,23 @@ class WorkspaceCacheInstrumentedTest {
                 clientMessageId = "client-42",
             ),
         )
+        cache.saveRun(
+            serverUrl,
+            secondThreadId,
+            RunState(status = RunStatus.Streaming, runId = "run-43", lastEventId = "event-3"),
+        )
 
-        val restored = cache.loadLatestActiveRun(serverUrl)
+        val restored = cache.loadActiveRuns(serverUrl).associateBy(RecoverableRun::threadId)
 
-        assertEquals(threadId, restored?.threadId)
-        assertEquals("Long research", restored?.title)
-        assertEquals("run-42", restored?.run?.runId)
-        assertEquals("event-9", restored?.run?.lastEventId)
-        assertEquals("client-42", restored?.run?.clientMessageId)
-        cache.deleteThread(serverUrl, threadId)
+        assertEquals(setOf(firstThreadId, secondThreadId), restored.keys)
+        assertEquals("Long research", restored[firstThreadId]?.title)
+        assertEquals("run-42", restored[firstThreadId]?.run?.runId)
+        assertEquals("event-9", restored[firstThreadId]?.run?.lastEventId)
+        assertEquals("client-42", restored[firstThreadId]?.run?.clientMessageId)
+        assertEquals("Parallel summary", restored[secondThreadId]?.title)
+        assertEquals("run-43", restored[secondThreadId]?.run?.runId)
+        cache.deleteThread(serverUrl, firstThreadId)
+        cache.deleteThread(serverUrl, secondThreadId)
     }
 
     @Test
@@ -206,7 +221,7 @@ class WorkspaceCacheInstrumentedTest {
         val threadId = "thread-${UUID.randomUUID()}"
         cache.saveRun(serverUrl, threadId, RunState(RunStatus.Failed, runId = "run-failed"))
 
-        assertNull(cache.loadLatestActiveRun(serverUrl))
+        assertTrue(cache.loadActiveRuns(serverUrl).isEmpty())
         cache.deleteThread(serverUrl, threadId)
     }
 

@@ -848,6 +848,7 @@ class DeerFlowApi(
         resume: RunState? = null,
         humanInputResponse: HumanInputResponse? = null,
         regenerate: RegeneratePreparation? = null,
+        shouldStop: () -> Boolean = { false },
         onUpdate: (StreamUpdate) -> Unit,
     ): StreamResult = withContext(Dispatchers.IO) {
         var runId = resume?.runId
@@ -944,12 +945,13 @@ class DeerFlowApi(
                                 lastEventId = eventId
                                 onUpdate(StreamUpdate.EventId(eventId))
                             }
-                            decodeStreamEvent(event) { update ->
+                            val decodedEnd = decodeStreamEvent(event) { update ->
                                 if (update is StreamUpdate.Started && !update.runId.isNullOrBlank()) {
                                     runId = update.runId
                                 }
                                 onUpdate(update)
                             }
+                            decodedEnd || shouldStop()
                         }
                     } ?: StreamReadResult(StreamEndReason.UnexpectedEof, 0)
                     StreamDiagnostics.log(
@@ -965,6 +967,12 @@ class DeerFlowApi(
                 httpFailure?.let { return@withContext it }
                 when (streamResult?.reason ?: StreamEndReason.UnexpectedEof) {
                     StreamEndReason.EndEvent -> {
+                        if (shouldStop()) {
+                            return@withContext StreamResult.AwaitingHumanInput(
+                                runId = runId,
+                                lastEventId = lastEventId,
+                            )
+                        }
                         return@withContext StreamResult.TerminalEnd(
                             runId = runId,
                             lastEventId = lastEventId,

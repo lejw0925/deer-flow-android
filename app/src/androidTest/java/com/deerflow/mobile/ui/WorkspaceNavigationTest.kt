@@ -97,6 +97,30 @@ class WorkspaceNavigationTest {
     }
 
     @Test
+    fun drawerShowsCoordinatorActivityInsteadOfStaleThreadStatus() {
+        val thread = testThread()
+        compose.setContent {
+            MaterialTheme {
+                WorkspaceDrawer(
+                    state = AppUiState(
+                        serverUrl = "http://10.0.2.2:2027",
+                        threads = listOf(thread),
+                        activeRunThreadIds = setOf(thread.id),
+                    ),
+                    onNewChat = {},
+                    onOpenThread = {},
+                    onRenameThread = { _, _ -> },
+                    onDeleteThread = {},
+                    onPinThread = {},
+                    onDestination = {},
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription(context.getString(R.string.status_description, "running")).assertExists()
+    }
+
+    @Test
     fun chatTopBarShowsMenuInWorkspaceAndBackInsideConversation() {
         var openDrawer = 0
         var goBack = 0

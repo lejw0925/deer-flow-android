@@ -70,6 +70,24 @@ fun isLatestAssistantTurn(messages: List<ChatMessage>, turn: AssistantTurn): Boo
         .takeIf { it >= 0 }
         ?.let { messages[it].id == turn.targetMessageId } == true
 
+/** A response is hidden in the transcript, so determine open requests from all message blocks. */
+fun hasOpenHumanInputRequest(messages: List<ChatMessage>): Boolean {
+    val answered = messages.asSequence()
+        .flatMap { it.blocks.asSequence() }
+        .filterIsInstance<MessageBlock.HumanInputResponseBlock>()
+        .mapTo(mutableSetOf()) { it.response.requestId }
+    return messages.asSequence()
+        .flatMap { it.blocks.asSequence() }
+        .mapNotNull { block ->
+            when (block) {
+                is MessageBlock.HumanInput -> block.request.requestId
+                is MessageBlock.Approval -> block.request.requestId
+                else -> null
+            }
+        }
+        .any { it !in answered }
+}
+
 fun groupChatMessages(messages: List<ChatMessage>): List<ChatMessageGroup> {
     val responses = messages.asSequence()
         .flatMap { it.blocks.asSequence() }

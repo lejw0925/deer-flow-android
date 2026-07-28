@@ -13,10 +13,11 @@ class MessageSubmissionTest {
     fun gateRejectsDuplicateSendsUntilTheFirstSubmissionReleasesIt() {
         val gate = MessageSubmissionGate()
 
-        assertTrue(gate.tryAcquire())
-        assertFalse(gate.tryAcquire())
-        gate.release()
-        assertTrue(gate.tryAcquire())
+        assertTrue(gate.tryAcquire("thread-a"))
+        assertFalse(gate.tryAcquire("thread-a"))
+        assertTrue(gate.tryAcquire("thread-b"))
+        gate.release("thread-a")
+        assertTrue(gate.tryAcquire("thread-a"))
     }
 
     @Test

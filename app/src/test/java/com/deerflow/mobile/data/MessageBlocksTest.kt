@@ -23,6 +23,27 @@ class MessageBlocksTest {
     }
 
     @Test
+    fun stripsCurrentUploadContextWhilePreservingMessageAttachments() {
+        val snapshot = JSONObject(
+            """{"values":{"messages":[
+                {
+                    "id":"human-1",
+                    "type":"human",
+                    "content":"<current_uploads>\nThe following files were uploaded in this message:\n\n- risk-assets.zip (374.0 KB)\n  Path: /mnt/user-data/uploads/risk-assets.zip\n</current_uploads>\n\nAnalyze this file",
+                    "additional_kwargs":{"files":[{"filename":"risk-assets.zip","size":382976,"path":"/mnt/user-data/uploads/risk-assets.zip"}]}
+                }
+            ]}}""",
+        ).toThreadSnapshot()
+
+        val message = snapshot.messages.single()
+        assertEquals("Analyze this file", message.text)
+        assertEquals(
+            listOf(MessageAttachment("risk-assets.zip", 382976, "/mnt/user-data/uploads/risk-assets.zip")),
+            message.attachments,
+        )
+    }
+
+    @Test
     fun parsesAssistantUsageMetadata() {
         val message = JSONObject(
             """{"id":"ai-1","type":"ai","content":"Done","usage_metadata":{"input_tokens":12,"output_tokens":34,"total_tokens":46}}""",
@@ -306,6 +327,8 @@ class MessageBlocksTest {
         assertTrue(request?.blocks?.any { it is MessageBlock.HumanInput } == true)
         assertTrue(response?.hiddenFromUi == true)
         assertTrue(response?.blocks?.any { it is MessageBlock.HumanInputResponseBlock } == true)
+        assertTrue(hasOpenHumanInputRequest(listOf(requireNotNull(request))))
+        assertFalse(hasOpenHumanInputRequest(listOf(requireNotNull(request), requireNotNull(response))))
     }
 
     @Test

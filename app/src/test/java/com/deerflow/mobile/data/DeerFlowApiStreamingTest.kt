@@ -493,6 +493,40 @@ class DeerFlowApiStreamingTest {
     }
 
     @Test
+    fun structuredHumanInputStopsTheLocalStreamWithoutWaitingForSseEnd() = runBlocking {
+        val server = ScriptedSseServer(
+            listOf(
+                sse(
+                    "event: metadata\nid: metadata-1\ndata: {\"run_id\":\"run-1\"}",
+                    """event: messages-tuple
+id: input-1
+data: {"type":"tool","id":"clarification-1","tool_call_id":"call-1","name":"ask_clarification","content":"Which environment should I use?","artifact":{"human_input":{"version":1,"kind":"human_input_request","source":"ask_clarification","request_id":"clarification-1","tool_call_id":"call-1","question":"Which environment should I use?","input_mode":"free_text"}}}""",
+                ),
+            ),
+        )
+        try {
+            var awaitingHumanInput = false
+            val updates = mutableListOf<StreamUpdate>()
+            val result = DeerFlowApi(server.url, NoopSessionCookieStore).streamMessage(
+                threadId = "thread-1",
+                message = "Deploy the service",
+                options = RunOptions(),
+                shouldStop = { awaitingHumanInput },
+            ) { update ->
+                updates += update
+                awaitingHumanInput = updates
+                    .filterIsInstance<StreamUpdate.MessageChunk>()
+                    .any { chunk -> hasOpenHumanInputRequest(listOf(chunk.value)) }
+            }
+
+            assertEquals(StreamResult.AwaitingHumanInput("run-1", "input-1"), result)
+            assertFalse(updates.any { it == StreamUpdate.Finished })
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test
     fun decodesCustomSubagentLifecycleEvents() = runBlocking {
         val server = ScriptedSseServer(
             listOf(

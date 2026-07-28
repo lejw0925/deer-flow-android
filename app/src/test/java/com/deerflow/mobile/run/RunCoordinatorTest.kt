@@ -2,6 +2,7 @@ package com.deerflow.mobile.run
 
 import com.deerflow.mobile.data.ChatMessage
 import com.deerflow.mobile.data.GatewayRunStatus
+import com.deerflow.mobile.data.HumanInputRequest
 import com.deerflow.mobile.data.MessageBlock
 import com.deerflow.mobile.data.MessageRole
 import com.deerflow.mobile.data.RunState
@@ -528,6 +529,43 @@ class RunCoordinatorTest {
         assertEquals("run-1", finished.run.runId)
         assertEquals("event-9", finished.run.lastEventId)
         assertFalse(finished.messages.single().isStreaming)
+    }
+
+    @Test
+    fun `human input request ends local thinking while retaining the request and prompt`() {
+        val request = HumanInputRequest(
+            source = "ask_clarification",
+            requestId = "clarification-1",
+            toolCallId = "call-1",
+            title = null,
+            question = "Which environment should I use?",
+            context = null,
+            inputMode = "free_text",
+            options = emptyList(),
+        )
+        val pending = ChatMessage("client-1", MessageRole.User, "Deploy the service")
+        val current = initial.copy(
+            run = RunState(RunStatus.Streaming, runId = "run-1", lastEventId = "event-1"),
+            serverMessages = listOf(
+                ChatMessage(
+                    "clarification-1",
+                    MessageRole.Tool,
+                    "Which environment should I use?",
+                    blocks = listOf(MessageBlock.HumanInput(request)),
+                ),
+            ),
+            pendingUserMessage = pending,
+            pendingUserIndex = 0,
+        )
+
+        val waiting = awaitHumanInput(current, runId = "run-1", lastEventId = "event-2")
+
+        assertEquals(RunStatus.AwaitingInput, waiting.run.status)
+        assertFalse(waiting.run.active)
+        assertTrue(waiting.run.awaitingInput)
+        assertEquals("event-2", waiting.run.lastEventId)
+        assertNull(waiting.pendingUserMessage)
+        assertEquals(listOf("client-1", "clarification-1"), waiting.serverMessages.map(ChatMessage::id))
     }
 
     @Test

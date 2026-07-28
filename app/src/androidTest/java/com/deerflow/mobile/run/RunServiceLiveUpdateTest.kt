@@ -10,6 +10,8 @@ import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
+import com.deerflow.mobile.data.RunState
+import com.deerflow.mobile.data.RunStatus
 import com.deerflow.mobile.data.SettingsStore
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -161,6 +163,38 @@ class RunServiceLiveUpdateTest {
         assertFalse(fallback.extras.getBoolean(RunService.EXTRA_REQUEST_PROMOTED_ONGOING))
     }
 
+    @Test
+    fun concurrentRunsUseSummaryWithoutAnAmbiguousStopAction() {
+        val serverUrl = "https://example.test"
+        val first = CoordinatedRunState(
+            serverUrl = serverUrl,
+            threadId = "thread-a",
+            title = "Conversation A",
+            run = RunState(RunStatus.Streaming, startedAtEpochMs = 1L),
+            serverMessages = emptyList(),
+        )
+        val second = CoordinatedRunState(
+            serverUrl = serverUrl,
+            threadId = "thread-b",
+            title = "Conversation B",
+            run = RunState(RunStatus.Reconnecting, startedAtEpochMs = 2L),
+            serverMessages = emptyList(),
+        )
+
+        RunService.synchronize(context, mapOf(first.key to first, second.key to second))
+
+        val summary = awaitRunNotificationText(context.getString(com.deerflow.mobile.R.string.run_count_in_progress, 2))
+        assertEquals(
+            context.getString(com.deerflow.mobile.R.string.run_in_progress),
+            summary.extras.getCharSequence(Notification.EXTRA_TITLE).toString(),
+        )
+        assertTrue(summary.actions.isNullOrEmpty())
+
+        RunService.synchronize(context, mapOf(first.key to first))
+        val focused = awaitRunNotificationTitle("Conversation A")
+        assertEquals(1, focused.actions?.size)
+    }
+
     private fun awaitRunNotification(
         expectedProgress: Int? = null,
         isOngoing: Boolean? = null,
@@ -191,6 +225,29 @@ class RunServiceLiveUpdateTest {
             SystemClock.sleep(100)
         }
         assertTrue("Run notification should have been removed", notifications.activeNotifications.none { it.id == 2026 })
+    }
+
+    private fun awaitRunNotificationText(expected: String): Notification {
+        val observed = linkedSetOf<String>()
+        repeat(40) {
+            val notification = notifications.activeNotifications.firstOrNull { it.id == 2026 }?.notification
+            if (notification?.extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString() == expected) return notification
+            notification?.let {
+                observed += "title=${it.extras.getCharSequence(Notification.EXTRA_TITLE)} " +
+                    "text=${it.extras.getCharSequence(Notification.EXTRA_TEXT)} actions=${it.actions?.size ?: 0}"
+            }
+            SystemClock.sleep(100)
+        }
+        error("Run notification did not show expected text: $expected; observed=$observed")
+    }
+
+    private fun awaitRunNotificationTitle(expected: String): Notification {
+        repeat(40) {
+            val notification = notifications.activeNotifications.firstOrNull { it.id == 2026 }?.notification
+            if (notification?.extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString() == expected) return notification
+            SystemClock.sleep(100)
+        }
+        error("Run notification did not show expected title: $expected")
     }
 
     private fun expectedLiveUpdateColor(): Int =

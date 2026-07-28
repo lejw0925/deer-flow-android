@@ -118,10 +118,9 @@ abstract class WorkspaceDao {
         WHERE serverUrl = :serverUrl
           AND status IN ('Connecting', 'Streaming', 'Reconnecting', 'Stopping')
         ORDER BY updatedAt DESC
-        LIMIT 1
         """,
     )
-    abstract suspend fun loadLatestActiveRun(serverUrl: String): CachedRun?
+    abstract suspend fun loadActiveRuns(serverUrl: String): List<CachedRun>
 
     @Query("SELECT * FROM threads WHERE serverUrl = :serverUrl AND threadId = :threadId LIMIT 1")
     abstract suspend fun loadThread(serverUrl: String, threadId: String): CachedThread?
@@ -349,21 +348,25 @@ class WorkspaceCache(context: Context) {
         )
     }
 
-    suspend fun loadLatestActiveRun(serverUrl: String): RecoverableRun? = dao.loadLatestActiveRun(serverUrl)?.let { cached ->
-        val run = runCatching {
-            RunState(
-                status = RunStatus.valueOf(cached.status),
-                runId = cached.runId,
-                lastEventId = cached.lastEventId,
-                clientMessageId = cached.clientMessageId,
+    suspend fun loadActiveRuns(serverUrl: String): List<RecoverableRun> = buildList {
+        for (cached in dao.loadActiveRuns(serverUrl)) {
+            val run = runCatching {
+                RunState(
+                    status = RunStatus.valueOf(cached.status),
+                    runId = cached.runId,
+                    lastEventId = cached.lastEventId,
+                    clientMessageId = cached.clientMessageId,
+                )
+            }.getOrNull() ?: continue
+            if (!run.active) continue
+            add(
+                RecoverableRun(
+                    threadId = cached.threadId,
+                    title = dao.loadThread(serverUrl, cached.threadId)?.title ?: "Run in progress",
+                    run = run,
+                ),
             )
-        }.getOrNull() ?: return@let null
-        if (!run.active) return@let null
-        RecoverableRun(
-            threadId = cached.threadId,
-            title = dao.loadThread(serverUrl, cached.threadId)?.title ?: "Run in progress",
-            run = run,
-        )
+        }
     }
 
     suspend fun saveAttachments(serverUrl: String, threadId: String, attachments: List<PendingAttachment>) {
