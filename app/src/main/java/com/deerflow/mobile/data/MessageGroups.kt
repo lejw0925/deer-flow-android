@@ -71,7 +71,19 @@ fun isLatestAssistantTurn(messages: List<ChatMessage>, turn: AssistantTurn): Boo
         ?.let { messages[it].id == turn.targetMessageId } == true
 
 /** A response is hidden in the transcript, so determine open requests from all message blocks. */
-fun hasOpenHumanInputRequest(messages: List<ChatMessage>): Boolean {
+fun hasOpenHumanInputRequest(messages: List<ChatMessage>): Boolean =
+    openHumanInputRequestIds(messages).isNotEmpty()
+
+/** A reply run must only stop when the stream introduces a new request, not an existing card. */
+fun hasNewOpenHumanInputRequest(
+    previous: List<ChatMessage>,
+    current: List<ChatMessage>,
+): Boolean {
+    val previousOpen = openHumanInputRequestIds(previous)
+    return openHumanInputRequestIds(current).any { it !in previousOpen }
+}
+
+private fun openHumanInputRequestIds(messages: List<ChatMessage>): Set<String> {
     val answered = messages.asSequence()
         .flatMap { it.blocks.asSequence() }
         .filterIsInstance<MessageBlock.HumanInputResponseBlock>()
@@ -85,7 +97,8 @@ fun hasOpenHumanInputRequest(messages: List<ChatMessage>): Boolean {
                 else -> null
             }
         }
-        .any { it !in answered }
+        .filterNot { it in answered }
+        .toSet()
 }
 
 fun groupChatMessages(messages: List<ChatMessage>): List<ChatMessageGroup> {

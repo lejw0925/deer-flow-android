@@ -324,11 +324,33 @@ class MessageBlocksTest {
             }""".trimIndent(),
         ).toChatMessage()
 
-        assertTrue(request?.blocks?.any { it is MessageBlock.HumanInput } == true)
-        assertTrue(response?.hiddenFromUi == true)
-        assertTrue(response?.blocks?.any { it is MessageBlock.HumanInputResponseBlock } == true)
-        assertTrue(hasOpenHumanInputRequest(listOf(requireNotNull(request))))
-        assertFalse(hasOpenHumanInputRequest(listOf(requireNotNull(request), requireNotNull(response))))
+        val requestMessage = requireNotNull(request)
+        val responseMessage = requireNotNull(response)
+        assertTrue(requestMessage.blocks.any { it is MessageBlock.HumanInput })
+        assertTrue(responseMessage.hiddenFromUi)
+        assertTrue(responseMessage.blocks.any { it is MessageBlock.HumanInputResponseBlock })
+        assertTrue(hasOpenHumanInputRequest(listOf(requestMessage)))
+        assertFalse(hasOpenHumanInputRequest(listOf(requestMessage, responseMessage)))
+        assertFalse(hasNewOpenHumanInputRequest(listOf(requestMessage), listOf(requestMessage)))
+        assertFalse(hasNewOpenHumanInputRequest(listOf(requestMessage), listOf(requestMessage, responseMessage)))
+
+        val followUp = ChatMessage(
+            id = "request-2",
+            role = MessageRole.Tool,
+            text = "Which environment?",
+            blocks = listOf(
+                MessageBlock.HumanInput(
+                    requestMessage.blocks.filterIsInstance<MessageBlock.HumanInput>()
+                        .single().request.copy(requestId = "request-2"),
+                ),
+            ),
+        )
+        assertTrue(
+            hasNewOpenHumanInputRequest(
+                listOf(requestMessage, responseMessage),
+                listOf(requestMessage, responseMessage, followUp),
+            ),
+        )
     }
 
     @Test

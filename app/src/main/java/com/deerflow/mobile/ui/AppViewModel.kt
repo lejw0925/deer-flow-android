@@ -2314,6 +2314,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             optionId = optionId,
         )
         val message = "For your clarification \"${request.question}\", my answer is: $answer"
+        val clientMessageId = UUID.randomUUID().toString()
+        val hiddenResponse = ChatMessage(
+            id = clientMessageId,
+            role = MessageRole.User,
+            text = message,
+            hiddenFromUi = true,
+            blocks = listOf(MessageBlock.HumanInputResponseBlock(response)),
+        )
         mutableState.update {
             it.copy(run = RunState(RunStatus.Connecting, startedAtEpochMs = System.currentTimeMillis()), error = null)
         }
@@ -2325,8 +2333,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     title = thread.title,
                     message = message,
                     options = current.composer.options,
+                    clientMessageId = clientMessageId,
                     humanInputResponse = response,
-                    initialMessages = current.messages,
+                    initialMessages = current.messages + hiddenResponse,
                     initialTodos = current.todos,
                     initialArtifacts = current.artifacts,
                 ),

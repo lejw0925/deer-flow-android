@@ -569,6 +569,50 @@ class RunCoordinatorTest {
     }
 
     @Test
+    fun `reply stream does not re-interrupt an existing human input request`() {
+        val request = HumanInputRequest(
+            source = "ask_clarification",
+            requestId = "clarification-1",
+            toolCallId = "call-1",
+            title = null,
+            question = "Which environment should I use?",
+            context = null,
+            inputMode = "free_text",
+            options = emptyList(),
+        )
+        val waiting = initial.copy(
+            run = RunState(RunStatus.AwaitingInput, runId = "run-1", lastEventId = "event-2"),
+            serverMessages = listOf(
+                ChatMessage(
+                    "clarification-1",
+                    MessageRole.Tool,
+                    "Which environment should I use?",
+                    blocks = listOf(MessageBlock.HumanInput(request)),
+                ),
+            ),
+        )
+
+        val started = reduceRunState(waiting, StreamUpdate.Started("reply-run"))
+        val checkpointed = reduceRunState(started, StreamUpdate.EventId("event-3"))
+
+        assertFalse(shouldAwaitHumanInput(waiting, started))
+        assertFalse(shouldAwaitHumanInput(started, checkpointed))
+
+        val followUp = reduceRunState(
+            checkpointed,
+            StreamUpdate.MessageChunk(
+                ChatMessage(
+                    "clarification-2",
+                    MessageRole.Tool,
+                    "Which deployment region?",
+                    blocks = listOf(MessageBlock.HumanInput(request.copy(requestId = "clarification-2"))),
+                ),
+            ),
+        )
+        assertTrue(shouldAwaitHumanInput(checkpointed, followUp))
+    }
+
+    @Test
     fun `sse error and finished marker keep the run reconnectable until a terminal preflight`() {
         val streaming = initial.copy(
             run = RunState(RunStatus.Streaming, runId = "run-1"),

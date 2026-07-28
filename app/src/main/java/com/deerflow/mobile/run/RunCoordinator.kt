@@ -23,7 +23,7 @@ import com.deerflow.mobile.data.UploadedFileInfo
 import com.deerflow.mobile.data.WebViewSessionCookieStore
 import com.deerflow.mobile.data.WorkspaceCache
 import com.deerflow.mobile.data.applySubagentProgress
-import com.deerflow.mobile.data.hasOpenHumanInputRequest
+import com.deerflow.mobile.data.hasNewOpenHumanInputRequest
 import com.deerflow.mobile.data.mergeStreamChunk
 import com.deerflow.mobile.data.mergeStreamPatch
 import com.deerflow.mobile.data.mergeStreamSnapshot
@@ -238,6 +238,11 @@ internal class PendingChunkState {
     }
 }
 
+private data class QueuedChunkUpdate(
+    val previous: CoordinatedRunState,
+    val next: CoordinatedRunState,
+)
+
 private class RunSessionCoordinator(context: Context) {
     private val appContext = context.applicationContext
     private val cache = WorkspaceCache(appContext)
@@ -264,9 +269,13 @@ private class RunSessionCoordinator(context: Context) {
         if (mutableState.value?.run?.active == true) return@withLock false
         clearPendingChunks()
         val pending = request.initialMessages.firstOrNull {
-            it.id == request.clientMessageId && it.role == com.deerflow.mobile.data.MessageRole.User
+            it.id == request.clientMessageId &&
+                it.role == com.deerflow.mobile.data.MessageRole.User &&
+                !it.hiddenFromUi
         }
-        val serverMessages = request.initialMessages.filterNot { it.id == request.clientMessageId }
+        val serverMessages = request.initialMessages.filterNot { message ->
+            message.id == request.clientMessageId && !message.hiddenFromUi
+        }
         val initial = CoordinatedRunState(
             serverUrl = request.serverUrl,
             threadId = request.threadId,
@@ -710,8 +719,8 @@ private class RunSessionCoordinator(context: Context) {
 
     private fun applyStreamUpdate(request: CoordinatedRunRequest, update: StreamUpdate): Boolean {
         if (update is StreamUpdate.MessageChunk) {
-            val next = queueMessageChunk(request, update.value)
-            if (next != null && hasOpenHumanInputRequest(next.messages)) {
+            val queued = queueMessageChunk(request, update.value)
+            if (queued != null && shouldAwaitHumanInput(queued.previous, queued.next)) {
                 flushPendingChunks(request.serverUrl, request.threadId)
                 return true
             }
@@ -726,10 +735,10 @@ private class RunSessionCoordinator(context: Context) {
         // active Room row only after it receives TerminalEnd or a terminal run preflight.
         mutableState.value = next
         scope.launch { persist(next) }
-        return hasOpenHumanInputRequest(next.messages)
+        return shouldAwaitHumanInput(current, next)
     }
 
-    private fun queueMessageChunk(request: CoordinatedRunRequest, chunk: ChatMessage): CoordinatedRunState? =
+    private fun queueMessageChunk(request: CoordinatedRunRequest, chunk: ChatMessage): QueuedChunkUpdate? =
         synchronized(chunkUpdateLock) {
             val current = pendingChunks.peek()
                 ?.takeIf { it.serverUrl == request.serverUrl && it.threadId == request.threadId }
@@ -744,7 +753,7 @@ private class RunSessionCoordinator(context: Context) {
                     flushPendingChunks(request.serverUrl, request.threadId, cancelScheduledJob = false)
                 }
             }
-            next
+            QueuedChunkUpdate(previous = current, next = next)
         }
 
     private fun flushPendingChunks(
@@ -892,6 +901,12 @@ internal fun awaitHumanInput(
     pendingUserIndex = null,
     revision = current.revision + 1,
 )
+
+/** Only a request introduced by the current stream completes the local turn. */
+internal fun shouldAwaitHumanInput(
+    previous: CoordinatedRunState,
+    current: CoordinatedRunState,
+): Boolean = hasNewOpenHumanInputRequest(previous.messages, current.messages)
 
 /** True when the completed state still ends at a tool/reasoning step rather than an answer. */
 internal fun terminalSnapshotNeedsRetry(current: CoordinatedRunState, snapshot: ThreadSnapshot): Boolean {
