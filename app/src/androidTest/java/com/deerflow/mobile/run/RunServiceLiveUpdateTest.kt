@@ -136,6 +136,29 @@ class RunServiceLiveUpdateTest {
             com.deerflow.mobile.R.drawable.ic_notification_completed,
             completed.extras.getParcelable("android.progressEndIcon", Icon::class.java)?.resId,
         )
+        assertFalse(completed.flags and Notification.FLAG_PROMOTED_ONGOING != 0)
+    }
+
+    @Test
+    fun staleLiveUpdateDoesNotReplaceATerminalManagedNotification() {
+        val active = CoordinatedRunState(
+            serverUrl = "https://example.test",
+            threadId = "thread-terminal",
+            title = "Terminal conversation",
+            run = RunState(RunStatus.Streaming, startedAtEpochMs = 1L),
+            serverMessages = emptyList(),
+            revision = 10,
+        )
+        val terminal = active.copy(run = RunState(), revision = 11)
+
+        RunService.synchronize(context, mapOf(active.key to active))
+        awaitRunNotification(isOngoing = true)
+        RunService.synchronize(context, mapOf(terminal.key to terminal))
+        RunService.synchronize(context, mapOf(active.key to active))
+
+        val completed = awaitRunNotification(isOngoing = false)
+        assertEquals(100, completed.extras.getInt(Notification.EXTRA_PROGRESS))
+        assertFalse(completed.flags and Notification.FLAG_PROMOTED_ONGOING != 0)
     }
 
     @Test

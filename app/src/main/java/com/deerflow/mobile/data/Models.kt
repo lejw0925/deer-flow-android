@@ -228,7 +228,7 @@ data class RunState(
     val clientMessageId: String? = null,
     /** Retained after the local active-run row is cleared so the UI can show the real outcome. */
     val gatewayStatus: GatewayRunStatus = GatewayRunStatus.Unknown,
-    /** Wall-clock start of the current local active run; null when idle. */
+    /** Wall-clock start of the current or most recently completed local run. */
     val startedAtEpochMs: Long? = null,
 ) {
     val active: Boolean get() = status in setOf(RunStatus.Connecting, RunStatus.Streaming, RunStatus.Reconnecting, RunStatus.Stopping)
@@ -253,6 +253,11 @@ data class ComposerState(
     val attachments: List<PendingAttachment> = emptyList(),
     val options: RunOptions = RunOptions(),
     val uploading: Boolean = false,
+)
+
+data class InputPolishResult(
+    val rewrittenText: String,
+    val changed: Boolean,
 )
 
 data class ModelInfo(

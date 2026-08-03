@@ -401,6 +401,17 @@ class DeerFlowApi(
         request("GET", "/api/threads/${pathSegment(threadId)}/state"),
     ).toThreadSnapshot()
 
+    suspend fun polishInput(text: String, locale: String?, threadId: String?): InputPolishResult {
+        val body = JSONObject().put("text", text)
+        locale?.takeIf(String::isNotBlank)?.let { body.put("locale", it) }
+        threadId?.takeIf(String::isNotBlank)?.let { body.put("thread_id", it) }
+        val response = JSONObject(request("POST", "/api/input-polish", body.toString()))
+        return InputPolishResult(
+            rewrittenText = response.getString("rewritten_text"),
+            changed = response.getBoolean("changed"),
+        )
+    }
+
     suspend fun prepareRegenerate(threadId: String, messageId: String): RegeneratePreparation {
         val payload = JSONObject(
             request(
@@ -1057,8 +1068,9 @@ class DeerFlowApi(
         }
     }
 
-    suspend fun cancelRun(threadId: String, runId: String) {
-        request("POST", "/api/threads/${pathSegment(threadId)}/runs/${pathSegment(runId)}/cancel?wait=false&action=interrupt", "")
+    suspend fun cancelRun(threadId: String, runId: String, waitForCompletion: Boolean = true) {
+        val wait = if (waitForCompletion) "true" else "false"
+        request("POST", "/api/threads/${pathSegment(threadId)}/runs/${pathSegment(runId)}/cancel?wait=$wait&action=interrupt", "")
     }
 
     suspend fun getRun(threadId: String, runId: String): GatewayRunInfo {

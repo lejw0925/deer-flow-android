@@ -142,6 +142,9 @@ class RunService : Service() {
     private var managedDetail: String? = null
     private var managedActiveKeys: Set<RunKey> = emptySet()
     private var serviceManagedSnapshot = ManagedRunSnapshot()
+    private var terminalTransitionInProgress = false
+    private var terminalTransitionGeneration = 0L
+    private var terminalManagedRun: ManagedRunNotification? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     override fun onCreate() {
@@ -174,6 +177,7 @@ class RunService : Service() {
                 return START_STICKY
             }
             ACTION_UPDATE -> {
+                if (terminalTransitionInProgress) return START_NOT_STICKY
                 title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { title }.ifBlank { getString(R.string.run_in_progress) }
                 val phase = intent.getStringExtra(EXTRA_PHASE)?.let { value ->
                     runCatching { RunProgress.valueOf(value) }.getOrNull()
@@ -195,7 +199,7 @@ class RunService : Service() {
                 title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { title }
                 progress = progress.copy(phase = RunProgress.Completed, currentTodo = null)
                 terminalSmallIconRes = R.drawable.ic_notification_completed
-                finish(getString(R.string.run_completed))
+                finish(getString(R.string.run_completed), startId)
                 return START_NOT_STICKY
             }
             ACTION_FAILED -> {
@@ -205,13 +209,15 @@ class RunService : Service() {
                 }
                 title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { title }
                 terminalSmallIconRes = android.R.drawable.ic_dialog_alert
-                finish(intent.getStringExtra(EXTRA_DETAIL).orEmpty().ifBlank { getString(R.string.run_failed) })
+                finish(intent.getStringExtra(EXTRA_DETAIL).orEmpty().ifBlank { getString(R.string.run_failed) }, startId)
                 return START_NOT_STICKY
             }
             ACTION_DISMISSED -> {
                 // The foreground service still needs a notification, but no longer requests Live Update promotion.
-                liveUpdateDismissed = true
-                publish(ongoing = true, force = true)
+                if (!terminalTransitionInProgress) {
+                    liveUpdateDismissed = true
+                    publish(ongoing = true, force = true)
+                }
                 return START_STICKY
             }
             else -> {
@@ -225,6 +231,7 @@ class RunService : Service() {
                     }
                     return START_NOT_STICKY
                 }
+                clearTerminalTransition()
                 title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { getString(R.string.run_in_progress) }
                 serverUrl = intent.getStringExtra(EXTRA_SERVER_URL).orEmpty().ifBlank { serverUrl }
                 threadId = intent.getStringExtra(EXTRA_THREAD_ID).orEmpty().ifBlank { threadId }
@@ -239,8 +246,9 @@ class RunService : Service() {
     }
 
     private fun applyManagedSnapshot(startId: Int, snapshot: ManagedRunSnapshot) {
-        val active = snapshot.active
+        val active = snapshot.active.filterNot(::isStaleManagedActive)
         if (active.isNotEmpty()) {
+            clearTerminalTransition()
             val activeKeys = active.mapTo(mutableSetOf(), ManagedRunNotification::key)
             val topologyChanged = activeKeys != managedActiveKeys
             managedActiveKeys = activeKeys
@@ -256,9 +264,13 @@ class RunService : Service() {
             return
         }
 
+        if (snapshot.active.isNotEmpty()) return
+
         managedActiveKeys = emptySet()
         val terminal = snapshot.terminal
         if (terminal != null) {
+            if (isStaleManagedTerminal(terminal)) return
+            terminalManagedRun = terminal
             title = terminal.title
             progress = terminal.progress.copy(phase = RunProgress.Completed, currentTodo = null)
             serverUrl = terminal.key.serverUrl
@@ -270,12 +282,27 @@ class RunService : Service() {
             } else {
                 android.R.drawable.ic_dialog_alert
             }
-            finish(terminal.error ?: getString(R.string.run_completed))
-        } else {
+            finish(terminal.error ?: getString(R.string.run_completed), startId)
+        } else if (!terminalTransitionInProgress) {
             removeNotification()
             stopSelf(startId)
         }
     }
+
+    private fun isStaleManagedActive(notification: ManagedRunNotification): Boolean {
+        val terminal = terminalManagedRun ?: return false
+        return notification.isSameOrOlderRun(terminal)
+    }
+
+    private fun isStaleManagedTerminal(notification: ManagedRunNotification): Boolean {
+        val terminal = terminalManagedRun ?: return false
+        return notification.isSameOrOlderRun(terminal)
+    }
+
+    private fun ManagedRunNotification.isSameOrOlderRun(terminal: ManagedRunNotification): Boolean =
+        key == terminal.key &&
+            revision <= terminal.revision &&
+            (terminal.startedAtEpochMs == 0L || startedAtEpochMs <= terminal.startedAtEpochMs)
 
     private fun Intent.runKeyOrNull(): RunKey? {
         val server = getStringExtra(EXTRA_SERVER_URL).orEmpty()
@@ -284,6 +311,7 @@ class RunService : Service() {
     }
 
     private fun publish(ongoing: Boolean, detail: String? = null, force: Boolean = false) {
+        if (ongoing && terminalTransitionInProgress) return
         val now = SystemClock.elapsedRealtime()
         val projection = progress.notificationProjection()
         val signature = listOf(ongoing, detail.orEmpty(), projection, liveUpdateDismissed).joinToString("|")
@@ -535,15 +563,26 @@ class RunService : Service() {
         RunNotificationIcon.Completed -> R.drawable.ic_notification_completed
     }
 
-    private fun finish(detail: String) {
+    private fun clearTerminalTransition() {
+        terminalTransitionGeneration += 1L
+        terminalTransitionInProgress = false
+        terminalManagedRun = null
+    }
+
+    private fun finish(detail: String, startId: Int? = null) {
+        if (terminalTransitionInProgress) return
+        terminalTransitionInProgress = true
+        val terminalGeneration = ++terminalTransitionGeneration
+        pendingPublish?.cancel()
+        pendingPublish = null
         serviceScope.launch {
-            pendingPublish?.cancel()
-            pendingPublish = null
-            if (SettingsStore(this@RunService).read().notifyOnRunCompletion) {
-                // A completed activity can no longer remain a promoted Live Update, but keeping
-                // this notification attached through the foreground teardown prevents the visual
-                // jump to a separate generic completion card.
-                stopForeground(STOP_FOREGROUND_DETACH)
+            val notifyOnCompletion = SettingsStore(this@RunService).read().notifyOnRunCompletion
+            // A newer active snapshot may have reached the service while SettingsStore was read.
+            if (terminalGeneration != terminalTransitionGeneration || !terminalTransitionInProgress) return@launch
+            if (notifyOnCompletion) {
+                // Removing the foreground notification first ensures System UI drops its Live
+                // Update treatment before the non-ongoing terminal notification is posted.
+                stopForeground(STOP_FOREGROUND_REMOVE)
                 getSystemService(NotificationManager::class.java).notify(
                     NOTIFICATION_ID,
                     buildTerminalNotification(
@@ -557,12 +596,13 @@ class RunService : Service() {
                     ),
                 )
             } else {
-                removeNotification()
+                getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
+                stopForeground(STOP_FOREGROUND_REMOVE)
             }
             lastPublishedSignature = null
             lastNotificationProjection = null
             lastPublishedAtMs = 0
-            stopSelf()
+            if (startId == null) stopSelf() else stopSelf(startId)
         }
     }
 
@@ -574,6 +614,7 @@ class RunService : Service() {
         lastPublishedSignature = null
         lastNotificationProjection = null
         lastPublishedAtMs = 0
+        clearTerminalTransition()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

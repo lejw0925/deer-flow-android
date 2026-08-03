@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModelStoreOwner
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.deerflow.mobile.data.DeerFlowApi
+import com.deerflow.mobile.data.PendingAttachment
 import com.deerflow.mobile.data.SettingsStore
 import com.deerflow.mobile.data.WebViewSessionCookieStore
 import com.deerflow.mobile.data.WorkspaceCache
@@ -62,6 +63,45 @@ class DraftRestorationInstrumentedTest {
             cache.deleteThread(serverUrl, secondThread.id)
             runCatching { api.deleteThread(firstThread.id) }
             runCatching { api.deleteThread(secondThread.id) }
+            settings.setServerUrl(previousServerUrl)
+        }
+    }
+
+    @Test
+    fun newConversationClearsThePendingAttachmentDraft() = runBlocking {
+        val settings = SettingsStore(application)
+        val previousServerUrl = settings.read().serverUrl
+        val cache = WorkspaceCache(application)
+        val owner = TestViewModelStoreOwner()
+
+        try {
+            settings.setServerUrl(serverUrl)
+            cache.saveDraft(serverUrl, NEW_DRAFT_KEY, "draft that should not return")
+            cache.saveAttachments(
+                serverUrl,
+                NEW_DRAFT_KEY,
+                listOf(PendingAttachment("content://fixture/old.pdf", "old.pdf", "application/pdf", 42)),
+            )
+
+            val viewModel = owner.viewModel(application)
+            viewModel.awaitReady()
+            viewModel.createThread()
+
+            awaitValue {
+                val state = viewModel.state.value
+                state.route == AppRoute.Conversation &&
+                    state.selectedThread == null &&
+                    state.composer.text.isEmpty() &&
+                    state.composer.attachments.isEmpty()
+            }
+            awaitValue {
+                cache.loadDraft(serverUrl, NEW_DRAFT_KEY).isEmpty() &&
+                    cache.loadAttachments(serverUrl, NEW_DRAFT_KEY).isEmpty()
+            }
+        } finally {
+            owner.viewModelStore.clear()
+            cache.saveDraft(serverUrl, NEW_DRAFT_KEY, "")
+            cache.saveAttachments(serverUrl, NEW_DRAFT_KEY, emptyList())
             settings.setServerUrl(previousServerUrl)
         }
     }

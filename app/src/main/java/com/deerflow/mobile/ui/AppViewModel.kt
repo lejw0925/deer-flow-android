@@ -82,6 +82,7 @@ import java.io.IOException
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -98,11 +99,18 @@ import kotlinx.coroutines.withContext
 internal const val NEW_DRAFT_KEY = "__new__"
 private const val ARTIFACT_PROGRESS_UPDATE_BYTES = 128L * 1024L
 
+data class InputPolishUndo(
+    val originalText: String,
+    val rewrittenText: String,
+)
+
 data class AppUiState(
     val serverUrl: String,
     val user: DeerFlowUser? = null,
     val route: AppRoute = AppRoute.Workspace,
     val conversationPageTarget: ConversationPageTarget = ConversationPageTarget.Workspace,
+    /** Controls the workspace shortcut row independently from navigation transitions. */
+    val showQuickCapabilities: Boolean = true,
     val checkingSession: Boolean = true,
     val loginBusy: Boolean = false,
     val loadingSsoProviders: Boolean = false,
@@ -144,6 +152,8 @@ data class AppUiState(
     val artifactSession: ArtifactSession? = null,
     val browser: BrowserUiState = BrowserUiState(),
     val composer: ComposerState = ComposerState(),
+    val inputPolishing: Boolean = false,
+    val inputPolishUndo: InputPolishUndo? = null,
     /** Storage follows the conversation, while this key belongs to the editor session. */
     val draftStorageKey: String = NEW_DRAFT_KEY,
     val draftSessionKey: String = "new-draft",
@@ -174,10 +184,13 @@ data class AppUiState(
     val cacheStats: CacheStats = CacheStats(),
     val loadingCacheStats: Boolean = false,
     val clearingCache: Boolean = false,
+    val modelUnavailableError: String? = null,
     val error: String? = null,
     val notice: String? = null,
 ) {
     val inConversation: Boolean get() = selectedThread != null
+    val canUndoInputPolish: Boolean
+        get() = !inputPolishing && inputPolishUndo?.rewrittenText == composer.text
 }
 
 enum class BrowserLiveStatus {
@@ -295,6 +308,59 @@ internal fun isCurrentConversationSession(
     state.selectedThread?.id == threadId &&
     state.draftSessionKey == draftSessionKey
 
+internal fun isCurrentInputPolish(
+    state: AppUiState,
+    serverUrl: String,
+    threadId: String?,
+    draftSessionKey: String,
+    originalText: String,
+): Boolean = isCurrentConversationSession(state, serverUrl, threadId, draftSessionKey) &&
+    state.composer.text == originalText
+
+internal fun isModelUnavailableError(message: String?): Boolean {
+    val normalized = message?.trim()?.lowercase().orEmpty()
+    if (normalized.isBlank()) return false
+    val mentionsModel = listOf("model", "llm", "provider", "模型", "提供商").any(normalized::contains)
+    if (!mentionsModel) return false
+    return listOf(
+        "unavailable",
+        "not available",
+        "not found",
+        "not configured",
+        "no configured",
+        "circuit breaker",
+        "out of quota",
+        "billing",
+        "authentication or access is invalid",
+        "credentials",
+        "failed after retries",
+        "不可用",
+        "未配置",
+        "不存在",
+        "额度",
+        "配额",
+        "计费",
+        "认证",
+        "凭据",
+        "熔断",
+    ).any(normalized::contains)
+}
+
+internal fun modelUnavailableMessage(
+    runError: String?,
+    messages: List<ChatMessage>,
+): String? {
+    runError?.takeIf(::isModelUnavailableError)?.let { return it }
+    if (runError.isNullOrBlank()) return null
+    val latestUserIndex = messages.indexOfLast { it.role == MessageRole.User }
+    if (latestUserIndex < 0) return null
+    return messages
+        .drop(latestUserIndex + 1)
+        .asReversed()
+        .firstOrNull { it.role == MessageRole.Assistant && isModelUnavailableError(it.text) }
+        ?.text
+}
+
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = SettingsStore(application)
     private val cookieStore = WebViewSessionCookieStore()
@@ -315,6 +381,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<AppUiState> = mutableState.asStateFlow()
 
     private var draftJob: Job? = null
+    private var inputPolishJob: Job? = null
     private var attachmentJob: Job? = null
     private var threadLoadJob: Job? = null
     private var artifactDownloadJob: Job? = null
@@ -326,6 +393,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var pendingSharedConversation: SharedConversationContent? = null
     private var runRecoveryAttemptedForServer: String? = null
     private var runDetailsRequestId = 0L
+    private var inputPolishRequestId = 0L
 
     init {
         observeCoordinatedRun()
@@ -403,6 +471,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         thread
                     }
                 }
+                val selectedRunError = coordinated.error.takeIf {
+                    selected?.id == coordinated.threadId
+                }
+                val modelUnavailableError = if (selected?.id == coordinated.threadId) {
+                    modelUnavailableMessage(selectedRunError, coordinated.messages)
+                } else {
+                    null
+                }
                 current.copy(
                     threads = updatedThreads,
                     selectedThread = selected?.takeIf { it.id == coordinated.threadId }?.copy(title = coordinated.title) ?: selected,
@@ -412,7 +488,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     runNotice = if (selected?.id == coordinated.threadId) coordinated.runNotice else current.runNotice,
                     run = if (selected?.id == coordinated.threadId) coordinated.run else current.run,
                     messageActionBusy = if (selected?.id == coordinated.threadId && !coordinated.run.active) false else current.messageActionBusy,
-                    error = if (selected?.id == coordinated.threadId) coordinated.error ?: current.error else current.error,
+                    modelUnavailableError = modelUnavailableError ?: current.modelUnavailableError,
+                    error = when {
+                        modelUnavailableError != null -> null
+                        selectedRunError != null -> selectedRunError
+                        else -> current.error
+                    },
                 )
             }
         }
@@ -1246,7 +1327,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun createThread(sharedContent: SharedConversationContent? = null) {
+        invalidateInputPolish()
         threadLoadJob?.cancel()
+        draftJob?.cancel()
+        attachmentJob?.cancel()
         closeBrowser()
         cancelArtifactWork()
         clearRunDetails()
@@ -1276,14 +1360,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 composerResetToken = it.composerResetToken + 1,
                 run = RunState(),
                 messageActionBusy = false,
+                showQuickCapabilities = false,
                 route = AppRoute.Conversation,
+                modelUnavailableError = null,
                 error = null,
             )
         }
         if (sharedContent == null) {
-            restoreNewDraft(sessionKey)
+            draftJob = viewModelScope.launch {
+                if (isCurrentNewDraftLoad(mutableState.value, sessionKey)) {
+                    threads.saveDraft(NEW_DRAFT_KEY, "")
+                }
+                if (isCurrentNewDraftLoad(mutableState.value, sessionKey)) {
+                    threads.saveAttachments(NEW_DRAFT_KEY, emptyList())
+                }
+            }
         } else {
-            draftJob?.cancel()
             draftJob = viewModelScope.launch {
                 threads.saveDraft(NEW_DRAFT_KEY, sharedText)
             }
@@ -1443,6 +1535,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openThread(thread: ThreadSummary) {
         if (mutableState.value.selectedThread?.id == thread.id && mutableState.value.route == AppRoute.Conversation) return
+        invalidateInputPolish()
         threadLoadJob?.cancel()
         closeBrowser()
         cancelArtifactWork()
@@ -1464,6 +1557,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 composerResetToken = it.composerResetToken + 1,
                 run = RunState(),
                 messageActionBusy = false,
+                showQuickCapabilities = false,
+                modelUnavailableError = null,
                 error = null,
             )
         }
@@ -1512,16 +1607,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeConversation() {
+        invalidateInputPolish()
         threadLoadJob?.cancel()
         closeBrowser()
         cancelArtifactWork()
-        if (mutableState.value.run.active) {
+        val current = mutableState.value
+        if (current.run.active) {
             mutableState.update {
                 it.copy(
                     route = AppRoute.Workspace,
                     conversationPageTarget = ConversationPageTarget.Workspace,
+                    showQuickCapabilities = false,
                     artifactBusy = false,
                     artifactSession = null,
+                    modelUnavailableError = null,
                     error = null,
                 )
             }
@@ -1550,6 +1649,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 composerResetToken = it.composerResetToken + 1,
                 run = RunState(),
                 messageActionBusy = false,
+                showQuickCapabilities = current.selectedThread != null,
+                modelUnavailableError = null,
                 error = null,
             )
         }
@@ -1579,6 +1680,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         artifactBusy = if (it.selectedThread?.id == thread.id) false else it.artifactBusy,
                         artifactSession = if (it.selectedThread?.id == thread.id) null else it.artifactSession,
                         route = if (it.selectedThread?.id == thread.id) AppRoute.Workspace else it.route,
+                        showQuickCapabilities = if (it.selectedThread?.id == thread.id) true else it.showQuickCapabilities,
                     )
                 }
                 publishConversationShortcuts()
@@ -1621,7 +1723,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateDraft(value: String) {
         cancelNewDraftRestore()
-        val key = mutableState.value.draftStorageKey
+        val current = mutableState.value
+        if (current.composer.text == value) return
+        val clearUndo = current.inputPolishUndo?.rewrittenText != value
+        invalidateInputPolish(clearUndo = clearUndo)
+        val key = current.draftStorageKey
         mutableState.update { it.copy(composer = it.composer.copy(text = value)) }
         draftJob?.cancel()
         draftJob = viewModelScope.launch {
@@ -1906,6 +2012,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun applyQuickAction(prompt: String, skillKeywords: List<String>) {
+        invalidateInputPolish()
         mutableState.update { state ->
             state.copy(
                 composer = applyQuickActionToComposer(
@@ -1920,6 +2027,120 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         draftJob = viewModelScope.launch {
             val state = mutableState.value
             threads.saveDraft(state.draftStorageKey, state.composer.text)
+        }
+    }
+
+    fun polishInput() {
+        val initial = mutableState.value
+        val originalText = initial.composer.text
+        if (
+            initial.inputPolishing ||
+            initial.run.active ||
+            initial.run.awaitingInput ||
+            initial.composer.uploading ||
+            originalText.isBlank()
+        ) return
+
+        inputPolishJob?.cancel()
+        val requestId = ++inputPolishRequestId
+        val serverUrl = initial.serverUrl
+        val threadId = initial.selectedThread?.id
+        val draftSessionKey = initial.draftSessionKey
+        val draftStorageKey = initial.draftStorageKey
+        val locales = getApplication<Application>().resources.configuration.locales
+        val locale = if (locales.isEmpty) null else locales[0].toLanguageTag()
+        mutableState.update {
+            it.copy(
+                inputPolishing = true,
+                inputPolishUndo = null,
+                error = null,
+                notice = null,
+            )
+        }
+        inputPolishJob = viewModelScope.launch {
+            try {
+                val result = api.polishInput(originalText, locale, threadId)
+                val rewrittenText = result.rewrittenText.trim()
+                var applied = false
+                mutableState.update { current ->
+                    if (
+                        requestId != inputPolishRequestId ||
+                        !isCurrentInputPolish(current, serverUrl, threadId, draftSessionKey, originalText)
+                    ) {
+                        current
+                    } else if (!result.changed || rewrittenText.isBlank()) {
+                        current.copy(
+                            inputPolishing = false,
+                            inputPolishUndo = null,
+                            notice = getApplication<Application>().getString(R.string.input_polish_no_changes),
+                        )
+                    } else {
+                        applied = true
+                        current.copy(
+                            composer = current.composer.copy(text = rewrittenText),
+                            composerResetToken = current.composerResetToken + 1,
+                            inputPolishing = false,
+                            inputPolishUndo = InputPolishUndo(originalText, rewrittenText),
+                        )
+                    }
+                }
+                if (applied) runCatching { threads.saveDraft(draftStorageKey, rewrittenText) }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (requestId == inputPolishRequestId) {
+                    mutableState.update { current ->
+                        if (!isCurrentConversationSession(current, serverUrl, threadId, draftSessionKey)) {
+                            current
+                        } else {
+                            current.copy(
+                                inputPolishing = false,
+                                inputPolishUndo = null,
+                                error = error.userMessage(
+                                    getApplication<Application>().getString(R.string.input_polish_failed),
+                                ),
+                            )
+                        }
+                    }
+                }
+            } finally {
+                if (requestId == inputPolishRequestId) inputPolishJob = null
+            }
+        }
+    }
+
+    fun cancelInputPolish() {
+        invalidateInputPolish()
+    }
+
+    fun undoInputPolish() {
+        val current = mutableState.value
+        val undo = current.inputPolishUndo ?: return
+        if (current.inputPolishing || current.composer.text != undo.rewrittenText) return
+        invalidateInputPolish()
+        mutableState.update {
+            it.copy(
+                composer = it.composer.copy(text = undo.originalText),
+                composerResetToken = it.composerResetToken + 1,
+            )
+        }
+        draftJob?.cancel()
+        draftJob = viewModelScope.launch {
+            runCatching { threads.saveDraft(current.draftStorageKey, undo.originalText) }
+        }
+    }
+
+    private fun invalidateInputPolish(clearUndo: Boolean = true) {
+        val current = mutableState.value
+        if (inputPolishJob == null && !current.inputPolishing && (!clearUndo || current.inputPolishUndo == null)) return
+        inputPolishRequestId += 1L
+        inputPolishJob?.cancel()
+        inputPolishJob = null
+        mutableState.update {
+            it.copy(
+                inputPolishing = false,
+                inputPolishUndo = if (clearUndo) null else it.inputPolishUndo,
+            )
         }
     }
 
@@ -2075,6 +2296,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val text = state.composer.text.trim()
         if (
             (text.isBlank() && state.composer.attachments.isEmpty()) ||
+            state.inputPolishing ||
             state.run.active ||
             state.run.awaitingInput ||
             state.selectedThread?.let { thread ->
@@ -2123,7 +2345,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         "The created conversation already has a pending submission."
                     }
                     acquiredSubmissionKeys += boundSession.submissionKey
-                    runCatching { threads.saveAttachments(created.id, composer.attachments) }
+                    val copiedAttachments = runCatching {
+                        threads.saveAttachments(created.id, composer.attachments)
+                    }.isSuccess
+                    if (session.draftStorageKey == NEW_DRAFT_KEY && copiedAttachments) {
+                        runCatching { threads.saveAttachments(NEW_DRAFT_KEY, emptyList()) }
+                    }
                     mutableState.update { current ->
                         val updated = current.copy(
                             threads = listOf(created) + current.threads.filterNot { it.id == created.id },
@@ -2133,6 +2360,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                                 selectedThread = created,
                                 draftStorageKey = created.id,
                                 route = AppRoute.Conversation,
+                                showQuickCapabilities = false,
                             )
                         } else {
                             updated
@@ -2276,23 +2504,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val current = mutableState.value
         val thread = current.selectedThread ?: return
         val key = RunKey(api.serverUrl, thread.id)
-        if (!runCoordinator.isActive(key.serverUrl, key.threadId)) return
+        if (current.run.status == RunStatus.Stopping || !runCoordinator.isActive(key.serverUrl, key.threadId)) return
         val draftSessionKey = current.draftSessionKey
         mutableState.update { it.copy(run = it.run.copy(status = RunStatus.Stopping)) }
-        viewModelScope.launch {
-            val snapshot = runCoordinator.cancel(key)
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            val result = runCoordinator.cancel(key)
             val coordinated = runCoordinator.stateFor(key.serverUrl, key.threadId)
             mutableState.update { state ->
                 if (!isCurrentConversationSession(state, key.serverUrl, key.threadId, draftSessionKey)) {
                     state
+                } else if (result.confirmed) {
+                    state.copy(
+                        run = coordinated?.run ?: RunState(),
+                        messages = coordinated?.messages
+                            ?: result.snapshot?.messages
+                            ?: state.messages.map { message -> message.copy(isStreaming = false) },
+                        todos = coordinated?.todos ?: result.snapshot?.todos ?: state.todos,
+                        artifacts = coordinated?.artifacts ?: result.snapshot?.artifacts ?: state.artifacts,
+                    )
                 } else {
                     state.copy(
-                        run = RunState(),
-                        messages = coordinated?.messages
-                            ?: snapshot?.messages
-                            ?: state.messages.map { message -> message.copy(isStreaming = false) },
-                        todos = coordinated?.todos ?: snapshot?.todos ?: state.todos,
-                        artifacts = coordinated?.artifacts ?: snapshot?.artifacts ?: state.artifacts,
+                        run = coordinated?.run?.takeIf { it.active }
+                            ?: state.run.copy(
+                                status = state.run.status.takeUnless { it == RunStatus.Stopping } ?: RunStatus.Streaming,
+                            ),
+                        error = getApplication<Application>().getString(R.string.stop_not_confirmed),
                     )
                 }
             }
@@ -2386,6 +2622,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             draftStorageKey = branch.first.id,
                             draftSessionKey = "thread-draft-${branch.first.id}-${UUID.randomUUID()}",
                             route = AppRoute.Conversation,
+                            showQuickCapabilities = false,
                             messageActionBusy = false,
                             offline = false,
                             notice = getApplication<Application>().getString(R.string.conversation_branch_created),
@@ -2693,6 +2930,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun dismissError() {
         mutableState.update { it.copy(error = null) }
+    }
+
+    fun dismissModelUnavailableError() {
+        mutableState.update { it.copy(modelUnavailableError = null) }
     }
 
     fun showNotice(message: String) {

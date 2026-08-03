@@ -52,6 +52,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.AttachFile
@@ -62,6 +63,7 @@ import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.DesktopWindows
 import androidx.compose.material.icons.outlined.EditNote
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
@@ -113,6 +115,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.isTraversalGroup
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.traversalIndex
@@ -268,6 +271,9 @@ fun ChatScreen(
             onQuickAction = viewModel::applyQuickAction,
             onRemoveAttachment = viewModel::removeAttachment,
             onRetryAttachment = viewModel::retryAttachment,
+            onPolishInput = viewModel::polishInput,
+            onCancelPolish = viewModel::cancelInputPolish,
+            onUndoPolish = viewModel::undoInputPolish,
             onSend = viewModel::sendMessage,
             onStop = viewModel::stopRun,
         )
@@ -324,6 +330,16 @@ fun ChatScreen(
             onReload = viewModel::openRunDetails,
         )
     }
+    state.modelUnavailableError?.let { message ->
+        ModelUnavailableDialog(
+            message = message,
+            onDismiss = viewModel::dismissModelUnavailableError,
+            onChooseModel = {
+                viewModel.dismissModelUnavailableError()
+                expandedTopSelector = TopSelectorKind.Model
+            },
+        )
+    }
     if (state.browser.visible) {
         BrowserLiveSheet(
             browser = state.browser,
@@ -356,6 +372,46 @@ fun ChatScreen(
             )
         }
     }
+}
+
+@Composable
+internal fun ModelUnavailableDialog(
+    message: String,
+    onDismiss: () -> Unit,
+    onChooseModel: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                Icons.Outlined.ErrorOutline,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+            )
+        },
+        title = { Text(stringResource(R.string.model_unavailable_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(stringResource(R.string.model_unavailable_body))
+                Text(
+                    stringResource(R.string.model_unavailable_details, message),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onChooseModel) {
+                Text(stringResource(R.string.choose_another_model))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.close))
+            }
+        },
+        modifier = Modifier.testTag(UiTags.ModelUnavailableDialog),
+    )
 }
 
 @Composable
@@ -1097,11 +1153,23 @@ internal fun MessageComposer(
     onQuickAction: (String, List<String>) -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onRetryAttachment: (String) -> Unit,
+    onPolishInput: () -> Unit = {},
+    onCancelPolish: () -> Unit = {},
+    onUndoPolish: () -> Unit = {},
     onSend: () -> Unit,
     onStop: () -> Unit,
 ) {
-    val quickCapabilitiesVisible = state.route != AppRoute.Conversation
+    // This is explicit UI state. Route changes can occur while an input-polish request is in flight.
+    val quickCapabilitiesVisible = state.showQuickCapabilities
     val awaitingHumanInput = state.run.awaitingInput
+    val composerLocked = awaitingHumanInput || state.inputPolishing
+    val stopInFlight = state.run.status == RunStatus.Stopping
+    val stoppingDescription = stringResource(R.string.run_stopping)
+    val polishEnabled = !state.run.active &&
+        !awaitingHumanInput &&
+        !state.composer.uploading &&
+        state.composer.text.isNotBlank()
+    val composerDisplayValue = if (state.inputPolishing) TextFieldValue("") else editorValue
     val composerTopPadding by animateDpAsState(
         targetValue = if (quickCapabilitiesVisible) 4.dp else 14.dp,
         animationSpec = ExpressiveMotion.fastSpatial(),
@@ -1145,36 +1213,92 @@ internal fun MessageComposer(
                 }
                 Row(verticalAlignment = Alignment.Bottom) {
                     OutlinedTextField(
-                        value = editorValue,
+                        value = composerDisplayValue,
                         onValueChange = onDraftChange,
-                        enabled = !awaitingHumanInput,
-                        placeholder = { Text(stringResource(R.string.message_deerflow)) },
+                        enabled = !composerLocked,
+                        placeholder = {
+                            if (state.inputPolishing) {
+                                Row(
+                                    modifier = Modifier.testTag(UiTags.InputPolishStatus),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    LoadingIndicator(Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        stringResource(R.string.input_polishing),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                }
+                            } else {
+                                Text(stringResource(R.string.message_deerflow))
+                            }
+                        },
                         minLines = 1,
                         maxLines = 6,
                         leadingIcon = {
                             IconButton(
                                 onClick = onAttachment,
-                                enabled = !state.composer.uploading && !awaitingHumanInput,
+                                enabled = !state.composer.uploading && !composerLocked,
                                 modifier = Modifier.size(48.dp).testTag(UiTags.ComposerAttachmentButton),
                             ) {
                                 Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.add_attachment))
+                            }
+                        },
+                        trailingIcon = {
+                            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                                if (state.inputPolishing) {
+                                    IconButton(onClick = onCancelPolish) {
+                                        Icon(
+                                            Icons.Outlined.Close,
+                                            contentDescription = stringResource(R.string.input_polish_cancel),
+                                        )
+                                    }
+                                } else {
+                                    IconButton(
+                                        onClick = if (state.canUndoInputPolish) onUndoPolish else onPolishInput,
+                                        enabled = state.canUndoInputPolish || polishEnabled,
+                                        modifier = Modifier.testTag(UiTags.InputPolishButton),
+                                    ) {
+                                        Icon(
+                                            imageVector = if (state.canUndoInputPolish) {
+                                                Icons.AutoMirrored.Outlined.Undo
+                                            } else {
+                                                Icons.Outlined.AutoAwesome
+                                            },
+                                            contentDescription = stringResource(
+                                                if (state.canUndoInputPolish) {
+                                                    R.string.input_polish_undo
+                                                } else {
+                                                    R.string.input_polish
+                                                },
+                                            ),
+                                        )
+                                    }
+                                }
                             }
                         },
                         modifier = Modifier.weight(1f).testTag(UiTags.ComposerInput),
                     )
                     Spacer(Modifier.width(8.dp))
                     FilledIconButton(
-                        onClick = if (state.run.active) onStop else onSend,
-                        enabled = state.run.active || (
-                            !awaitingHumanInput &&
+                        onClick = if (state.run.active && !stopInFlight) onStop else onSend,
+                        enabled = (state.run.active && !stopInFlight) || (
+                            !composerLocked &&
                                 !state.composer.uploading &&
                                 (state.composer.text.isNotBlank() || state.composer.attachments.isNotEmpty())
                             ),
                         modifier = Modifier
                             .size(52.dp)
                             .testTag(UiTags.SendStopButton),
-                    ) {
+                        ) {
                         when {
+                            stopInFlight -> LoadingIndicator(
+                                Modifier
+                                    .size(24.dp)
+                                    .testTag(UiTags.StopRunProgress)
+                                    .semantics { contentDescription = stoppingDescription },
+                            )
                             state.composer.uploading -> LoadingIndicator(Modifier.size(24.dp))
                             state.run.active -> Icon(Icons.Filled.Stop, contentDescription = stringResource(R.string.stop_run))
                             else -> Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.send_message))

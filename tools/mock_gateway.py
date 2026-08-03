@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -53,6 +54,12 @@ THREADS: dict[str, dict] = {
 }
 RUNS: dict[str, dict] = {}
 STREAM_DELAY = 1.5
+INPUT_POLISH_DELAY = 3.0
+INPUT_POLISH_CANCEL_PROMPT = "cancel this polish"
+MODEL_UNAVAILABLE_PROMPT = "trigger model unavailable"
+STOP_CONFIRMATION_PROMPT = "wait for stop confirmation"
+STOP_CONFIRMATION_DELAY = 2.0
+STOP_CONFIRMATION_STREAM_DELAY = 30.0
 ARTIFACT_REQUESTS: dict[str, dict[str, int]] = {}
 MEBIBYTE = 1024 * 1024
 ARTIFACT_FIXTURES = {
@@ -530,6 +537,20 @@ class GatewayHandler(BaseHTTPRequestHandler):
             thread_id = str(uuid.uuid4())
             THREADS[thread_id] = {"title": "New conversation", "updated_at": "2026-07-19T10:00:00+08:00", "messages": [], "todos": [], "artifacts": []}
             self.write_json(thread_summary(thread_id, THREADS[thread_id]))
+        elif path == "/api/input-polish":
+            body = self.read_json()
+            text = str(body.get("text", "")).strip()
+            if not text:
+                self.write_json({"detail": "Input text cannot be empty."}, status=400)
+                return
+            delay = 20.0 if text == INPUT_POLISH_CANCEL_PROMPT else INPUT_POLISH_DELAY
+            time.sleep(delay)
+            rewritten = (
+                "Create a clear release plan with milestones, owners, constraints, and acceptance criteria."
+                if text == "make a release plan"
+                else f"Clarify the goal, scope, constraints, and expected output for this request: {text}"
+            )
+            self.write_json({"rewritten_text": rewritten, "changed": rewritten != text})
         elif path == "/api/scheduled-tasks":
             body = self.read_json()
             schedule_type = str(body.get("schedule_type", ""))
@@ -588,6 +609,37 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self.prepare_regenerate(path.split("/")[3], self.read_json())
         elif path.endswith("/branches") and "/api/threads/" in path:
             self.branch_thread(path.split("/")[3], self.read_json())
+        elif path.startswith("/api/threads/") and path.endswith("/uploads"):
+            thread_id = path.split("/")[3]
+            if thread_id not in THREADS:
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                self.write_json({"detail": "Thread not found"}, status=404)
+                return
+            payload = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            filenames = [name.decode("utf-8", errors="replace") for name in re.findall(rb'filename="([^"]+)"', payload)]
+            files = [
+                {
+                    "filename": filename,
+                    "size": 0,
+                    "virtual_path": f"mnt/user-data/uploads/{filename}",
+                }
+                for filename in filenames
+            ]
+            self.write_json({"files": files})
+        elif path.startswith("/api/threads/") and path.endswith("/cancel") and "/runs/" in path:
+            self.read_json()
+            parts = path.split("/")
+            thread_id, run_id = parts[3], parts[5]
+            run = RUNS.get(run_id)
+            if run is None or run.get("thread_id") != thread_id:
+                self.write_json({"detail": "Run not found"}, status=404)
+                return
+            if run.get("status") not in {"pending", "running"}:
+                self.write_json({"detail": "Run is no longer active"}, status=409)
+                return
+            time.sleep(float(run.get("cancel_delay", 0.0)))
+            run.update(status="interrupted", stop_reason="Stopped by user.")
+            self.write_json({})
         elif path.endswith("/runs/stream") and "/api/threads/" in path:
             self.stream_run(path.split("/")[3], self.read_json())
         elif path.endswith("/state") and "/api/threads/" in path:
@@ -745,6 +797,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
         prompt = str(human.get("content", "")).strip()
         title = prompt[:32] or "New conversation"
         answer = "I mapped the request into a concise plan, checked the available workspace skills, and prepared the next concrete action."
+        model_unavailable = prompt.lower() == MODEL_UNAVAILABLE_PROMPT
+        if model_unavailable:
+            answer = "The configured LLM provider is temporarily unavailable after multiple retries."
         assistant = {"type": "ai", "content": answer, "id": str(uuid.uuid4())}
         tool_result = None
         patch_sequence = prompt == "Verify stream patches"
@@ -800,7 +855,12 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 "content": "Fetched the report.",
             }
         run_id = str(uuid.uuid4())
-        RUNS[run_id] = {"thread_id": thread_id, "status": "running"}
+        RUNS[run_id] = {
+            "thread_id": thread_id,
+            "status": "running",
+            "cancel_delay": STOP_CONFIRMATION_DELAY if prompt == STOP_CONFIRMATION_PROMPT else 0.0,
+            "stream_delay": STOP_CONFIRMATION_STREAM_DELAY if prompt == STOP_CONFIRMATION_PROMPT else STREAM_DELAY,
+        }
         thread.update(
             title=title,
             updated_at="2026-07-19T10:05:00+08:00",
@@ -815,11 +875,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
             ],
         )
 
-        answer_chunks = [
-            "I mapped the request into a concise plan, ",
-            "checked the available workspace skills, ",
-            "and prepared the next concrete action.",
-        ]
+        answer_chunks = (
+            [answer]
+            if model_unavailable
+            else [
+                "I mapped the request into a concise plan, ",
+                "checked the available workspace skills, ",
+                "and prepared the next concrete action.",
+            ]
+        )
         events = [("metadata", {"run_id": run_id})]
         if patch_sequence:
             first_tool_call = assistant["tool_calls"][0]
@@ -895,12 +959,20 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Location", f"/api/threads/{thread_id}/runs/{run_id}")
         self.end_headers()
         try:
-            for payload in payloads:
+            for index, payload in enumerate(payloads):
+                if index == len(payloads) - 1 and RUNS[run_id]["status"] == "running":
+                    if model_unavailable:
+                        RUNS[run_id].update(status="error", stop_reason="Connection error.")
+                    else:
+                        RUNS[run_id]["status"] = "success"
                 self.wfile.write(payload)
                 self.wfile.flush()
-                time.sleep(STREAM_DELAY)
+                if index < len(payloads) - 1:
+                    time.sleep(float(RUNS[run_id].get("stream_delay", STREAM_DELAY)))
         finally:
-            RUNS[run_id]["status"] = "success"
+            if RUNS[run_id]["status"] == "running":
+                RUNS[run_id]["status"] = "error"
+                RUNS[run_id]["stop_reason"] = "Stream disconnected."
         self.close_connection = True
 
     def stream_existing_run(self, thread_id: str, run_id: str) -> None:

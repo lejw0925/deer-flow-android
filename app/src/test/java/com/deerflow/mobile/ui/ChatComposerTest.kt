@@ -83,6 +83,84 @@ class ChatComposerTest {
     }
 
     @Test
+    fun `input polish result only applies to the untouched original editor`() {
+        val thread = ThreadSummary("thread-1", "Thread", "idle", "2026-07-25T00:00:00Z")
+        val original = AppUiState(
+            serverUrl = "http://example.test",
+            selectedThread = thread,
+            draftSessionKey = "editor-1",
+            composer = ComposerState(text = "rough draft"),
+        )
+
+        assertTrue(isCurrentInputPolish(original, original.serverUrl, thread.id, "editor-1", "rough draft"))
+        assertFalse(
+            isCurrentInputPolish(
+                original.copy(composer = original.composer.copy(text = "edited draft")),
+                original.serverUrl,
+                thread.id,
+                "editor-1",
+                "rough draft",
+            ),
+        )
+        assertFalse(isCurrentInputPolish(original, original.serverUrl, thread.id, "editor-2", "rough draft"))
+    }
+
+    @Test
+    fun `model availability errors are promoted without catching unrelated failures`() {
+        assertTrue(isModelUnavailableError("The configured LLM provider is temporarily unavailable after multiple retries."))
+        assertTrue(isModelUnavailableError("Model 'research' not found in config"))
+        assertTrue(isModelUnavailableError("模型服务提供商当前不可用"))
+        assertFalse(isModelUnavailableError("The run timed out."))
+        assertFalse(isModelUnavailableError("The model provider stopped this response for safety."))
+        assertFalse(isModelUnavailableError(null))
+    }
+
+    @Test
+    fun `model fallback assistant message promotes an opaque run error`() {
+        val fallback = "The configured LLM provider is temporarily unavailable after multiple retries."
+        val messages = listOf(
+            com.deerflow.mobile.data.ChatMessage("user-1", com.deerflow.mobile.data.MessageRole.User, "Do the work"),
+            com.deerflow.mobile.data.ChatMessage("assistant-1", com.deerflow.mobile.data.MessageRole.Assistant, fallback),
+        )
+
+        assertEquals(fallback, modelUnavailableMessage("Connection error.", messages))
+    }
+
+    @Test
+    fun `historical model fallback does not promote a later unrelated failure`() {
+        val messages = listOf(
+            com.deerflow.mobile.data.ChatMessage("user-1", com.deerflow.mobile.data.MessageRole.User, "First request"),
+            com.deerflow.mobile.data.ChatMessage(
+                "assistant-1",
+                com.deerflow.mobile.data.MessageRole.Assistant,
+                "The configured LLM provider is temporarily unavailable after multiple retries.",
+            ),
+            com.deerflow.mobile.data.ChatMessage("user-2", com.deerflow.mobile.data.MessageRole.User, "Second request"),
+        )
+
+        assertEquals(null, modelUnavailableMessage("The run timed out.", messages))
+    }
+
+    @Test
+    fun `polish undo is only available while the rewritten draft is untouched`() {
+        val undo = InputPolishUndo("rough", "Clear instruction")
+        assertTrue(
+            AppUiState(
+                serverUrl = "http://example.test",
+                composer = ComposerState(text = undo.rewrittenText),
+                inputPolishUndo = undo,
+            ).canUndoInputPolish,
+        )
+        assertFalse(
+            AppUiState(
+                serverUrl = "http://example.test",
+                composer = ComposerState(text = "Edited instruction"),
+                inputPolishUndo = undo,
+            ).canUndoInputPolish,
+        )
+    }
+
+    @Test
     fun `quick action replaces non-empty draft and adds matching enabled skill`() {
         val updated = applyQuickActionToComposer(
             composer = ComposerState(

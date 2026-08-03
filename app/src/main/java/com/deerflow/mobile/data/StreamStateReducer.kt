@@ -20,7 +20,20 @@ internal fun mergeStreamPatch(messages: List<ChatMessage>, patch: StreamPatch): 
 /** Kept for full thread-state callers; unlike stream patches it never deletes missing messages. */
 internal fun mergeStreamSnapshot(current: List<ChatMessage>, snapshot: ThreadSnapshot): List<ChatMessage> =
     if (snapshot.hasMessages) {
-        snapshot.messages.fold(current) { merged, message -> upsertMessage(merged, message, appendText = false) }
+        val canonical = snapshot.messages.fold(emptyList<ChatMessage>()) { merged, message ->
+            val existing = current.lastOrNull { it.matchesMessage(message) }
+            val enriched = existing?.let {
+                upsertMessage(listOf(it), message, appendText = false).single()
+            } ?: message
+            upsertMessage(merged, enriched, appendText = false)
+        }
+        current.fold(canonical) { merged, message ->
+            if (snapshot.messages.any(message::matchesMessage)) {
+                merged
+            } else {
+                upsertMessage(merged, message, appendText = false)
+            }
+        }
     } else {
         current
     }
@@ -63,9 +76,7 @@ internal fun confirmsPendingUserMessage(pending: ChatMessage, server: ChatMessag
         )
 
 private fun upsertMessage(messages: List<ChatMessage>, incoming: ChatMessage, appendText: Boolean): List<ChatMessage> {
-    val index = messages.indexOfLast { it.id == incoming.id }
-        .takeIf { it >= 0 }
-        ?: messages.indexOfLast { existing -> existing.isGatewayUserEchoOf(incoming) }
+    val index = messages.indexOfLast { it.matchesMessage(incoming) }
     if (index < 0) return messages + incoming
     return messages.toMutableList().also { existing ->
         val previous = existing[index]
@@ -78,6 +89,9 @@ private fun upsertMessage(messages: List<ChatMessage>, incoming: ChatMessage, ap
         existing[index] = mergeMessage(other, canonical, appendText)
     }
 }
+
+private fun ChatMessage.matchesMessage(incoming: ChatMessage): Boolean =
+    id == incoming.id || isGatewayUserEchoOf(incoming)
 
 private fun ChatMessage.isGatewayUserEchoOf(incoming: ChatMessage): Boolean {
     if (

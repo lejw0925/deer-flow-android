@@ -194,8 +194,19 @@
     <string name="message_deerflow">给 DeerFlow 发消息</string>
     <string name="add_attachment">添加附件</string>
     <string name="remove_attachment">移除附件</string>
+    <string name="input_polish">优化输入</string>
+    <string name="input_polishing">正在优化输入…</string>
+    <string name="input_polish_no_changes">当前输入已经足够清晰。</string>
+    <string name="input_polish_failed">优化输入失败。</string>
+    <string name="input_polish_undo">撤销优化</string>
+    <string name="input_polish_cancel">取消优化</string>
     <string name="stop_run">停止运行</string>
+    <string name="stop_not_confirmed">无法确认会话已停止，请重试。</string>
     <string name="send_message">发送消息</string>
+    <string name="model_unavailable_title">模型不可用</string>
+    <string name="model_unavailable_body">当前选择的模型或其服务提供商暂时无法处理请求。你可以切换模型，或检查服务器端的模型配置。</string>
+    <string name="model_unavailable_details">详细信息：%1$s</string>
+    <string name="choose_another_model">选择其他模型</string>
     <plurals name="skills_count">
         <item quantity="other">%1$d 个技能</item>
     </plurals>

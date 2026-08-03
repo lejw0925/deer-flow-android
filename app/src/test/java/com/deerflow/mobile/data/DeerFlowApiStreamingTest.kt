@@ -723,6 +723,50 @@ data: null""",
     }
 
     @Test
+    fun polishesInputWithLocaleAndOptionalThreadContext() = runBlocking {
+        val server = ScriptedSseServer(
+            listOf(
+                ScriptedResponse(
+                    contentType = "application/json",
+                    body = """{"rewritten_text":"Please produce a concise release plan.","changed":true}""",
+                ),
+                ScriptedResponse(
+                    contentType = "application/json",
+                    body = """{"rewritten_text":"Already clear","changed":false}""",
+                ),
+            ),
+        )
+        try {
+            val result = DeerFlowApi(server.url, NoopSessionCookieStore).polishInput(
+                text = "make release plan",
+                locale = "en-US",
+                threadId = "thread-1",
+            )
+
+            assertEquals("Please produce a concise release plan.", result.rewrittenText)
+            assertTrue(result.changed)
+            val request = server.requests.first()
+            assertEquals("POST", request.method)
+            assertEquals("/api/input-polish", request.path)
+            val body = JSONObject(request.body)
+            assertEquals("make release plan", body.getString("text"))
+            assertEquals("en-US", body.getString("locale"))
+            assertEquals("thread-1", body.getString("thread_id"))
+
+            DeerFlowApi(server.url, NoopSessionCookieStore).polishInput(
+                text = "Already clear",
+                locale = null,
+                threadId = null,
+            )
+            val contextFreeBody = JSONObject(server.requests.last().body)
+            assertFalse(contextFreeBody.has("locale"))
+            assertFalse(contextFreeBody.has("thread_id"))
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test
     fun unexpectedEofRecoversAtMostOnce() = runBlocking {
         val server = ScriptedSseServer(
             listOf(

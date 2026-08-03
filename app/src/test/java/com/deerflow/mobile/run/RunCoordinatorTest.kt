@@ -41,6 +41,35 @@ class RunCoordinatorTest {
     }
 
     @Test
+    fun `stream updates keep a requested stop visible until the Gateway confirms it`() {
+        val stopping = initial.copy(
+            run = RunState(RunStatus.Stopping, runId = "run-1", lastEventId = "event-3"),
+        )
+
+        val started = reduceRunState(stopping, StreamUpdate.Started("run-1"))
+        val chunked = reduceRunState(
+            started,
+            StreamUpdate.MessageChunk(ChatMessage("ai-1", MessageRole.Assistant, "Still finishing")),
+        )
+        val reconnecting = reduceRunState(chunked, StreamUpdate.Reconnecting(attempt = 1))
+        val failed = reduceRunState(reconnecting, StreamUpdate.Failure("Transient transport error"))
+
+        assertEquals(RunStatus.Stopping, started.run.status)
+        assertEquals(RunStatus.Stopping, chunked.run.status)
+        assertEquals(RunStatus.Stopping, reconnecting.run.status)
+        assertEquals(RunStatus.Stopping, failed.run.status)
+        assertEquals("run-1", failed.run.runId)
+    }
+
+    @Test
+    fun `stream terminal outcomes defer while cancellation confirmation is in flight`() {
+        assertTrue(shouldDeferStreamOutcome(true, RunState(RunStatus.Stopping)))
+        assertTrue(shouldDeferStreamOutcome(true, RunState(RunStatus.Streaming)))
+        assertFalse(shouldDeferStreamOutcome(false, RunState(RunStatus.Stopping)))
+        assertFalse(shouldDeferStreamOutcome(true, RunState(RunStatus.Idle)))
+    }
+
+    @Test
     fun `persisted active run remains resumable while the active runs list catches up`() {
         val saved = RunState(RunStatus.Reconnecting, runId = "run-1", lastEventId = "event-7")
 
@@ -632,7 +661,7 @@ class RunCoordinatorTest {
     @Test
     fun `terminal gateway outcomes clear persistence state but retain the outcome for the ui`() {
         val current = initial.copy(
-            run = RunState(RunStatus.Reconnecting, runId = "run-1"),
+            run = RunState(RunStatus.Reconnecting, runId = "run-1", startedAtEpochMs = 123L),
             serverMessages = listOf(ChatMessage("ai-1", MessageRole.Assistant, "Partial", isStreaming = true)),
         )
         val snapshot = ThreadSnapshot("Research", listOf(ChatMessage("ai-1", MessageRole.Assistant, "Final")))
@@ -645,6 +674,7 @@ class RunCoordinatorTest {
         assertFalse(success.run.active)
         assertEquals(RunStatus.Idle, success.run.status)
         assertEquals(GatewayRunStatus.Success, success.run.gatewayStatus)
+        assertEquals(123L, success.run.startedAtEpochMs)
         assertEquals(GatewayRunStatus.Error, error.run.gatewayStatus)
         assertEquals("Provider unavailable", error.error)
         assertEquals(GatewayRunStatus.Timeout, timeout.run.gatewayStatus)

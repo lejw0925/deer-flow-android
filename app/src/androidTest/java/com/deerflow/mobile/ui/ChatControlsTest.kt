@@ -391,7 +391,7 @@ class ChatControlsTest {
     }
 
     @Test
-    fun composerCollapsesQuickCapabilitiesInsideConversation() {
+    fun composerUsesExplicitQuickCapabilitiesVisibility() {
         var state by mutableStateOf(AppUiState(serverUrl = "http://10.0.2.2:2027"))
         compose.setContent {
             MaterialTheme {
@@ -401,11 +401,49 @@ class ChatControlsTest {
 
         compose.onNodeWithTag(UiTags.QuickCapabilities).assertIsDisplayed()
 
-        compose.runOnIdle { state = state.copy(route = AppRoute.Conversation) }
+        compose.runOnIdle {
+            state = state.copy(route = AppRoute.Conversation, showQuickCapabilities = false)
+        }
         compose.waitForIdle()
         compose.onNodeWithTag(UiTags.QuickCapabilities).assertDoesNotExist()
 
-        compose.runOnIdle { state = state.copy(route = AppRoute.Workspace) }
+        compose.runOnIdle {
+            state = state.copy(route = AppRoute.Workspace, showQuickCapabilities = true)
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag(UiTags.QuickCapabilities).assertIsDisplayed()
+    }
+
+    @Test
+    fun inputPolishKeepsQuickCapabilitiesVisibleAcrossRouteUpdates() {
+        val rewritten = "Clarify the Android QA scope."
+        var state by mutableStateOf(
+            AppUiState(
+                serverUrl = "http://10.0.2.2:2027",
+                composer = ComposerState(text = "clarify Android QA"),
+            ),
+        )
+        compose.setContent {
+            MaterialTheme {
+                TestComposer(state = state, editorValue = TextFieldValue(state.composer.text))
+            }
+        }
+
+        compose.onNodeWithTag(UiTags.QuickCapabilities).assertIsDisplayed()
+
+        compose.runOnIdle {
+            state = state.copy(route = AppRoute.Conversation, inputPolishing = true)
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag(UiTags.QuickCapabilities).assertIsDisplayed()
+
+        compose.runOnIdle {
+            state = state.copy(
+                composer = state.composer.copy(text = rewritten),
+                inputPolishing = false,
+                inputPolishUndo = InputPolishUndo("clarify Android QA", rewritten),
+            )
+        }
         compose.waitForIdle()
         compose.onNodeWithTag(UiTags.QuickCapabilities).assertIsDisplayed()
     }
@@ -439,6 +477,78 @@ class ChatControlsTest {
     }
 
     @Test
+    fun composerPolishActionIsEnabledOnlyForAnEditableDraft() {
+        var polishRequests = 0
+        setComposer(
+            state = AppUiState(
+                serverUrl = "http://10.0.2.2:2027",
+                composer = ComposerState(text = "make this clearer"),
+            ),
+            onPolishInput = { polishRequests += 1 },
+        )
+
+        compose.onNodeWithTag(UiTags.InputPolishButton).assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(1, polishRequests) }
+    }
+
+    @Test
+    fun polishingLocksTheComposerAndKeepsCancelAvailable() {
+        var cancellations = 0
+        setComposer(
+            state = AppUiState(
+                serverUrl = "http://10.0.2.2:2027",
+                composer = ComposerState(text = "make this clearer"),
+                inputPolishing = true,
+            ),
+            onCancelPolish = { cancellations += 1 },
+        )
+
+        compose.onNodeWithTag(UiTags.InputPolishStatus).assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.input_polishing)).assertIsDisplayed()
+        compose.onNodeWithText("make this clearer").assertDoesNotExist()
+        compose.onNodeWithTag(UiTags.ComposerInput).assertIsNotEnabled()
+        compose.onNodeWithTag(UiTags.SendStopButton).assertIsNotEnabled()
+        compose.onNodeWithContentDescription(context.getString(R.string.input_polish_cancel)).performClick()
+        compose.runOnIdle { assertEquals(1, cancellations) }
+    }
+
+    @Test
+    fun untouchedPolishedDraftOffersUndo() {
+        var undoRequests = 0
+        val rewritten = "Write a concise release plan."
+        setComposer(
+            state = AppUiState(
+                serverUrl = "http://10.0.2.2:2027",
+                composer = ComposerState(text = rewritten),
+                inputPolishUndo = InputPolishUndo("make release plan", rewritten),
+            ),
+            onUndoPolish = { undoRequests += 1 },
+        )
+
+        compose.onNodeWithContentDescription(context.getString(R.string.input_polish_undo)).performClick()
+        compose.runOnIdle { assertEquals(1, undoRequests) }
+    }
+
+    @Test
+    fun modelUnavailableDialogShowsDetailsAndDispatchesModelSelection() {
+        var selectedAnotherModel = false
+        compose.setContent {
+            MaterialTheme {
+                ModelUnavailableDialog(
+                    message = "The configured LLM provider is temporarily unavailable.",
+                    onDismiss = {},
+                    onChooseModel = { selectedAnotherModel = true },
+                )
+            }
+        }
+
+        compose.onNodeWithTag(UiTags.ModelUnavailableDialog).assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.model_unavailable_title)).assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.choose_another_model)).performClick()
+        compose.runOnIdle { assertTrue(selectedAnotherModel) }
+    }
+
+    @Test
     fun composerStopsAnActiveRunEvenWhenDraftIsEmpty() {
         var stops = 0
         setComposer(
@@ -451,6 +561,45 @@ class ChatControlsTest {
 
         compose.onNodeWithTag(UiTags.SendStopButton).assertIsEnabled().performClick()
         compose.runOnIdle { assertEquals(1, stops) }
+    }
+
+    @Test
+    fun composerShowsStoppingProgressUntilTheGatewayConfirmsCancellation() {
+        var stops = 0
+        setComposer(
+            state = AppUiState(
+                serverUrl = "http://10.0.2.2:2027",
+                run = RunState(RunStatus.Stopping, runId = "run-1"),
+            ),
+            onStop = { stops += 1 },
+        )
+
+        compose.onNodeWithTag(UiTags.StopRunProgress).assertIsDisplayed()
+        compose.onNodeWithTag(UiTags.SendStopButton).assertIsNotEnabled()
+        compose.onNodeWithContentDescription(context.getString(R.string.stop_run)).assertDoesNotExist()
+        compose.onNodeWithContentDescription(context.getString(R.string.run_stopping)).assertIsDisplayed()
+        compose.runOnIdle { assertEquals(0, stops) }
+    }
+
+    @Test
+    fun collapsedShortcutsStayHiddenAfterReturningFromANewConversation() {
+        var state by mutableStateOf(
+            AppUiState(
+                serverUrl = "http://10.0.2.2:2027",
+                route = AppRoute.Conversation,
+                showQuickCapabilities = false,
+            ),
+        )
+        compose.setContent {
+            MaterialTheme {
+                TestComposer(state = state, editorValue = TextFieldValue(state.composer.text))
+            }
+        }
+
+        compose.onNodeWithTag(UiTags.QuickCapabilities).assertDoesNotExist()
+        compose.runOnIdle { state = state.copy(route = AppRoute.Workspace) }
+        compose.waitForIdle()
+        compose.onNodeWithTag(UiTags.QuickCapabilities).assertDoesNotExist()
     }
 
     @Test
@@ -530,10 +679,21 @@ class ChatControlsTest {
         editorValue: TextFieldValue = TextFieldValue(state.composer.text),
         onSend: () -> Unit = {},
         onStop: () -> Unit = {},
+        onPolishInput: () -> Unit = {},
+        onCancelPolish: () -> Unit = {},
+        onUndoPolish: () -> Unit = {},
     ) {
         compose.setContent {
             MaterialTheme {
-                TestComposer(state, editorValue, onSend, onStop)
+                TestComposer(
+                    state,
+                    editorValue,
+                    onSend,
+                    onStop,
+                    onPolishInput,
+                    onCancelPolish,
+                    onUndoPolish,
+                )
             }
         }
     }
@@ -544,6 +704,9 @@ class ChatControlsTest {
         editorValue: TextFieldValue,
         onSend: () -> Unit = {},
         onStop: () -> Unit = {},
+        onPolishInput: () -> Unit = {},
+        onCancelPolish: () -> Unit = {},
+        onUndoPolish: () -> Unit = {},
     ) {
         MessageComposer(
             state = state,
@@ -554,6 +717,9 @@ class ChatControlsTest {
             onQuickAction = { _, _ -> },
             onRemoveAttachment = {},
             onRetryAttachment = {},
+            onPolishInput = onPolishInput,
+            onCancelPolish = onCancelPolish,
+            onUndoPolish = onUndoPolish,
             onSend = onSend,
             onStop = onStop,
         )

@@ -35,6 +35,34 @@ class StreamMessageMergeTest {
     }
 
     @Test
+    fun snapshotRestoresCanonicalUserAssistantOrder() {
+        val current = listOf(
+            ChatMessage(
+                "ai-1",
+                MessageRole.Assistant,
+                "The configured LLM provider is temporarily unavailable after multiple retries.",
+                isStreaming = true,
+            ),
+        )
+        val snapshot = ThreadSnapshot(
+            title = "Unavailable model",
+            messages = listOf(
+                ChatMessage("user-1", MessageRole.User, "Run the task"),
+                ChatMessage("ai-1", MessageRole.Assistant, "The configured LLM provider is temporarily unavailable."),
+            ),
+        )
+
+        val merged = mergeStreamSnapshot(current, snapshot)
+
+        assertEquals(listOf("user-1", "ai-1"), merged.map(ChatMessage::id))
+        assertEquals(
+            "The configured LLM provider is temporarily unavailable after multiple retries.",
+            merged.last().text,
+        )
+        assertTrue(merged.last().isStreaming)
+    }
+
+    @Test
     fun valuesWithoutMessagesPreserveCurrentConversation() {
         val current = listOf(ChatMessage("ai-1", MessageRole.Assistant, "Still streaming", isStreaming = true))
 
