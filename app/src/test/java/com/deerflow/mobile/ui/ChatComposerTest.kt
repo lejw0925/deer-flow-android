@@ -36,6 +36,50 @@ class ChatComposerTest {
     }
 
     @Test
+    fun `slash skill query only matches an unfinished leading command`() {
+        assertEquals("", leadingSlashSkillQuery("/"))
+        assertEquals("research", leadingSlashSkillQuery("/research"))
+        assertEquals(null, leadingSlashSkillQuery("research /deep"))
+        assertEquals(null, leadingSlashSkillQuery("/deep research"))
+        assertEquals(null, leadingSlashSkillQuery("/deep/research"))
+    }
+
+    @Test
+    fun `slash skill suggestions keep enabled prefix matches first`() {
+        val suggestions = matchingSlashSkillSuggestions(
+            skills = listOf(
+                SkillInfo("z-research", "Secondary research", "research", enabled = true),
+                SkillInfo("research", "Research reports", "research", enabled = true),
+                SkillInfo("report", "Write reports", "writing", enabled = true),
+                SkillInfo("disabled-research", "Unavailable", "research", enabled = false),
+            ),
+            query = "re",
+        )
+
+        assertEquals(listOf("research", "report", "z-research"), suggestions.map { it.name })
+    }
+
+    @Test
+    fun `slash skill suggestions are capped at six entries`() {
+        val suggestions = matchingSlashSkillSuggestions(
+            skills = (1..7).map { index ->
+                SkillInfo("skill-$index", "Skill $index", "other", enabled = true)
+            },
+            query = "",
+        )
+
+        assertEquals((1..6).map { "skill-$it" }, suggestions.map { it.name })
+    }
+
+    @Test
+    fun `slash skill selection replaces the typed leading command`() {
+        val selected = replaceLeadingSlashSkillCommand(TextFieldValue("/rese"), "deep-research")
+
+        assertEquals("/deep-research ", selected.text)
+        assertEquals(TextRange(selected.text.length), selected.selection)
+    }
+
+    @Test
     fun `thread load result only applies to the still selected conversation`() {
         assertTrue(isCurrentThreadLoad("thread-2", "thread-2"))
         assertFalse(isCurrentThreadLoad("thread-2", "thread-1"))

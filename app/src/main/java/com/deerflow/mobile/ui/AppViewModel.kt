@@ -72,6 +72,7 @@ import com.deerflow.mobile.data.isLatestAssistantTurn
 import com.deerflow.mobile.data.normalizeServerUrl
 import com.deerflow.mobile.data.normalizeArtifactDownloadLimits
 import com.deerflow.mobile.data.resolveAgentSelection
+import com.deerflow.mobile.data.stripUploadedFilesTag
 import com.deerflow.mobile.run.CoordinatedRunRequest
 import com.deerflow.mobile.run.CoordinatedRunState
 import com.deerflow.mobile.run.RunCoordinator
@@ -464,9 +465,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (current.serverUrl != coordinated.serverUrl) {
                 current
             } else {
+                val coordinatedTitle = stripUploadedFilesTag(coordinated.title).takeIf(String::isNotBlank)
                 val updatedThreads = current.threads.map { thread ->
-                    if (thread.id == coordinated.threadId && coordinated.title.isNotBlank()) {
-                        thread.copy(title = coordinated.title)
+                    if (thread.id == coordinated.threadId && coordinatedTitle != null) {
+                        thread.copy(title = coordinatedTitle)
                     } else {
                         thread
                     }
@@ -481,7 +483,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 current.copy(
                     threads = updatedThreads,
-                    selectedThread = selected?.takeIf { it.id == coordinated.threadId }?.copy(title = coordinated.title) ?: selected,
+                    selectedThread = selected?.takeIf { it.id == coordinated.threadId }?.copy(
+                        title = coordinatedTitle ?: selected.title,
+                    ) ?: selected,
                     messages = if (selected?.id == coordinated.threadId) coordinated.messages else current.messages,
                     todos = if (selected?.id == coordinated.threadId) coordinated.todos else current.todos,
                     artifacts = if (selected?.id == coordinated.threadId) coordinated.artifacts else current.artifacts,
@@ -3008,29 +3012,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         artifactDownloadJob = viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val probe = threads.probeArtifact(thread.id, path, limits.manualDownloadBytes)
-                currentCoroutineContext().ensureActive()
-                val session = ArtifactSession(
-                    threadId = thread.id,
-                    path = probe.path,
-                    filename = probe.filename,
-                    mimeType = probe.mimeType,
-                    totalBytes = probe.totalBytes,
-                    maxDownloadBytes = limits.manualDownloadBytes,
-                    phase = ArtifactSessionPhase.AwaitingConfirm,
-                )
-                if (requiresArtifactDownloadConfirmation(probe.totalBytes, limits.autoDownloadBytes)) {
-                    mutableState.update { latest ->
-                        if (!isCurrentArtifactOperation(operationId, latest, thread.id)) latest
-                        else latest.copy(
-                            artifactBusy = false,
-                            artifactSession = session,
-                        )
-                    }
-                } else {
-                    downloadArtifact(session, probe, operationId)
-                }
+            val probe = try {
+                threads.probeArtifact(thread.id, path, limits.manualDownloadBytes)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -3044,6 +3027,34 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     } else {
                         latest
                     }
+                }
+                return@launch
+            }
+            currentCoroutineContext().ensureActive()
+            val session = ArtifactSession(
+                threadId = thread.id,
+                path = probe.path,
+                filename = probe.filename,
+                mimeType = probe.mimeType,
+                totalBytes = probe.totalBytes,
+                maxDownloadBytes = limits.manualDownloadBytes,
+                phase = ArtifactSessionPhase.AwaitingConfirm,
+            )
+            if (requiresArtifactDownloadConfirmation(probe.totalBytes, limits.autoDownloadBytes)) {
+                mutableState.update { latest ->
+                    if (!isCurrentArtifactOperation(operationId, latest, thread.id)) latest
+                    else latest.copy(
+                        artifactBusy = false,
+                        artifactSession = session,
+                    )
+                }
+            } else {
+                try {
+                    downloadArtifact(session, probe, operationId)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    updateArtifactDownloadFailure(session, operationId, error)
                 }
             }
         }
@@ -3066,17 +3077,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                mutableState.update { latest ->
-                    if (isCurrentArtifactOperation(operationId, latest, session.threadId)) {
-                        latest.copy(
-                            artifactBusy = false,
-                            artifactSession = session.copy(phase = ArtifactSessionPhase.AwaitingConfirm, downloadedBytes = 0L),
-                            error = error.userMessage("Could not download this artifact."),
-                        )
-                    } else {
-                        latest
-                    }
-                }
+                updateArtifactDownloadFailure(session, operationId, error)
             }
         }
     }
@@ -3171,6 +3172,30 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         text = text?.text,
                         textTruncated = text?.truncated == true,
                     ),
+                )
+            }
+        }
+    }
+
+    private fun updateArtifactDownloadFailure(
+        session: ArtifactSession,
+        operationId: Long,
+        error: Exception,
+    ) {
+        mutableState.update { latest ->
+            if (!isCurrentArtifactOperation(operationId, latest, session.threadId)) {
+                latest
+            } else {
+                latest.copy(
+                    artifactBusy = false,
+                    artifactSession = session.copy(
+                        phase = ArtifactSessionPhase.AwaitingConfirm,
+                        downloadedBytes = 0L,
+                        localPath = null,
+                        text = null,
+                        textTruncated = false,
+                    ),
+                    error = error.userMessage("Could not download this artifact."),
                 )
             }
         }

@@ -2,6 +2,7 @@ package com.deerflow.mobile.data
 
 import java.io.Closeable
 import java.io.File
+import java.io.IOException
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
@@ -41,6 +42,8 @@ class ArtifactApiTest {
             assertEquals("fixture.txt", probe.filename)
             assertEquals("text/plain", probe.mimeType)
             assertEquals("bytes=0-0", server.requests.single().headers["range"])
+            assertEquals("identity", server.requests.single().headers["accept-encoding"])
+            assertEquals("no-transform", server.requests.single().headers["cache-control"])
             assertTrue(server.requests.single().path.contains("download=true"))
             assertTrue(server.requests.single().path.contains("thread+one"))
         } finally {
@@ -95,6 +98,69 @@ class ArtifactApiTest {
             assertEquals(source.size.toLong(), progress.last())
             assertTrue(directory.listFiles().orEmpty().none { it.name.endsWith(".part") })
             assertEquals(2, server.requests.size)
+        } finally {
+            directory.deleteRecursively()
+            server.close()
+        }
+    }
+
+    @Test
+    fun downloadKnownSizeHtmlRequestsTheCompleteIdentityRange() = runBlocking {
+        val source = "<html><body>download me</body></html>".toByteArray()
+        val server = ArtifactHttpServer(
+            listOf(
+                ArtifactResponse(
+                    status = 206,
+                    body = byteArrayOf(source.first()),
+                    headers = mapOf(
+                        "Content-Range" to "bytes 0-0/${source.size}",
+                        "Content-Type" to "text/html; charset=utf-8",
+                    ),
+                ),
+                ArtifactResponse(
+                    status = 206,
+                    body = source,
+                    headers = mapOf(
+                        "Content-Range" to "bytes 0-${source.lastIndex}/${source.size}",
+                        "Content-Type" to "text/html; charset=utf-8",
+                    ),
+                ),
+            ),
+        )
+        val directory = Files.createTempDirectory("artifact-api-test").toFile()
+        try {
+            val api = DeerFlowApi(server.url, ArtifactNoopSessionCookieStore)
+            val probe = api.probeArtifact("thread", "report.html")
+            val download = api.downloadArtifact("thread", probe, directory)
+
+            assertEquals(source.toList(), download.file.readBytes().toList())
+            assertEquals(source.size.toLong(), download.bytesDownloaded)
+            assertEquals("bytes=0-${source.lastIndex}", server.requests[1].headers["range"])
+            assertEquals("identity", server.requests[1].headers["accept-encoding"])
+            assertEquals("no-transform", server.requests[1].headers["cache-control"])
+        } finally {
+            directory.deleteRecursively()
+            server.close()
+        }
+    }
+
+    @Test
+    fun downloadRejectsPartialResponseThatDoesNotCoverTheWholeArtifact() = runBlocking {
+        val server = ArtifactHttpServer(
+            listOf(
+                ArtifactResponse(status = 206, body = byteArrayOf(1), headers = mapOf("Content-Range" to "bytes 0-0/8")),
+                ArtifactResponse(status = 206, body = byteArrayOf(1, 2, 3), headers = mapOf("Content-Range" to "bytes 0-2/8")),
+            ),
+        )
+        val directory = Files.createTempDirectory("artifact-api-test").toFile()
+        try {
+            val api = DeerFlowApi(server.url, ArtifactNoopSessionCookieStore)
+            val probe = api.probeArtifact("thread", "incomplete.html")
+            val error = runCatching { api.downloadArtifact("thread", probe, directory) }.exceptionOrNull()
+
+            assertTrue(error is IOException)
+            assertEquals("bytes=0-7", server.requests[1].headers["range"])
+            assertTrue(directory.listFiles().orEmpty().isEmpty())
         } finally {
             directory.deleteRecursively()
             server.close()

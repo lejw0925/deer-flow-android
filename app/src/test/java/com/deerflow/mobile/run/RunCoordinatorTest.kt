@@ -165,6 +165,19 @@ class RunCoordinatorTest {
     }
 
     @Test
+    fun `unclosed upload context never replaces an existing conversation title`() {
+        val generatedTitleFailure = "<current_uploads>The following files were uploaded in this message:\n- report.pdf"
+        val patched = reduceRunState(initial, StreamUpdate.Patch(StreamPatch(title = generatedTitleFailure)))
+        val completed = completeWithSnapshot(
+            initial,
+            ThreadSnapshot(title = generatedTitleFailure, messages = emptyList()),
+        )
+
+        assertEquals("Research", patched.title)
+        assertEquals("Research", completed.title)
+    }
+
+    @Test
     fun `only transient stream http failures are retryable`() {
         assertFalse(isRetryableStreamHttpFailure(400))
         assertFalse(isRetryableStreamHttpFailure(401))

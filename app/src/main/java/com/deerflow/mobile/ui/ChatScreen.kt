@@ -10,10 +10,13 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.text.format.Formatter
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.expandVertically
@@ -21,6 +24,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,6 +62,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.CameraAlt
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CollectionsBookmark
 import androidx.compose.material.icons.outlined.Code
@@ -72,12 +78,12 @@ import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.SmartToy
-import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AlertDialog
@@ -112,6 +118,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -136,6 +145,7 @@ import com.deerflow.mobile.data.MessageRole
 import com.deerflow.mobile.data.PendingAttachment
 import com.deerflow.mobile.data.RunMode
 import com.deerflow.mobile.data.RunStatus
+import com.deerflow.mobile.data.SkillInfo
 import com.deerflow.mobile.data.TodoItem
 import com.deerflow.mobile.data.groupChatMessages
 import com.deerflow.mobile.data.conversationExportFileName
@@ -153,7 +163,6 @@ fun ChatScreen(
     var showAttachments by remember { mutableStateOf(false) }
     var expandedTopSelector by remember { mutableStateOf<TopSelectorKind?>(null) }
     var showAgentPicker by remember { mutableStateOf(false) }
-    var showSkills by remember { mutableStateOf(false) }
     var showRunDetails by remember { mutableStateOf(false) }
     var pendingExportFormat by remember { mutableStateOf<ConversationExportFormat?>(null) }
     var editorValue by rememberSaveable(
@@ -223,10 +232,11 @@ fun ChatScreen(
                 Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) { OfflineBanner() }
             }
         }
-        if (state.todos.isNotEmpty()) {
-            TodoSummary(state.todos)
-        }
-        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+        TodoProgressHost(
+            conversationKey = state.selectedThread?.id,
+            todos = state.todos,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+        ) {
             when {
                 state.loadingChat -> LoadingIndicator(Modifier.size(32.dp))
                 state.messages.isEmpty() -> ChatWelcome(onSuggestion = viewModel::updateDraft)
@@ -266,6 +276,7 @@ fun ChatScreen(
                 editorValue = value
                 viewModel.updateDraft(value.text)
             },
+            onSkillSelected = viewModel::enableSkill,
             onAttachment = { showAttachments = true },
             onAgent = { showAgentPicker = true },
             onQuickAction = viewModel::applyQuickAction,
@@ -296,28 +307,10 @@ fun ChatScreen(
                 fileLauncher.launch(arrayOf("*/*"))
                 showAttachments = false
             },
-            onSkills = {
-                showAttachments = false
-                showSkills = true
-            },
         )
     }
     if (showAgentPicker) {
         AgentPickerSheet(state, viewModel, onDismiss = { showAgentPicker = false })
-    }
-    if (showSkills) {
-        SkillsSheet(
-            state = state,
-            viewModel = viewModel,
-            onDismiss = { showSkills = false },
-            onSkillSelected = { skillName ->
-                val updated = insertSkillCommand(editorValue, skillName)
-                editorValue = updated
-                viewModel.enableSkill(skillName)
-                viewModel.updateDraft(updated.text)
-                showSkills = false
-            },
-        )
     }
     if (showRunDetails) {
         RunDetailsSheet(
@@ -903,52 +896,270 @@ private fun ChatWelcome(onSuggestion: (String) -> Unit) {
     }
 }
 
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-internal fun TodoSummary(todos: List<TodoItem>) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
-    val completed = todos.count { it.status == "completed" }
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).widthIn(max = 900.dp),
-        shape = RoundedCornerShape(8.dp),
-    ) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-            TextButton(onClick = { expanded = !expanded }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Outlined.EditNote, contentDescription = null, modifier = Modifier.size(18.dp))
-                Text(
-                    stringResource(R.string.todo_progress, completed, todos.size),
-                    modifier = Modifier.weight(1f).padding(start = 8.dp),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Start,
-                )
-                Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null, modifier = Modifier.rotate(if (expanded) 180f else 0f))
-            }
-            if (expanded) {
-                todos.forEach { todo ->
-                    val status = todo.status.lowercase()
-                    val completed = status == "completed"
-                    val inProgress = status == "in_progress"
-                    Text(
-                        todo.content,
+internal fun TodoProgressHost(
+    conversationKey: String?,
+    todos: List<TodoItem>,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    var expanded by rememberSaveable(conversationKey) { mutableStateOf(false) }
+    LaunchedEffect(todos.isEmpty()) {
+        if (todos.isEmpty()) expanded = false
+    }
+    BackHandler(enabled = expanded) { expanded = false }
+
+    SharedTransitionLayout(modifier = modifier.testTag(UiTags.TodoProgressHost)) {
+        val progressBounds = rememberSharedContentState(key = "todo-progress-${conversationKey.orEmpty()}")
+        Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize()) {
+                if (todos.isNotEmpty()) {
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontWeight = if (inProgress) FontWeight.Bold else FontWeight.Normal,
-                            textDecoration = if (completed) TextDecoration.LineThrough else TextDecoration.None,
-                        ),
-                        color = when {
-                            inProgress -> MaterialTheme.colorScheme.primary
-                            completed -> MaterialTheme.colorScheme.onSurfaceVariant
-                            else -> MaterialTheme.colorScheme.onSurface
-                        },
+                            .height(TODO_SUMMARY_SLOT_HEIGHT),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = !expanded,
+                            enter = fadeIn(ExpressiveMotion.fastSpatial()),
+                            exit = fadeOut(ExpressiveMotion.fastSpatial()),
+                        ) {
+                            TodoSummary(
+                                todos = todos,
+                                onClick = { expanded = true },
+                                modifier = Modifier.sharedBounds(
+                                    sharedContentState = progressBounds,
+                                    animatedVisibilityScope = this@AnimatedVisibility,
+                                    enter = fadeIn(ExpressiveMotion.fastSpatial()),
+                                    exit = fadeOut(ExpressiveMotion.fastSpatial()),
+                                ),
+                            )
+                        }
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .testTag(UiTags.TodoConversationArea),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    content()
+                }
+            }
+            androidx.compose.animation.AnimatedVisibility(
+                visible = expanded && todos.isNotEmpty(),
+                enter = fadeIn(ExpressiveMotion.fastSpatial()),
+                exit = fadeOut(ExpressiveMotion.fastSpatial()),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                Box(Modifier.fillMaxSize()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.scrim.copy(alpha = TODO_PROGRESS_SCRIM_ALPHA))
+                            .clickable { expanded = false },
+                    )
+                    TodoProgressDetails(
+                        todos = todos,
+                        onDismiss = { expanded = false },
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                            .sharedBounds(
+                                sharedContentState = progressBounds,
+                                animatedVisibilityScope = this@AnimatedVisibility,
+                                enter = fadeIn(ExpressiveMotion.fastSpatial()),
+                                exit = fadeOut(ExpressiveMotion.fastSpatial()),
+                            ),
                     )
                 }
             }
         }
     }
 }
+
+@Composable
+internal fun TodoSummary(
+    todos: List<TodoItem>,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit = {},
+) {
+    val completed = todos.count { it.status == "completed" }
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            onClick = onClick,
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            shape = shape,
+            tonalElevation = 1.dp,
+            modifier = Modifier
+                .fillMaxSize()
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+                .clip(shape)
+                .testTag(UiTags.TodoProgressSummary),
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.EditNote, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Text(
+                        stringResource(R.string.todo_progress, completed, todos.size),
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 8.dp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(20.dp))
+                }
+                androidx.compose.material3.LinearProgressIndicator(
+                    progress = { todoProgress(completed, todos.size) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp)),
+                    color = MaterialTheme.colorScheme.secondary,
+                    trackColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.18f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodoProgressDetails(
+    todos: List<TodoItem>,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val completed = todos.count { it.status == "completed" }
+    val shape = RoundedCornerShape(8.dp)
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = shape,
+        tonalElevation = 4.dp,
+        shadowElevation = 10.dp,
+        modifier = modifier
+            .widthIn(max = 900.dp)
+            .heightIn(max = TODO_PROGRESS_DETAILS_MAX_HEIGHT)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+            .clip(shape)
+            .testTag(UiTags.TodoProgressDetails),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Outlined.EditNote,
+                    contentDescription = null,
+                    modifier = Modifier.size(22.dp),
+                    tint = MaterialTheme.colorScheme.secondary,
+                )
+                Text(
+                    stringResource(R.string.todo_progress, completed, todos.size),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 10.dp),
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                IconButton(onClick = onDismiss, modifier = Modifier.size(40.dp)) {
+                    Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.close))
+                }
+            }
+            androidx.compose.material3.LinearProgressIndicator(
+                progress = { todoProgress(completed, todos.size) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp)),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = TODO_PROGRESS_LIST_MAX_HEIGHT)
+                    .testTag(UiTags.TodoProgressList),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                itemsIndexed(todos, key = { index, todo -> "$index:${todo.content}" }) { _, todo ->
+                    TodoProgressRow(todo)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodoProgressRow(todo: TodoItem) {
+    val status = todo.status.lowercase()
+    val completed = status == "completed"
+    val inProgress = status == "in_progress"
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 2.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        when {
+            completed -> Icon(
+                Icons.Outlined.CheckCircle,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            inProgress -> LoadingIndicator(Modifier.size(20.dp))
+            else -> Icon(
+                Icons.Outlined.RadioButtonUnchecked,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Text(
+            todo.content,
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 12.dp),
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontWeight = if (inProgress) FontWeight.SemiBold else FontWeight.Normal,
+                textDecoration = if (completed) TextDecoration.LineThrough else TextDecoration.None,
+            ),
+            color = when {
+                inProgress -> MaterialTheme.colorScheme.primary
+                completed -> MaterialTheme.colorScheme.onSurfaceVariant
+                else -> MaterialTheme.colorScheme.onSurface
+            },
+        )
+    }
+}
+
+private fun todoProgress(completed: Int, total: Int): Float =
+    if (total <= 0) 0f else completed.toFloat() / total.toFloat()
+
+private val TODO_SUMMARY_SLOT_HEIGHT = 68.dp
+private val TODO_PROGRESS_DETAILS_MAX_HEIGHT = 480.dp
+private val TODO_PROGRESS_LIST_MAX_HEIGHT = 320.dp
+private const val TODO_PROGRESS_SCRIM_ALPHA = 0.32f
 
 @Composable
 internal fun ArtifactPreviewDialog(
@@ -1148,6 +1359,7 @@ internal fun MessageComposer(
     state: AppUiState,
     editorValue: TextFieldValue,
     onDraftChange: (TextFieldValue) -> Unit,
+    onSkillSelected: (String) -> Unit = {},
     onAttachment: () -> Unit,
     onAgent: () -> Unit,
     onQuickAction: (String, List<String>) -> Unit,
@@ -1170,6 +1382,18 @@ internal fun MessageComposer(
         !state.composer.uploading &&
         state.composer.text.isNotBlank()
     val composerDisplayValue = if (state.inputPolishing) TextFieldValue("") else editorValue
+    var composerFocused by remember { mutableStateOf(false) }
+    var dismissedSkillSuggestionValue by rememberSaveable { mutableStateOf<String?>(null) }
+    val inputFocusRequester = remember { FocusRequester() }
+    val slashSkillQuery = leadingSlashSkillQuery(composerDisplayValue.text)
+    val slashSkillSuggestions = remember(state.capabilities.skills, slashSkillQuery) {
+        slashSkillQuery?.let { matchingSlashSkillSuggestions(state.capabilities.skills, it) }.orEmpty()
+    }
+    val showSlashSkillSuggestions = !composerLocked &&
+        composerFocused &&
+        slashSkillQuery != null &&
+        slashSkillSuggestions.isNotEmpty() &&
+        dismissedSkillSuggestionValue != composerDisplayValue.text
     val composerTopPadding by animateDpAsState(
         targetValue = if (quickCapabilitiesVisible) 4.dp else 14.dp,
         animationSpec = ExpressiveMotion.fastSpatial(),
@@ -1212,74 +1436,124 @@ internal fun MessageComposer(
                     }
                 }
                 Row(verticalAlignment = Alignment.Bottom) {
-                    OutlinedTextField(
-                        value = composerDisplayValue,
-                        onValueChange = onDraftChange,
-                        enabled = !composerLocked,
-                        placeholder = {
-                            if (state.inputPolishing) {
-                                Row(
-                                    modifier = Modifier.testTag(UiTags.InputPolishStatus),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    LoadingIndicator(Modifier.size(18.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        stringResource(R.string.input_polishing),
-                                        color = MaterialTheme.colorScheme.primary,
-                                        style = MaterialTheme.typography.labelMedium,
-                                    )
-                                }
-                            } else {
-                                Text(stringResource(R.string.message_deerflow))
-                            }
-                        },
-                        minLines = 1,
-                        maxLines = 6,
-                        leadingIcon = {
-                            IconButton(
-                                onClick = onAttachment,
-                                enabled = !state.composer.uploading && !composerLocked,
-                                modifier = Modifier.size(48.dp).testTag(UiTags.ComposerAttachmentButton),
-                            ) {
-                                Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.add_attachment))
-                            }
-                        },
-                        trailingIcon = {
-                            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.weight(1f)) {
+                        OutlinedTextField(
+                            value = composerDisplayValue,
+                            onValueChange = { value ->
+                                dismissedSkillSuggestionValue = null
+                                onDraftChange(value)
+                            },
+                            enabled = !composerLocked,
+                            placeholder = {
                                 if (state.inputPolishing) {
-                                    IconButton(onClick = onCancelPolish) {
-                                        Icon(
-                                            Icons.Outlined.Close,
-                                            contentDescription = stringResource(R.string.input_polish_cancel),
+                                    Row(
+                                        modifier = Modifier.testTag(UiTags.InputPolishStatus),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        LoadingIndicator(Modifier.size(18.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            stringResource(R.string.input_polishing),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            style = MaterialTheme.typography.labelMedium,
                                         )
                                     }
                                 } else {
-                                    IconButton(
-                                        onClick = if (state.canUndoInputPolish) onUndoPolish else onPolishInput,
-                                        enabled = state.canUndoInputPolish || polishEnabled,
-                                        modifier = Modifier.testTag(UiTags.InputPolishButton),
-                                    ) {
-                                        Icon(
-                                            imageVector = if (state.canUndoInputPolish) {
-                                                Icons.AutoMirrored.Outlined.Undo
-                                            } else {
-                                                Icons.Outlined.AutoAwesome
-                                            },
-                                            contentDescription = stringResource(
-                                                if (state.canUndoInputPolish) {
-                                                    R.string.input_polish_undo
+                                    Text(stringResource(R.string.message_deerflow))
+                                }
+                            },
+                            minLines = 1,
+                            maxLines = 6,
+                            leadingIcon = {
+                                IconButton(
+                                    onClick = onAttachment,
+                                    enabled = !state.composer.uploading && !composerLocked,
+                                    modifier = Modifier.size(48.dp).testTag(UiTags.ComposerAttachmentButton),
+                                ) {
+                                    Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.add_attachment))
+                                }
+                            },
+                            trailingIcon = {
+                                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                                    if (state.inputPolishing) {
+                                        IconButton(onClick = onCancelPolish) {
+                                            Icon(
+                                                Icons.Outlined.Close,
+                                                contentDescription = stringResource(R.string.input_polish_cancel),
+                                            )
+                                        }
+                                    } else {
+                                        IconButton(
+                                            onClick = if (state.canUndoInputPolish) onUndoPolish else onPolishInput,
+                                            enabled = state.canUndoInputPolish || polishEnabled,
+                                            modifier = Modifier.testTag(UiTags.InputPolishButton),
+                                        ) {
+                                            Icon(
+                                                imageVector = if (state.canUndoInputPolish) {
+                                                    Icons.AutoMirrored.Outlined.Undo
                                                 } else {
-                                                    R.string.input_polish
+                                                    Icons.Outlined.AutoAwesome
                                                 },
-                                            ),
-                                        )
+                                                contentDescription = stringResource(
+                                                    if (state.canUndoInputPolish) {
+                                                        R.string.input_polish_undo
+                                                    } else {
+                                                        R.string.input_polish
+                                                    },
+                                                ),
+                                            )
+                                        }
                                     }
                                 }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(inputFocusRequester)
+                                .onFocusChanged { composerFocused = it.isFocused }
+                                .testTag(UiTags.ComposerInput),
+                        )
+                        DropdownMenu(
+                            expanded = showSlashSkillSuggestions,
+                            onDismissRequest = { dismissedSkillSuggestionValue = composerDisplayValue.text },
+                            modifier = Modifier
+                                .heightIn(max = 320.dp)
+                                .testTag(UiTags.SlashSkillSuggestions),
+                        ) {
+                            slashSkillSuggestions.forEach { skill ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column(Modifier.fillMaxWidth()) {
+                                            Text(
+                                                "/${skill.name}",
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                style = MaterialTheme.typography.labelLarge,
+                                            )
+                                            if (skill.description.isNotBlank()) {
+                                                Text(
+                                                    skill.description,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                )
+                                            }
+                                        }
+                                    },
+                                    leadingIcon = {
+                                        Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
+                                    },
+                                    onClick = {
+                                        val updated = replaceLeadingSlashSkillCommand(composerDisplayValue, skill.name)
+                                        onDraftChange(updated)
+                                        onSkillSelected(skill.name)
+                                        inputFocusRequester.requestFocus()
+                                    },
+                                    modifier = Modifier.testTag(UiTags.SlashSkillSuggestionPrefix + skill.name),
+                                )
                             }
-                        },
-                        modifier = Modifier.weight(1f).testTag(UiTags.ComposerInput),
-                    )
+                        }
+                    }
                     Spacer(Modifier.width(8.dp))
                     FilledIconButton(
                         onClick = if (state.run.active && !stopInFlight) onStop else onSend,
@@ -1440,7 +1714,6 @@ internal fun AttachmentSheet(
     onCamera: () -> Unit,
     onPhotos: () -> Unit,
     onFiles: () -> Unit,
-    onSkills: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, modifier = Modifier.testTag(UiTags.AttachmentSheet)) {
         Text(stringResource(R.string.add_to_conversation), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
@@ -1448,29 +1721,6 @@ internal fun AttachmentSheet(
             AttachmentAction(Icons.Outlined.CameraAlt, stringResource(R.string.camera), Modifier.weight(1f), onCamera)
             AttachmentAction(Icons.Outlined.PhotoLibrary, stringResource(R.string.photos), Modifier.weight(1f), onPhotos)
             AttachmentAction(Icons.Outlined.FolderOpen, stringResource(R.string.files), Modifier.weight(1f), onFiles)
-        }
-        HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        Surface(
-            onClick = onSkills,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            shape = MaterialTheme.shapes.large,
-            color = MaterialTheme.colorScheme.secondaryContainer,
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Outlined.Tune, contentDescription = null)
-                Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
-                    Text(stringResource(R.string.skills), style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        stringResource(R.string.skills_sheet_subtitle),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                    )
-                }
-                Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
-            }
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -1558,6 +1808,41 @@ private fun RunMode.reasoningDescription(): String = when (this) {
     RunMode.Thinking -> stringResource(R.string.reasoning_effort_low_description)
     RunMode.Pro -> stringResource(R.string.reasoning_effort_medium_description)
     RunMode.Ultra -> stringResource(R.string.reasoning_effort_high_description)
+}
+
+private const val MAX_SLASH_SKILL_SUGGESTIONS = 6
+
+internal fun leadingSlashSkillQuery(value: String): String? {
+    if (!value.startsWith("/")) return null
+    val query = value.drop(1)
+    if (query.contains("/") || query.any(Char::isWhitespace)) return null
+    return query
+}
+
+internal fun matchingSlashSkillSuggestions(skills: List<SkillInfo>, query: String): List<SkillInfo> {
+    val normalizedQuery = query.lowercase()
+    return skills
+        .withIndex()
+        .filter { (_, skill) ->
+            skill.enabled && (normalizedQuery.isBlank() || skill.name.lowercase().contains(normalizedQuery))
+        }
+        .sortedWith(
+            compareByDescending<IndexedValue<SkillInfo>> {
+                it.value.name.lowercase().startsWith(normalizedQuery)
+            }.thenBy { it.index },
+        )
+        .take(MAX_SLASH_SKILL_SUGGESTIONS)
+        .map { it.value }
+}
+
+internal fun replaceLeadingSlashSkillCommand(value: TextFieldValue, skillName: String): TextFieldValue {
+    val normalizedName = skillName.trim().removePrefix("/")
+    if (normalizedName.isBlank() || leadingSlashSkillQuery(value.text) == null) return value
+    val command = "/$normalizedName "
+    return TextFieldValue(
+        text = command,
+        selection = TextRange(command.length),
+    )
 }
 
 internal fun insertSkillCommand(value: TextFieldValue, skillName: String): TextFieldValue {

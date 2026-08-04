@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -25,6 +26,7 @@ import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.items as staggeredItems
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -93,6 +95,10 @@ private enum class SkillCatalogTab(val labelRes: Int) {
     Tools(R.string.tools),
 }
 
+private val DRAWER_ACTION_SHAPE = RoundedCornerShape(16.dp)
+private val DRAWER_BOTTOM_BAR_SHAPE = RoundedCornerShape(20.dp)
+private val DRAWER_BOTTOM_CONTENT_PADDING = 104.dp
+
 private val SkillInfo.isCustom: Boolean
     get() = category.contains("custom", ignoreCase = true) || category.contains("user", ignoreCase = true)
 
@@ -124,8 +130,9 @@ fun WorkspaceDrawer(
         }
     }
 
-    Box(Modifier.fillMaxHeight().fillMaxWidth().testTag(UiTags.WorkspaceDrawer)) {
-        Column(Modifier.fillMaxHeight().fillMaxWidth()) {
+    Box(Modifier.fillMaxSize().testTag(UiTags.WorkspaceDrawer)) {
+        Column(Modifier.fillMaxSize()) {
+            // Keep only the profile affordance anchored; the rest of the drawer shares one scroll surface.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -145,28 +152,49 @@ fun WorkspaceDrawer(
                         Icon(Icons.Outlined.PersonOutline, contentDescription = stringResource(R.string.tab_profile))
                     }
                 }
-                Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                    Text("DeerFlow", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        state.user?.email.orEmpty(),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
             }
-            DrawerDestinationRow(Icons.Outlined.SmartToy, stringResource(R.string.tab_agents)) { onDestination(DrawerDestination.Agents) }
-            DrawerDestinationRow(Icons.Outlined.Schedule, stringResource(R.string.tab_tasks)) { onDestination(DrawerDestination.Tasks) }
-            if (state.capabilities.skills.isNotEmpty()) {
-                DrawerDestinationRow(Icons.Outlined.Tune, stringResource(R.string.skills)) { onDestination(DrawerDestination.Skills) }
-            }
-            DrawerDestinationRow(Icons.Outlined.Psychology, stringResource(R.string.tab_memory)) { onDestination(DrawerDestination.Memory) }
-            HorizontalDivider(Modifier.padding(vertical = 10.dp))
             LazyColumn(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(bottom = 88.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .testTag(UiTags.RecentConversationScroll),
+                contentPadding = PaddingValues(bottom = DRAWER_BOTTOM_CONTENT_PADDING),
             ) {
+                item {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+                        Text("DeerFlow", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            state.user?.email.orEmpty(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                item {
+                    DrawerDestinationRow(Icons.Outlined.SmartToy, stringResource(R.string.tab_agents)) {
+                        onDestination(DrawerDestination.Agents)
+                    }
+                }
+                item {
+                    DrawerDestinationRow(Icons.Outlined.Schedule, stringResource(R.string.tab_tasks)) {
+                        onDestination(DrawerDestination.Tasks)
+                    }
+                }
+                if (state.capabilities.skills.isNotEmpty()) {
+                    item {
+                        DrawerDestinationRow(Icons.Outlined.Tune, stringResource(R.string.skills)) {
+                            onDestination(DrawerDestination.Skills)
+                        }
+                    }
+                }
+                item {
+                    DrawerDestinationRow(Icons.Outlined.Psychology, stringResource(R.string.tab_memory)) {
+                        onDestination(DrawerDestination.Memory)
+                    }
+                }
+                item { HorizontalDivider(Modifier.padding(vertical = 10.dp)) }
                 item {
                     Text(
                         stringResource(R.string.recent_conversations),
@@ -174,15 +202,9 @@ fun WorkspaceDrawer(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                     )
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                        placeholder = { Text(stringResource(R.string.search_conversations)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag(UiTags.ConversationSearch),
-                    )
-                    if (state.offline) {
+                }
+                if (state.offline) {
+                    item {
                         Box(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { OfflineBanner() }
                     }
                 }
@@ -208,12 +230,48 @@ fun WorkspaceDrawer(
                 }
             }
         }
-        FloatingActionButton(
-            onClick = onNewChat,
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).testTag(UiTags.NewChatButton),
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .testTag(UiTags.ConversationActionsBar),
+            shape = DRAWER_BOTTOM_BAR_SHAPE,
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 4.dp,
+            shadowElevation = 8.dp,
         ) {
-            Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.new_chat))
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                    placeholder = {
+                        Text(
+                            stringResource(R.string.search_conversations),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    singleLine = true,
+                    shape = DRAWER_ACTION_SHAPE,
+                    modifier = Modifier.weight(1f).testTag(UiTags.ConversationSearch),
+                )
+                FloatingActionButton(
+                    onClick = onNewChat,
+                    shape = DRAWER_ACTION_SHAPE,
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.size(56.dp).testTag(UiTags.NewChatButton),
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.new_chat))
+                }
+            }
         }
     }
 

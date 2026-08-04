@@ -124,6 +124,12 @@ private fun contentRange(value: String?): ContentRange? {
 
 private fun contentRangeTotal(value: String?): Long? = contentRange(value)?.totalBytes
 
+private fun ContentRange.coversWholeArtifact(expectedTotal: Long): Boolean =
+    start == 0L && end == expectedTotal - 1L && totalBytes == expectedTotal
+
+private fun completeArtifactRange(totalBytes: Long?): String? =
+    totalBytes?.takeIf { it > 0L }?.let { "bytes=0-${it - 1L}" }
+
 private fun artifactErrorPayload(body: ResponseBody?): String {
     if (body == null) return ""
     val output = ByteArrayOutputStream()
@@ -749,11 +755,10 @@ class DeerFlowApi(
     ): ArtifactProbe = withContext(Dispatchers.IO) {
         val downloadLimit = artifactDownloadLimit(maxBytes)
         val call = client.newCall(
-            Request.Builder()
-                .url(artifactUrl(threadId, path))
-                .header("Range", "bytes=0-0")
-                .get()
-                .build(),
+            artifactRequest(
+                url = artifactUrl(threadId, path),
+                range = "bytes=0-0",
+            ),
         )
         val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
             if (cause is CancellationException) call.cancel()
@@ -789,11 +794,12 @@ class DeerFlowApi(
         val transferId = UUID.randomUUID().toString()
         val completedFile = File(directory, "$transferId-$safeFilename")
         val partFile = File(directory, ".${completedFile.name}.part")
+        val requestedRange = completeArtifactRange(probe.totalBytes)
         val call = client.newCall(
-            Request.Builder()
-                .url(artifactUrl(threadId, probe.path))
-                .get()
-                .build(),
+            artifactRequest(
+                url = artifactUrl(threadId, probe.path),
+                range = requestedRange,
+            ),
         )
         val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
             if (cause is CancellationException) call.cancel()
@@ -803,18 +809,27 @@ class DeerFlowApi(
             call.execute().use { response ->
                 val body = response.body
                 if (!response.isSuccessful) throw apiError(response.code, artifactErrorPayload(body))
-                if (response.code != HttpURLConnection.HTTP_OK) {
-                    throw IOException("Artifact download did not return a complete response.")
+                val responseRange = contentRange(response.header("Content-Range"))
+                when (response.code) {
+                    HttpURLConnection.HTTP_OK -> Unit
+                    HttpURLConnection.HTTP_PARTIAL -> {
+                        val expectedTotal = probe.totalBytes
+                        if (
+                            requestedRange == null ||
+                            expectedTotal == null ||
+                            responseRange?.coversWholeArtifact(expectedTotal) != true
+                        ) {
+                            throw IOException("Artifact download did not return the requested complete range.")
+                        }
+                    }
+                    else -> throw IOException("Artifact download did not return a complete response.")
                 }
                 val contentLength = body?.contentLength() ?: -1L
                 if (contentLength > downloadLimit) throw artifactDownloadLimitError(downloadLimit)
-                val responseTotal = contentRangeTotal(response.header("Content-Range"))
+                val responseTotal = responseRange?.totalBytes
                 val totalBytes = probe.totalBytes ?: responseTotal ?: contentLength.takeIf { it >= 0L }
                 if (totalBytes != null && totalBytes > downloadLimit) throw artifactDownloadLimitError(downloadLimit)
                 if (probe.totalBytes != null && responseTotal != null && probe.totalBytes != responseTotal) {
-                    throw IOException("Artifact size changed before the download started.")
-                }
-                if (probe.totalBytes != null && contentLength >= 0L && probe.totalBytes != contentLength) {
                     throw IOException("Artifact size changed before the download started.")
                 }
 
@@ -824,7 +839,7 @@ class DeerFlowApi(
                         copyArtifactStream(
                             input = input,
                             output = output,
-                            expectedLength = contentLength,
+                            expectedLength = contentLength.takeIf { probe.totalBytes == null } ?: -1L,
                             maxBytes = downloadLimit,
                         ) { downloadedBytes ->
                             onProgress(downloadedBytes, totalBytes)
@@ -1636,6 +1651,16 @@ class DeerFlowApi(
         val encodedPath = path.trimStart('/').split('/').joinToString("/") { pathSegment(it) }
         return url("/api/threads/${pathSegment(threadId)}/artifacts/$encodedPath?download=true")
     }
+
+    private fun artifactRequest(url: String, range: String? = null): Request =
+        Request.Builder()
+            .url(url)
+            .header("Accept-Encoding", "identity")
+            .header("Cache-Control", "no-transform")
+            .apply { range?.let { header("Range", it) } }
+            .get()
+            .build()
+
     private fun url(path: String): String = "$serverUrl$path"
 
     private fun apiError(status: Int, payload: String): ApiException {

@@ -28,6 +28,7 @@ import com.deerflow.mobile.data.mergeStreamChunk
 import com.deerflow.mobile.data.mergeStreamPatch
 import com.deerflow.mobile.data.mergeStreamSnapshot
 import com.deerflow.mobile.data.projectVisibleMessages
+import com.deerflow.mobile.data.stripUploadedFilesTag
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -286,7 +287,7 @@ private class RunSessionCoordinator(context: Context) {
         val initial = CoordinatedRunState(
             serverUrl = request.serverUrl,
             threadId = request.threadId,
-            title = request.title,
+            title = stripUploadedFilesTag(request.title).ifBlank { "New conversation" },
             run = RunState(
                 status = RunStatus.Connecting,
                 clientMessageId = request.clientMessageId,
@@ -328,7 +329,7 @@ private class RunSessionCoordinator(context: Context) {
         val initial = CoordinatedRunState(
             serverUrl = serverUrl,
             threadId = threadId,
-            title = title,
+            title = stripUploadedFilesTag(title).ifBlank { "New conversation" },
             run = saved.copy(status = RunStatus.Reconnecting).ensureStartedAt(),
             serverMessages = request.initialMessages,
         )
@@ -368,7 +369,7 @@ private class RunSessionCoordinator(context: Context) {
         val reconnecting = CoordinatedRunState(
             serverUrl = serverUrl,
             threadId = threadId,
-            title = title,
+            title = stripUploadedFilesTag(title).ifBlank { "New conversation" },
             run = resumable,
             serverMessages = request.initialMessages,
         )
@@ -939,7 +940,11 @@ internal fun completeWithSnapshot(
         serverMessages.any { confirmsPendingUserMessage(pending, it) }
     } != false
     return current.copy(
-        title = if (snapshot.hasTitle) snapshot.title else current.title,
+        title = if (snapshot.hasTitle) {
+            stripUploadedFilesTag(snapshot.title).takeIf(String::isNotBlank) ?: current.title
+        } else {
+            current.title
+        },
         run = RunState(
             gatewayStatus = gatewayStatus,
             startedAtEpochMs = current.run.startedAtEpochMs,
@@ -1115,7 +1120,9 @@ internal fun reduceRunState(current: CoordinatedRunState, update: StreamUpdate):
                 .firstOrNull { it.name.isNotBlank() && it.name != "task" }
                 ?.name
             current.copy(
-                title = update.value.title ?: current.title,
+                title = update.value.title
+                    ?.let { stripUploadedFilesTag(it).takeIf(String::isNotBlank) }
+                    ?: current.title,
                 serverMessages = serverMessages,
                 pendingUserMessage = pending,
                 pendingUserIndex = current.pendingUserIndex.takeIf { pending != null },

@@ -910,11 +910,23 @@ private fun mergeToolArgumentText(existing: String, incoming: String, appendChun
     else -> existing
 }
 
-internal fun stripUploadedFilesTag(content: String): String = content
-    .replace(Regex("<current_uploads>[\\s\\S]*?</current_uploads>"), "")
-    .replace(Regex("<uploaded_files>[\\s\\S]*?</uploaded_files>"), "")
-    .replace(Regex("<slash_skill_activation>[\\s\\S]*?</slash_skill_activation>"), "")
-    .trim()
+private val HIDDEN_CONTEXT_TAGS = listOf("current_uploads", "uploaded_files", "slash_skill_activation")
+
+internal fun stripUploadedFilesTag(content: String): String {
+    var cleaned = content
+    HIDDEN_CONTEXT_TAGS.forEach { tag ->
+        cleaned = cleaned.replace(
+            Regex("<$tag\\b[^>]*>[\\s\\S]*?(?:</$tag\\s*>|\\z)", RegexOption.IGNORE_CASE),
+            "",
+        )
+    }
+    return cleaned
+        .replace(
+            Regex("</?(?:current_uploads|uploaded_files|slash_skill_activation)\\b[^>]*>", RegexOption.IGNORE_CASE),
+            "",
+        )
+        .trim()
+}
 
 private fun JSONObject.toTokenUsage(): TokenUsage? {
     val input = optLong("input_tokens", -1L)

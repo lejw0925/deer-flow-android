@@ -1,5 +1,8 @@
 package com.deerflow.mobile.ui
 
+import android.graphics.Bitmap
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -10,6 +13,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -18,7 +22,11 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.test.core.app.ApplicationProvider
+import androidx.test.platform.app.InstrumentationRegistry
 import com.deerflow.mobile.R
 import com.deerflow.mobile.data.ChannelCredentialField
 import com.deerflow.mobile.data.ChannelProviderInfo
@@ -33,6 +41,8 @@ import com.deerflow.mobile.data.RunState
 import com.deerflow.mobile.data.RunStatus
 import com.deerflow.mobile.data.SkillInfo
 import com.deerflow.mobile.data.WorkspaceCapabilities
+import java.io.File
+import java.io.FileOutputStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -94,6 +104,59 @@ class ChatControlsTest {
     }
 
     @Test
+    fun slashInputShowsSkillSuggestionsAndSelectsACommand() {
+        var selectedSkill = ""
+        var selectedText = ""
+        compose.setContent {
+            var editorValue by remember { mutableStateOf(TextFieldValue()) }
+            MaterialTheme {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.BottomCenter,
+                ) {
+                    MessageComposer(
+                        state = AppUiState(
+                            serverUrl = "http://10.0.2.2:2027",
+                            capabilities = WorkspaceCapabilities(
+                                skills = listOf(
+                                    SkillInfo("deep-research", "Investigate sources", "research", enabled = true),
+                                    SkillInfo("writing-studio", "Draft reports", "writing", enabled = true),
+                                ),
+                            ),
+                        ),
+                        editorValue = editorValue,
+                        onDraftChange = {
+                            editorValue = it
+                            selectedText = it.text
+                        },
+                        onSkillSelected = { selectedSkill = it },
+                        onAttachment = {},
+                        onAgent = {},
+                        onQuickAction = { _, _ -> },
+                        onRemoveAttachment = {},
+                        onRetryAttachment = {},
+                        onSend = {},
+                        onStop = {},
+                    )
+                }
+            }
+        }
+
+        compose.onNodeWithTag(UiTags.ComposerInput).performClick().performTextInput("/")
+        compose.onNodeWithTag(UiTags.SlashSkillSuggestions).assertIsDisplayed()
+        val inputBounds = compose.onNodeWithTag(UiTags.ComposerInput).fetchSemanticsNode().boundsInRoot
+        val suggestionsBounds = compose.onNodeWithTag(UiTags.SlashSkillSuggestions).fetchSemanticsNode().boundsInRoot
+        assertTrue(suggestionsBounds.bottom <= inputBounds.top)
+        recordSlashSkillSuggestionsScreenshot()
+        compose.onNodeWithTag(UiTags.SlashSkillSuggestionPrefix + "deep-research").performClick()
+
+        compose.runOnIdle {
+            assertEquals("deep-research", selectedSkill)
+            assertEquals("/deep-research ", selectedText)
+        }
+    }
+
+    @Test
     fun nonThinkingModelExposesFlashOnly() {
         val flash = context.getString(R.string.mode_flash)
         setTopSelectors(state = selectorState(modelName = "fast", mode = RunMode.Flash))
@@ -106,7 +169,7 @@ class ChatControlsTest {
     }
 
     @Test
-    fun attachmentSheetDispatchesEveryEntryPoint() {
+    fun attachmentSheetOnlyExposesAttachmentEntryPoints() {
         val actions = mutableListOf<String>()
         compose.setContent {
             MaterialTheme {
@@ -115,7 +178,6 @@ class ChatControlsTest {
                     onCamera = { actions += "camera" },
                     onPhotos = { actions += "photos" },
                     onFiles = { actions += "files" },
-                    onSkills = { actions += "skills" },
                 )
             }
         }
@@ -123,9 +185,9 @@ class ChatControlsTest {
         compose.onNodeWithText(context.getString(R.string.camera)).performClick()
         compose.onNodeWithText(context.getString(R.string.photos)).performClick()
         compose.onNodeWithText(context.getString(R.string.files)).performClick()
-        compose.onNodeWithText(context.getString(R.string.skills)).performClick()
+        compose.onNodeWithText(context.getString(R.string.skills)).assertDoesNotExist()
 
-        compose.runOnIdle { assertEquals(listOf("camera", "photos", "files", "skills"), actions) }
+        compose.runOnIdle { assertEquals(listOf("camera", "photos", "files"), actions) }
     }
 
     @Test
@@ -735,4 +797,22 @@ class ChatControlsTest {
             ),
         ),
     )
+
+    private fun recordSlashSkillSuggestionsScreenshot() {
+        if (!InstrumentationRegistry.getArguments().getString(RECORD_SLASH_SKILL_SCREENSHOT).equals("true", ignoreCase = true)) {
+            return
+        }
+        val image = compose.onNodeWithTag(UiTags.SlashSkillSuggestions).captureToImage().asAndroidBitmap()
+        val directory = File(
+            InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null),
+            "visual-baselines",
+        ).apply { mkdirs() }
+        FileOutputStream(File(directory, "slash-skill-suggestions.png")).use { stream ->
+            check(image.compress(Bitmap.CompressFormat.PNG, 100, stream))
+        }
+    }
+
+    private companion object {
+        const val RECORD_SLASH_SKILL_SCREENSHOT = "deerflow.record_slash_skill_screenshot"
+    }
 }

@@ -2,6 +2,7 @@ package com.deerflow.mobile.data
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.json.JSONArray
@@ -41,6 +42,19 @@ class MessageBlocksTest {
             listOf(MessageAttachment("risk-assets.zip", 382976, "/mnt/user-data/uploads/risk-assets.zip")),
             message.attachments,
         )
+    }
+
+    @Test
+    fun removesUnclosedCurrentUploadContextFromGeneratedThreadTitles() {
+        val summary = JSONObject(
+            """{"thread_id":"thread-1","values":{"title":"<current_uploads>The following files were uploaded in this message:\\n- report.pdf"}}""",
+        ).toThreadSummary()
+        val patch = JSONObject()
+            .put("title", "<current_uploads>The following files were uploaded in this message:")
+            .toStreamPatch()
+
+        assertEquals("New conversation", summary.title)
+        assertNull(patch.title)
     }
 
     @Test
