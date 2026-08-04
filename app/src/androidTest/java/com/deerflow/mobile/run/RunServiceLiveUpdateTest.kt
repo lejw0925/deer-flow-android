@@ -139,10 +139,7 @@ class RunServiceLiveUpdateTest {
         assertEquals(100, completed.extras.getInt(Notification.EXTRA_PROGRESS))
         assertFalse(completed.extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE))
         assertNotNull(completed.smallIcon)
-        assertEquals(
-            com.deerflow.mobile.R.drawable.ic_notification_completed,
-            completed.getLargeIcon()?.resId,
-        )
+        assertNull(completed.getLargeIcon())
         assertNull(completed.extras.getParcelable("android.progressEndIcon", Icon::class.java))
         assertTrue(completed.flags and Notification.FLAG_PROMOTED_ONGOING != 0)
         assertFalse(completed.flags and Notification.FLAG_AUTO_CANCEL != 0)

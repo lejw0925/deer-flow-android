@@ -443,12 +443,6 @@ class RunService : Service() {
         return Notification.Builder(this, CHANNEL_ID)
             // The small icon is what Android renders at the left of a Live Update status chip.
             .setSmallIcon(iconRes)
-            // Terminal templates may render a large icon in the upper-right corner.
-            .apply {
-                if (viewIntent != null) {
-                    setLargeIcon(Icon.createWithResource(this@RunService, iconRes))
-                }
-            }
             .setContentTitle(title.ifBlank { getString(R.string.run_in_progress) })
             .setContentText(detail ?: progressLabel())
             .setContentIntent(openIntent)
