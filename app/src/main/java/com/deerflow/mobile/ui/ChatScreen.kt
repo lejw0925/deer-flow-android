@@ -124,6 +124,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.isTraversalGroup
@@ -136,6 +138,12 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.platform.testTag
 import androidx.core.content.FileProvider
@@ -1401,6 +1409,11 @@ internal fun MessageComposer(
         animationSpec = ExpressiveMotion.fastSpatial(),
         label = "composer-top-padding",
     )
+    val density = LocalDensity.current
+    val slashSuggestionPositionProvider = remember(density) {
+        SlashSkillSuggestionPositionProvider(with(density) { 8.dp.roundToPx() })
+    }
+    var composerAnchorWidthPx by remember { mutableStateOf(0) }
     Surface(tonalElevation = 2.dp) {
         Column(
             modifier = Modifier
@@ -1441,7 +1454,11 @@ internal fun MessageComposer(
                     }
                 }
                 Row(verticalAlignment = Alignment.Bottom) {
-                    Box(Modifier.weight(1f)) {
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .onGloballyPositioned { composerAnchorWidthPx = it.size.width },
+                    ) {
                         OutlinedTextField(
                             value = composerDisplayValue,
                             onValueChange = { value ->
@@ -1517,45 +1534,57 @@ internal fun MessageComposer(
                                 .onFocusChanged { composerFocused = it.isFocused }
                                 .testTag(UiTags.ComposerInput),
                         )
-                        DropdownMenu(
-                            expanded = showSlashSkillSuggestions,
-                            onDismissRequest = { dismissedSkillSuggestionValue = composerDisplayValue.text },
-                            properties = PopupProperties(focusable = false),
-                            modifier = Modifier
-                                .heightIn(max = 320.dp)
-                                .testTag(UiTags.SlashSkillSuggestions),
-                        ) {
-                            slashSkillSuggestions.forEach { skill ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Column(Modifier.fillMaxWidth()) {
-                                            Text(
-                                                "/${skill.name}",
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                                style = MaterialTheme.typography.labelLarge,
+                        if (showSlashSkillSuggestions && composerAnchorWidthPx > 0) {
+                            Popup(
+                                popupPositionProvider = slashSuggestionPositionProvider,
+                                onDismissRequest = { dismissedSkillSuggestionValue = composerDisplayValue.text },
+                                properties = PopupProperties(focusable = false),
+                            ) {
+                                Surface(
+                                    modifier = Modifier
+                                        .width(with(density) { composerAnchorWidthPx.toDp() })
+                                        .heightIn(max = 320.dp)
+                                        .testTag(UiTags.SlashSkillSuggestions),
+                                    shape = MaterialTheme.shapes.extraLarge,
+                                    color = MaterialTheme.colorScheme.surfaceContainer,
+                                    tonalElevation = 3.dp,
+                                    shadowElevation = 6.dp,
+                                ) {
+                                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                                        slashSkillSuggestions.forEach { skill ->
+                                            DropdownMenuItem(
+                                                text = {
+                                                    Column(Modifier.fillMaxWidth()) {
+                                                        Text(
+                                                            "/${skill.name}",
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            style = MaterialTheme.typography.labelLarge,
+                                                        )
+                                                        if (skill.description.isNotBlank()) {
+                                                            Text(
+                                                                skill.description,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                style = MaterialTheme.typography.bodySmall,
+                                                            )
+                                                        }
+                                                    }
+                                                },
+                                                leadingIcon = {
+                                                    Icon(Icons.Outlined.Extension, contentDescription = null)
+                                                },
+                                                onClick = {
+                                                    val updated = replaceLeadingSlashSkillCommand(composerDisplayValue, skill.name)
+                                                    onDraftChange(updated)
+                                                    inputFocusRequester.requestFocus()
+                                                },
+                                                modifier = Modifier.testTag(UiTags.SlashSkillSuggestionPrefix + skill.name),
                                             )
-                                            if (skill.description.isNotBlank()) {
-                                                Text(
-                                                    skill.description,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                )
-                                            }
                                         }
-                                    },
-                                    leadingIcon = {
-                                        Icon(Icons.Outlined.Extension, contentDescription = null)
-                                    },
-                                    onClick = {
-                                        val updated = replaceLeadingSlashSkillCommand(composerDisplayValue, skill.name)
-                                        onDraftChange(updated)
-                                        inputFocusRequester.requestFocus()
-                                    },
-                                    modifier = Modifier.testTag(UiTags.SlashSkillSuggestionPrefix + skill.name),
-                                )
+                                    }
+                                }
                             }
                         }
                     }
@@ -1815,6 +1844,31 @@ private fun RunMode.reasoningDescription(): String = when (this) {
     RunMode.Thinking -> stringResource(R.string.reasoning_effort_low_description)
     RunMode.Pro -> stringResource(R.string.reasoning_effort_medium_description)
     RunMode.Ultra -> stringResource(R.string.reasoning_effort_high_description)
+}
+
+/** Keeps slash suggestions above the composer without DropdownMenu's anchor animation. */
+internal class SlashSkillSuggestionPositionProvider(
+    private val marginPx: Int,
+) : PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize,
+    ): IntOffset {
+        val maxX = (windowSize.width - popupContentSize.width).coerceAtLeast(0)
+        val anchorX = if (layoutDirection == LayoutDirection.Ltr) {
+            anchorBounds.left
+        } else {
+            anchorBounds.right - popupContentSize.width
+        }
+        val x = anchorX.coerceIn(0, maxX)
+        val above = anchorBounds.top - popupContentSize.height - marginPx
+        val below = anchorBounds.bottom + marginPx
+        val maxY = (windowSize.height - popupContentSize.height).coerceAtLeast(0)
+        val y = if (above >= 0) above else below.coerceAtMost(maxY)
+        return IntOffset(x, y.coerceAtLeast(0))
+    }
 }
 
 private const val MAX_SLASH_SKILL_SUGGESTIONS = 6

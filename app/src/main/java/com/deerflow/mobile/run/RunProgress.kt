@@ -33,6 +33,36 @@ data class RunProgressUpdate(
     val todoChip: String? get() = if (indeterminate) null else "$completedTodos/$totalTodos"
 }
 
+/**
+ * Returns equal relative lengths for the native [android.app.Notification.ProgressStyle].
+ *
+ * Segment lengths are progress units, not percentages. Giving every todo one unit lets
+ * System UI lay out equal-width stages with its native gutter and rounded track treatment.
+ */
+internal fun todoProgressSegmentLengths(totalTodos: Int): List<Int> {
+    if (totalTodos <= 0) return listOf(100)
+    return List(totalTodos.coerceAtMost(MAX_TODO_PROGRESS_SEGMENTS)) { 1 }
+}
+
+/** Maps completed todos to the same units used by [todoProgressSegmentLengths]. */
+internal fun todoProgressValue(completedTodos: Int, totalTodos: Int): Int {
+    if (totalTodos <= 0) return 0
+    val segmentCount = totalTodos.coerceAtMost(MAX_TODO_PROGRESS_SEGMENTS)
+    val completed = completedTodos.coerceIn(0, totalTodos)
+    if (completed == totalTodos) return segmentCount
+
+    // Round up so a completed todo always fills a visible stage when the list is capped.
+    return ((completed.toLong() * segmentCount + totalTodos - 1) / totalTodos)
+        .toInt()
+        .coerceIn(0, segmentCount - 1)
+}
+
+/** The [android.app.Notification.ProgressStyle] value for this update. */
+internal fun RunProgressUpdate.liveUpdateProgressValue(): Int = when {
+    phase == RunProgress.Completed -> todoProgressSegmentLengths(totalTodos).sum()
+    else -> todoProgressValue(completedTodos, totalTodos)
+}
+
 /** A completed notification must show its final value rather than keep animating. */
 internal fun RunProgressUpdate.usesIndeterminateNotificationProgress(ongoing: Boolean): Boolean =
     ongoing && phase != RunProgress.Completed && indeterminate
@@ -102,4 +132,5 @@ fun runProgressUpdate(
 
 private val ACTIVE_TODO_STATUSES = setOf("in_progress", "running", "active")
 private const val MAX_TODO_LABEL_LENGTH = 72
+private const val MAX_TODO_PROGRESS_SEGMENTS = 100
 internal const val NOTIFICATION_UPDATE_INTERVAL_MS = 1_000L

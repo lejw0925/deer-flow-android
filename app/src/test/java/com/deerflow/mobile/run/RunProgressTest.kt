@@ -55,8 +55,26 @@ class RunProgressTest {
         assertEquals(1, update.completedTodos)
         assertEquals(3, update.totalTodos)
         assertEquals(33, update.percent)
+        assertEquals(1, update.liveUpdateProgressValue())
         assertEquals("Write report", update.currentTodo)
         assertEquals("1/3", update.todoChip)
+    }
+
+    @Test
+    fun todoProgressSegmentsUseEqualRelativeLengths() {
+        assertEquals(listOf(1, 1, 1), todoProgressSegmentLengths(3))
+        assertEquals(3, todoProgressSegmentLengths(3).sum())
+        assertTrue(todoProgressSegmentLengths(101).all { it == 1 })
+        assertEquals(100, todoProgressSegmentLengths(101).size)
+    }
+
+    @Test
+    fun liveUpdateProgressFillsEachCompletedTodoSegment() {
+        assertEquals(1, todoProgressValue(completedTodos = 1, totalTodos = 3))
+        assertEquals(2, todoProgressValue(completedTodos = 2, totalTodos = 3))
+        assertEquals(3, todoProgressValue(completedTodos = 3, totalTodos = 3))
+        assertEquals(3, RunProgressUpdate(RunProgress.Completed, totalTodos = 3).liveUpdateProgressValue())
+        assertEquals(100, RunProgressUpdate(RunProgress.Completed).liveUpdateProgressValue())
     }
 
     @Test

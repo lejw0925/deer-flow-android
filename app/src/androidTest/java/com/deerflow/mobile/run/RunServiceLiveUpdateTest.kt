@@ -31,6 +31,7 @@ class RunServiceLiveUpdateTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
     private val notifications = context.getSystemService(NotificationManager::class.java)
+    private var originalNotifyOnRunCompletion = true
 
     @Before
     fun grantNotificationPermission() {
@@ -40,13 +41,17 @@ class RunServiceLiveUpdateTest {
         if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             instrumentation.uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.POST_NOTIFICATIONS)
         }
-        runBlocking { SettingsStore(context).setNotifyOnRunCompletion(true) }
+        runBlocking {
+            val settings = SettingsStore(context)
+            originalNotifyOnRunCompletion = settings.read().notifyOnRunCompletion
+            settings.setNotifyOnRunCompletion(true)
+        }
     }
 
     @After
     fun cleanUp() {
         RunService.stop(context)
-        runBlocking { SettingsStore(context).setNotifyOnRunCompletion(true) }
+        runBlocking { SettingsStore(context).setNotifyOnRunCompletion(originalNotifyOnRunCompletion) }
     }
 
     @Test
@@ -65,7 +70,7 @@ class RunServiceLiveUpdateTest {
         assertEquals(context.getString(com.deerflow.mobile.R.string.run_chip_preparing), preparing.shortCriticalText)
         assertEquals(expectedLiveUpdateColor(), preparing.color)
         assertNotNull(preparing.smallIcon)
-        assertNotNull(preparing.actions.single().icon)
+        assertNotNull(preparing.actions.single().getIcon())
 
         RunService.update(
             context,
@@ -78,8 +83,9 @@ class RunServiceLiveUpdateTest {
             ),
             "Research workspace",
         )
-        val working = awaitRunNotification(expectedProgress = 33)
+        val working = awaitRunNotification(expectedProgress = 1)
         assertEquals("1/3", working.shortCriticalText)
+        assertEquals(3, working.extras.getInt(Notification.EXTRA_PROGRESS_MAX))
         assertEquals(
             context.getString(com.deerflow.mobile.R.string.run_current_step, "Write report"),
             working.extras.getCharSequence(Notification.EXTRA_TEXT).toString(),
@@ -132,14 +138,16 @@ class RunServiceLiveUpdateTest {
         assertEquals(Notification.ProgressStyle::class.java.name, completed.extras.getString(Notification.EXTRA_TEMPLATE))
         assertEquals(100, completed.extras.getInt(Notification.EXTRA_PROGRESS))
         assertFalse(completed.extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE))
-        assertEquals(com.deerflow.mobile.R.drawable.ic_notification_completed, completed.smallIcon.resId)
+        assertNotNull(completed.smallIcon)
         assertEquals(
             com.deerflow.mobile.R.drawable.ic_notification_completed,
-            completed.extras.getParcelable("android.progressEndIcon", Icon::class.java)?.resId,
+            completed.getLargeIcon()?.resId,
         )
+        assertNull(completed.extras.getParcelable("android.progressEndIcon", Icon::class.java))
         assertTrue(completed.flags and Notification.FLAG_PROMOTED_ONGOING != 0)
         assertFalse(completed.flags and Notification.FLAG_AUTO_CANCEL != 0)
         assertEquals(context.getString(com.deerflow.mobile.R.string.view), completed.actions.single().title.toString())
+        assertNull(completed.actions.single().getIcon())
     }
 
     @Test

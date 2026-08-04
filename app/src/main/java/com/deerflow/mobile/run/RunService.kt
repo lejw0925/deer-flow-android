@@ -419,10 +419,16 @@ class RunService : Service() {
         val indeterminate = progress.usesIndeterminateNotificationProgress(ongoing)
         val style = Notification.ProgressStyle()
             .setProgressIndeterminate(indeterminate)
-            .addProgressSegment(Notification.ProgressStyle.Segment(100).setColor(notificationAccentColor))
             .apply {
+                todoProgressSegmentLengths(this@RunService.progress.totalTodos).forEachIndexed { index, segmentLength ->
+                    addProgressSegment(
+                        Notification.ProgressStyle.Segment(segmentLength)
+                            .setId(index)
+                            .setColor(notificationAccentColor),
+                    )
+                }
                 if (!indeterminate) {
-                    setProgress(this@RunService.progress.percent)
+                    setProgress(this@RunService.progress.liveUpdateProgressValue())
                     setStyledByProgress(true)
                     // Oplus inserts a default tracker when none is supplied. An explicit
                     // transparent tracker keeps the progress bar free of a right-side glyph.
@@ -433,17 +439,21 @@ class RunService : Service() {
                         ),
                     )
                 }
-                if (this@RunService.progress.phase == RunProgress.Completed && iconRes == R.drawable.ic_notification_completed) {
-                    setProgressEndIcon(Icon.createWithResource(this@RunService, iconRes))
-                }
             }
         return Notification.Builder(this, CHANNEL_ID)
             // The small icon is what Android renders at the left of a Live Update status chip.
             .setSmallIcon(iconRes)
+            // Terminal templates may render a large icon in the upper-right corner.
+            .apply {
+                if (viewIntent != null) {
+                    setLargeIcon(Icon.createWithResource(this@RunService, iconRes))
+                }
+            }
             .setContentTitle(title.ifBlank { getString(R.string.run_in_progress) })
             .setContentText(detail ?: progressLabel())
             .setContentIntent(openIntent)
             .setOngoing(ongoing)
+            .setCategory(Notification.CATEGORY_PROGRESS)
             .setAutoCancel(false)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
@@ -471,7 +481,7 @@ class RunService : Service() {
                 viewIntent?.let {
                     addAction(
                         Notification.Action.Builder(
-                            Icon.createWithResource(this@RunService, android.R.drawable.ic_menu_view),
+                            null,
                             getString(R.string.view),
                             it,
                         ).build(),
@@ -538,7 +548,7 @@ class RunService : Service() {
             .setColor(notificationSurfaceColor)
             .setProgress(100, progress.percent, false)
             .setStyle(NotificationCompat.BigTextStyle().bigText(terminalDetail))
-            .addAction(android.R.drawable.ic_menu_view, getString(R.string.view), openIntent)
+            .addAction(0, getString(R.string.view), openIntent)
             .build()
     }
 

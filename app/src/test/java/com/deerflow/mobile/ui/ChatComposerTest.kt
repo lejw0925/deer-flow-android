@@ -2,6 +2,9 @@ package com.deerflow.mobile.ui
 
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import com.deerflow.mobile.data.ComposerState
 import com.deerflow.mobile.data.RunOptions
 import com.deerflow.mobile.data.SkillInfo
@@ -77,6 +80,19 @@ class ChatComposerTest {
 
         assertEquals("/deep-research ", selected.text)
         assertEquals(TextRange(selected.text.length), selected.selection)
+    }
+
+    @Test
+    fun `slash skill suggestions stay above the composer when there is room`() {
+        val position = SlashSkillSuggestionPositionProvider(8).calculatePosition(
+            anchorBounds = IntRect(left = 16, top = 500, right = 416, bottom = 560),
+            windowSize = IntSize(width = 432, height = 800),
+            layoutDirection = LayoutDirection.Ltr,
+            popupContentSize = IntSize(width = 400, height = 200),
+        )
+
+        assertEquals(16, position.x)
+        assertEquals(292, position.y)
     }
 
     @Test

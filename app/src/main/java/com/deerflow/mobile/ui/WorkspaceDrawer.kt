@@ -59,6 +59,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -331,7 +332,13 @@ private fun ThreadDrawerRow(
                 Text(thread.title, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
             },
             supportingContent = {
-                Text(thread.updatedAt.toDisplayTime(), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    thread.updatedAt.toDisplayTime(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             },
             leadingContent = {
                 StatusDot(
@@ -406,10 +413,17 @@ fun SkillsSheet(
     viewModel: AppViewModel,
     onDismiss: () -> Unit,
 ) {
+    // A stable expanded anchor prevents the sheet from jumping when the async
+    // skill catalog replaces its initial empty state with the loaded grid.
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var detail by remember { mutableStateOf<SkillInfo?>(null) }
     var tab by remember { mutableStateOf(SkillCatalogTab.Public) }
     var editingConfiguration by remember { mutableStateOf(false) }
-    ModalBottomSheet(onDismissRequest = onDismiss, modifier = Modifier.testTag(UiTags.SkillsSheet)) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        modifier = Modifier.testTag(UiTags.SkillsSheet),
+    ) {
         val selectedDetail = detail?.let { detailSkill ->
             state.capabilities.skills.firstOrNull { it.name == detailSkill.name } ?: detailSkill
         }
@@ -421,55 +435,62 @@ fun SkillsSheet(
                 onBack = { editingConfiguration = false },
                 onSave = { rawJson -> viewModel.updateMcpConfiguration(rawJson) { editingConfiguration = false } },
             )
-        } else if (selectedDetail == null) {
-            Text(
-                stringResource(R.string.skills),
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-            )
-            TabRow(
-                selectedTabIndex = tab.ordinal,
-                containerColor = Color.Transparent,
-                contentColor = MaterialTheme.colorScheme.onSurface,
-            ) {
-                SkillCatalogTab.entries.forEach { item ->
-                    androidx.compose.material3.Tab(
-                        selected = tab == item,
-                        onClick = { tab = item },
-                        text = { Text(stringResource(item.labelRes)) },
-                    )
+        } else {
+            Box(Modifier.fillMaxWidth().heightIn(min = 560.dp)) {
+                if (selectedDetail == null) {
+                    Column(Modifier.fillMaxWidth()) {
+                        Text(
+                            stringResource(R.string.skills),
+                            style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                        )
+                        TabRow(
+                            selectedTabIndex = tab.ordinal,
+                            containerColor = Color.Transparent,
+                            contentColor = MaterialTheme.colorScheme.onSurface,
+                        ) {
+                            SkillCatalogTab.entries.forEach { item ->
+                                androidx.compose.material3.Tab(
+                                    selected = tab == item,
+                                    onClick = { tab = item },
+                                    text = { Text(stringResource(item.labelRes)) },
+                                )
+                            }
+                        }
+                        when (tab) {
+                            SkillCatalogTab.Public, SkillCatalogTab.Custom -> {
+                                val custom = tab == SkillCatalogTab.Custom
+                                SkillsSheetContent(
+                                    skills = state.capabilities.skills.filter { skill -> skill.isCustom == custom },
+                                    onSkillDetail = { detail = it },
+                                    showDisabledSkills = canManageSkillStates,
+                                    canManageSkillStates = canManageSkillStates,
+                                    mutationBusy = state.workspaceMutationBusy,
+                                    onSkillEnabledChanged = viewModel::setSkillEnabled,
+                                )
+                            }
+                            SkillCatalogTab.Tools -> McpSheetContent(
+                                config = state.mcpConfig,
+                                loading = state.loadingMcpConfig,
+                                mutationBusy = state.workspaceMutationBusy,
+                                canManageServers = canManageSkillStates,
+                                onServerEnabledChanged = viewModel::setMcpServerEnabled,
+                                onEditConfiguration = { editingConfiguration = true },
+                                showTitle = false,
+                            )
+                        }
+                    }
                 }
-            }
-            when (tab) {
-                SkillCatalogTab.Public, SkillCatalogTab.Custom -> {
-                    val custom = tab == SkillCatalogTab.Custom
-                    SkillsSheetContent(
-                        skills = state.capabilities.skills.filter { skill -> skill.isCustom == custom },
-                        onSkillDetail = { detail = it },
-                        showDisabledSkills = canManageSkillStates,
+                else {
+                    SkillDetailContent(
+                        skill = selectedDetail,
+                        onBack = { detail = null },
                         canManageSkillStates = canManageSkillStates,
                         mutationBusy = state.workspaceMutationBusy,
                         onSkillEnabledChanged = viewModel::setSkillEnabled,
                     )
                 }
-                SkillCatalogTab.Tools -> McpSheetContent(
-                    config = state.mcpConfig,
-                    loading = state.loadingMcpConfig,
-                    mutationBusy = state.workspaceMutationBusy,
-                    canManageServers = canManageSkillStates,
-                    onServerEnabledChanged = viewModel::setMcpServerEnabled,
-                    onEditConfiguration = { editingConfiguration = true },
-                    showTitle = false,
-                )
             }
-        } else {
-            SkillDetailContent(
-                skill = selectedDetail,
-                onBack = { detail = null },
-                canManageSkillStates = canManageSkillStates,
-                mutationBusy = state.workspaceMutationBusy,
-                onSkillEnabledChanged = viewModel::setSkillEnabled,
-            )
         }
     }
 }
