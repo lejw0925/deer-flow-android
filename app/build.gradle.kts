@@ -52,8 +52,8 @@ android {
         applicationId = "com.deerflow.mobile"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.1.7-beta.2"
+        versionCode = 14
+        versionName = "1.1.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
