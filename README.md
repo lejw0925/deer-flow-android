@@ -31,9 +31,22 @@
   </tr>
 </table>
 
-> Screenshots were captured from a debug build on an Android API 36 emulator with the repository's local mock Gateway. The data is fixture data only.
+### 1.1.7 interaction details / 1.1.7 交互细节
+
+<table>
+  <tr>
+    <td width="50%" align="center"><img src="docs/images/1.1.7-slash-search.png" alt="Slash skill search above the DeerFlow Android composer" width="100%" /><br /><sub>Slash skill search / 斜杠技能搜索</sub></td>
+    <td width="50%" align="center"><img src="docs/images/1.1.7-todo-progress.png" alt="Segmented Todo progress in DeerFlow Android" width="100%" /><br /><sub>Segmented Todo progress / Todo 分段进度</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><img src="docs/images/1.1.7-drawer.png" alt="DeerFlow Android drawer with fixed account header and conversation actions" width="100%" /><br /><sub>Fixed drawer structure / 固定抽屉结构</sub></td>
+    <td width="50%" align="center"><img src="docs/images/1.1.7-attachments.png" alt="Compact uploaded attachment tag in the DeerFlow Android composer" width="100%" /><br /><sub>Compact attachment tag / 紧凑附件标签</sub></td>
+  </tr>
+</table>
+
+> Screenshots were captured from a debug build on an Android emulator with the repository's local mock Gateway. The data is fixture data only.
 >
-> 截图来自 Android API 36 模拟器上的 Debug 构建，连接仓库内置的本地 Mock Gateway；展示数据仅为测试数据。
+> 截图来自 Android 模拟器上的 Debug 构建，连接仓库内置的本地 Mock Gateway；展示数据仅为测试数据。
 
 <a id="chinese"></a>
 
@@ -53,6 +66,14 @@ DeerFlow Android 是 DeerFlow 工作区的原生 Android 客户端，而不是 W
 - **富内容与文件**：渲染 Markdown、代码块、引用来源、工具调用、审批/人工输入卡片、子任务、Todo、图片结果和附件；支持相机、照片、文档上传，以及 Artifact 预览、下载、打开和会话导出。
 - **工作区管理**：管理自定义 Agent 与执行历史、周期或一次性定时任务、Memory 摘要和事实、MCP 服务器/工具，以及 Channels 运行时配置。
 - **本地优先的阅读体验**：Room 缓存按服务器隔离的会话、消息、草稿、附件、运行恢复标记和工作区元数据。离线时可浏览已缓存内容，但应用不会离线排队发送提示词。
+
+### 1.1.7 更新
+
+- **持久的运行状态**：进行中的 Android 16 Live Update 会反映最近使用的工具；含 Todo 的运行按任务数等分进度槽并保留圆角间隔。完成后保留最终状态通知和纯文字“查看”操作，不再显示大型完成勾图，也不会自动消失。
+- **会话内技能搜索**：在输入框键入 `/` 后，技能建议稳定显示在编辑器上方；可在 `/` 后继续输入，按名称或描述过滤，异步加载列表不会抢走输入焦点。技能卡片统一以启用状态显示主题色、禁用状态显示背景色。
+- **更紧凑的工作区**：抽屉将 DeerFlow 与账户信息放在固定头像右侧；近期会话时间改为更小的次级色标签，搜索和新建会话固定在底部。上传文件标签同时收紧了垂直留白。
+- **技能与 Agent 页面**：技能详情删除仅供下一次运行使用的启用开关，公共、自定义和工具页去除重复标题；Agent 页右侧仅保留会话操作，其余操作通过左滑菜单展开。
+- **流式恢复修正**：正常重连后会正确清除诸如“Retrying 1/3”的临时状态，避免过期重试提示滞留在会话中。
 
 ### 1.1.2 更新
 
@@ -188,6 +209,14 @@ DeerFlow Android is the native Android workspace client for DeerFlow, not a WebV
 - **Rich output and files**: Markdown, code blocks, citations, tool calls, approval and human-input cards, subtasks, Todo state, image results, attachments, Artifact preview/download/open, camera/photo/document upload, and conversation export.
 - **Workspace management**: Manage custom Agents and their execution history, cron or one-time tasks, memory summaries and facts, MCP servers/tools, and Channels runtime configuration.
 - **Offline reading without surprise sends**: Room caches server-scoped conversations, messages, drafts, attachments, run markers, and workspace metadata. Cached content remains readable offline, but prompts are never queued for later transmission.
+
+### What's New in 1.1.7
+
+- **Durable run state**: Active Android 16 Live Updates reflect the most recently used tool; runs with Todos use equal task-count progress segments with rounded gaps. On completion, the final notification remains available with a text-only View action, no large completion artwork, and no automatic dismissal.
+- **In-conversation skill search**: Type `/` in the composer to show stable suggestions above it, then continue typing to filter by skill name or description without async loading stealing input focus. Skill cards consistently use the theme color when enabled and the background color when disabled.
+- **A tighter workspace**: The drawer places DeerFlow and the account beside the fixed avatar; recent timestamps are smaller and secondary-colored, while search and new conversation stay fixed at the bottom. Uploaded-file tags also have tighter vertical spacing.
+- **Skill and Agent surfaces**: Skill details no longer expose a per-next-run enable control, and duplicate headings are removed from Public, Custom, and Tools. The Agent screen keeps only the conversation action on the right, with other actions available from a swipe-left menu.
+- **Streaming recovery fix**: A normal reconnection now clears temporary states such as `Retrying 1/3`, preventing stale retry text from remaining in a conversation.
 
 ### What's New in 1.1.2
 
