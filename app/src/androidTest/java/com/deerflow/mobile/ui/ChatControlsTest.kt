@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.captureToImage
@@ -35,6 +36,7 @@ import com.deerflow.mobile.data.ComposerState
 import com.deerflow.mobile.data.ModelInfo
 import com.deerflow.mobile.data.McpConfig
 import com.deerflow.mobile.data.McpServerInfo
+import com.deerflow.mobile.data.PendingAttachment
 import com.deerflow.mobile.data.RunMode
 import com.deerflow.mobile.data.RunOptions
 import com.deerflow.mobile.data.RunState
@@ -105,10 +107,17 @@ class ChatControlsTest {
 
     @Test
     fun slashInputShowsSkillSuggestionsAndSelectsACommand() {
-        var selectedSkill = ""
         var selectedText = ""
+        lateinit var publishSkills: () -> Unit
         compose.setContent {
             var editorValue by remember { mutableStateOf(TextFieldValue()) }
+            var skills by remember { mutableStateOf(emptyList<SkillInfo>()) }
+            publishSkills = {
+                skills = listOf(
+                    SkillInfo("deep-research", "Investigate sources", "research", enabled = true),
+                    SkillInfo("writing-studio", "Draft reports", "writing", enabled = true),
+                )
+            }
             MaterialTheme {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -117,19 +126,13 @@ class ChatControlsTest {
                     MessageComposer(
                         state = AppUiState(
                             serverUrl = "http://10.0.2.2:2027",
-                            capabilities = WorkspaceCapabilities(
-                                skills = listOf(
-                                    SkillInfo("deep-research", "Investigate sources", "research", enabled = true),
-                                    SkillInfo("writing-studio", "Draft reports", "writing", enabled = true),
-                                ),
-                            ),
+                            capabilities = WorkspaceCapabilities(skills = skills),
                         ),
                         editorValue = editorValue,
                         onDraftChange = {
                             editorValue = it
                             selectedText = it.text
                         },
-                        onSkillSelected = { selectedSkill = it },
                         onAttachment = {},
                         onAgent = {},
                         onQuickAction = { _, _ -> },
@@ -143,17 +146,42 @@ class ChatControlsTest {
         }
 
         compose.onNodeWithTag(UiTags.ComposerInput).performClick().performTextInput("/")
+        compose.runOnIdle { publishSkills() }
+        compose.onNodeWithTag(UiTags.ComposerInput).assertIsFocused().performTextInput("wri")
         compose.onNodeWithTag(UiTags.SlashSkillSuggestions).assertIsDisplayed()
+        compose.onNodeWithTag(UiTags.SlashSkillSuggestionPrefix + "deep-research").assertDoesNotExist()
         val inputBounds = compose.onNodeWithTag(UiTags.ComposerInput).fetchSemanticsNode().boundsInRoot
         val suggestionsBounds = compose.onNodeWithTag(UiTags.SlashSkillSuggestions).fetchSemanticsNode().boundsInRoot
         assertTrue(suggestionsBounds.bottom <= inputBounds.top)
         recordSlashSkillSuggestionsScreenshot()
-        compose.onNodeWithTag(UiTags.SlashSkillSuggestionPrefix + "deep-research").performClick()
+        compose.onNodeWithTag(UiTags.SlashSkillSuggestionPrefix + "writing-studio").performClick()
+        compose.onNodeWithTag(UiTags.ComposerInput).assertIsFocused().performTextInput("draft")
 
         compose.runOnIdle {
-            assertEquals("deep-research", selectedSkill)
-            assertEquals("/deep-research ", selectedText)
+            assertEquals("/writing-studio draft", selectedText)
         }
+    }
+
+    @Test
+    fun uploadedAttachmentRowHasNoExtraVerticalPadding() {
+        val attachment = PendingAttachment(
+            uri = "content://fixture/report.pdf",
+            filename = "report.pdf",
+            mimeType = "application/pdf",
+            size = 42,
+        )
+        setComposer(
+            state = AppUiState(
+                serverUrl = "http://10.0.2.2:2027",
+                composer = ComposerState(attachments = listOf(attachment)),
+            ),
+        )
+
+        val rowBounds = compose.onNodeWithTag(UiTags.ComposerAttachmentRow).fetchSemanticsNode().boundsInRoot
+        val expectedHeightPx = 48f * context.resources.displayMetrics.density
+
+        assertEquals(expectedHeightPx, rowBounds.height, 1f)
+        recordAttachmentSpacingScreenshot()
     }
 
     @Test
@@ -201,14 +229,13 @@ class ChatControlsTest {
                         SkillInfo("writing-studio", "Draft reports", "writing", enabled = true),
                         SkillInfo("disabled-skill", "Unavailable", "other", enabled = false),
                     ),
-                    selectedSkills = setOf("deep-research"),
-                    onSkillSelected = {},
                     onSkillDetail = { selected = it.name },
                 )
             }
         }
 
         compose.onNodeWithText("disabled-skill").assertDoesNotExist()
+        compose.onNodeWithText(context.getString(R.string.skills)).assertDoesNotExist()
         compose.onNodeWithTag(UiTags.SkillCardPrefix + "writing-studio").performClick()
 
         compose.runOnIdle { assertEquals("writing-studio", selected) }
@@ -224,8 +251,6 @@ class ChatControlsTest {
                         SkillInfo("deep-research", "Investigate sources", "research", enabled = true),
                         SkillInfo("writing-studio", "Draft reports", "writing", enabled = true),
                     ),
-                    selectedSkills = emptySet(),
-                    onSkillSelected = {},
                     onSkillDetail = { openedSkill = it.name },
                 )
             }
@@ -247,8 +272,6 @@ class ChatControlsTest {
                     skills = listOf(
                         SkillInfo("disabled-skill", "Unavailable", "other", enabled = false),
                     ),
-                    selectedSkills = emptySet(),
-                    onSkillSelected = {},
                     showDisabledSkills = true,
                     canManageSkillStates = true,
                     onSkillEnabledChanged = { name, enabled -> changed = name to enabled },
@@ -399,15 +422,12 @@ class ChatControlsTest {
     }
 
     @Test
-    fun skillDetailShowsMetadataAndDispatchesSelection() {
-        var selected = ""
+    fun skillDetailShowsMetadataWithoutPerRunSelection() {
         compose.setContent {
             MaterialTheme {
                 SkillDetailContent(
                     skill = SkillInfo("deep-research", "Investigate sources", "research", enabled = true),
-                    selected = false,
                     onBack = {},
-                    onSkillSelected = { selected = it },
                 )
             }
         }
@@ -415,9 +435,6 @@ class ChatControlsTest {
         compose.onNodeWithTag(UiTags.SkillDetailScreen).assertIsDisplayed()
         compose.onNodeWithText(context.getString(R.string.skill_category)).assertIsDisplayed()
         compose.onNodeWithText("research").assertIsDisplayed()
-        compose.onNodeWithTag(UiTags.SkillDetailSelect).performClick()
-
-        compose.runOnIdle { assertEquals("deep-research", selected) }
     }
 
     @Test
@@ -565,8 +582,8 @@ class ChatControlsTest {
             onCancelPolish = { cancellations += 1 },
         )
 
-        compose.onNodeWithTag(UiTags.InputPolishStatus).assertIsDisplayed()
         compose.onNodeWithText(context.getString(R.string.input_polishing)).assertIsDisplayed()
+        compose.onNodeWithTag(UiTags.InputPolishStatus, useUnmergedTree = true).assertExists()
         compose.onNodeWithText("make this clearer").assertDoesNotExist()
         compose.onNodeWithTag(UiTags.ComposerInput).assertIsNotEnabled()
         compose.onNodeWithTag(UiTags.SendStopButton).assertIsNotEnabled()
@@ -812,7 +829,22 @@ class ChatControlsTest {
         }
     }
 
+    private fun recordAttachmentSpacingScreenshot() {
+        if (!InstrumentationRegistry.getArguments().getString(RECORD_ATTACHMENT_SPACING_SCREENSHOT).equals("true", ignoreCase = true)) {
+            return
+        }
+        val image = compose.onNodeWithTag(UiTags.Composer).captureToImage().asAndroidBitmap()
+        val directory = File(
+            InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null),
+            "visual-baselines",
+        ).apply { mkdirs() }
+        FileOutputStream(File(directory, "attachment-spacing.png")).use { stream ->
+            check(image.compress(Bitmap.CompressFormat.PNG, 100, stream))
+        }
+    }
+
     private companion object {
         const val RECORD_SLASH_SKILL_SCREENSHOT = "deerflow.record_slash_skill_screenshot"
+        const val RECORD_ATTACHMENT_SPACING_SCREENSHOT = "deerflow.record_attachment_spacing_screenshot"
     }
 }

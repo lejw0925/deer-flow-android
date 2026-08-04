@@ -51,6 +51,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -58,6 +59,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -69,6 +71,7 @@ import androidx.compose.ui.unit.dp
 import com.deerflow.mobile.R
 import com.deerflow.mobile.data.AgentInfo
 import com.deerflow.mobile.data.AgentRunInfo
+import kotlinx.coroutines.launch
 
 @Composable
 fun AgentsScreen(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit, contentPadding: PaddingValues) {
@@ -244,54 +247,88 @@ internal fun AgentRow(
     onChat: () -> Unit,
     onEdit: (() -> Unit)?,
 ) {
-    ListItem(
-        headlineContent = { Text(agent.name) },
-        supportingContent = {
-            Column {
-                if (agent.description.isNotBlank()) Text(agent.description, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                agent.model?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
-            }
-        },
-        leadingContent = { Icon(Icons.Outlined.SmartToy, contentDescription = null) },
-        trailingContent = {
-            Row {
-                if (isDefault) {
-                    Box(
-                        modifier = Modifier.size(48.dp).testTag(UiTags.AgentDefaultPrefix + agent.name),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Filled.Star,
-                            contentDescription = stringResource(R.string.default_agent),
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
+    val swipeState = androidx.compose.material3.rememberSwipeToDismissBoxState()
+    val scope = rememberCoroutineScope()
+    val closeActions: () -> Unit = { scope.launch { swipeState.reset() } }
+    SwipeToDismissBox(
+        state = swipeState,
+        enableDismissFromStartToEnd = false,
+        enableDismissFromEndToStart = true,
+        backgroundContent = {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (isDefault) {
+                        IconButton(
+                            onClick = closeActions,
+                            modifier = Modifier.size(48.dp).testTag(UiTags.AgentDefaultPrefix + agent.name),
+                        ) {
+                            Icon(
+                                Icons.Filled.Star,
+                                contentDescription = stringResource(R.string.default_agent),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    } else {
+                        IconButton(
+                            onClick = {
+                                onSetDefault()
+                                closeActions()
+                            },
+                            modifier = Modifier.size(48.dp).testTag(UiTags.AgentDefaultPrefix + agent.name),
+                        ) {
+                            Icon(
+                                Icons.Outlined.StarOutline,
+                                contentDescription = stringResource(R.string.set_default_agent),
+                            )
+                        }
                     }
-                } else {
-                    IconButton(
-                        onClick = onSetDefault,
-                        modifier = Modifier.size(48.dp).testTag(UiTags.AgentDefaultPrefix + agent.name),
-                    ) {
-                        Icon(
-                            Icons.Outlined.StarOutline,
-                            contentDescription = stringResource(R.string.set_default_agent),
-                        )
+                    if (onEdit != null) {
+                        IconButton(
+                            onClick = {
+                                onEdit()
+                                closeActions()
+                            },
+                            modifier = Modifier.size(48.dp).testTag(UiTags.AgentEditPrefix + agent.name),
+                        ) {
+                            Icon(Icons.Outlined.Edit, contentDescription = stringResource(R.string.edit))
+                        }
                     }
                 }
-                IconButton(onClick = onChat, modifier = Modifier.size(48.dp)) {
+            }
+        },
+    ) {
+        ListItem(
+            headlineContent = { Text(agent.name) },
+            supportingContent = {
+                Column {
+                    if (agent.description.isNotBlank()) {
+                        Text(agent.description, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    }
+                    agent.model?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+                }
+            },
+            leadingContent = { Icon(Icons.Outlined.SmartToy, contentDescription = null) },
+            trailingContent = {
+                IconButton(
+                    onClick = onChat,
+                    modifier = Modifier.size(48.dp).testTag(UiTags.AgentChatPrefix + agent.name),
+                ) {
                     Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = stringResource(R.string.chat))
                 }
-                if (onEdit != null) {
-                    IconButton(onClick = onEdit, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Outlined.Edit, contentDescription = stringResource(R.string.edit))
-                    }
-                }
-            }
-        },
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onOpen)
-            .testTag(UiTags.AgentRowPrefix + agent.name),
-    )
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpen)
+                .testTag(UiTags.AgentRowPrefix + agent.name),
+        )
+    }
 }
 
 @Composable

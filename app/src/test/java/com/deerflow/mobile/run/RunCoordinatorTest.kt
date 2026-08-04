@@ -165,6 +165,40 @@ class RunCoordinatorTest {
     }
 
     @Test
+    fun `normal stream progress clears a completed retry notice`() {
+        val retrying = initial.copy(
+            runNotice = StreamUpdate.RunNotice(
+                kind = RunNoticeKind.LlmRetry,
+                message = "Retrying after a rate limit.",
+                attempt = 1,
+                maxAttempts = 3,
+            ),
+        )
+
+        val resumed = reduceRunState(
+            retrying,
+            StreamUpdate.MessageChunk(ChatMessage("ai-1", MessageRole.Assistant, "Recovered")),
+        )
+        val finishedWithoutContent = reduceRunState(retrying, StreamUpdate.Finished)
+
+        assertNull(resumed.runNotice)
+        assertNull(finishedWithoutContent.runNotice)
+    }
+
+    @Test
+    fun `normal stream progress keeps safety notices visible`() {
+        val safetyNotice = StreamUpdate.RunNotice(
+            kind = RunNoticeKind.SafetyTermination,
+            message = "The run was stopped by a safety policy.",
+        )
+        val current = initial.copy(runNotice = safetyNotice)
+
+        val resumed = reduceRunState(current, StreamUpdate.EventId("event-8"))
+
+        assertEquals(safetyNotice, resumed.runNotice)
+    }
+
+    @Test
     fun `unclosed upload context never replaces an existing conversation title`() {
         val generatedTitleFailure = "<current_uploads>The following files were uploaded in this message:\n- report.pdf"
         val patched = reduceRunState(initial, StreamUpdate.Patch(StreamPatch(title = generatedTitleFailure)))

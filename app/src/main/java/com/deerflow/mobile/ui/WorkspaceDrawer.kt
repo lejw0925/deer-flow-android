@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
@@ -41,7 +42,6 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
@@ -138,7 +138,8 @@ fun WorkspaceDrawer(
                     .fillMaxWidth()
                     .padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 14.dp)
                     .focusRequester(headerFocus)
-                    .focusable(),
+                    .focusable()
+                    .testTag(UiTags.DrawerIdentityHeader),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Surface(
@@ -152,6 +153,17 @@ fun WorkspaceDrawer(
                         Icon(Icons.Outlined.PersonOutline, contentDescription = stringResource(R.string.tab_profile))
                     }
                 }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("DeerFlow", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        state.user?.email.orEmpty(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             LazyColumn(
                 modifier = Modifier
@@ -160,18 +172,6 @@ fun WorkspaceDrawer(
                     .testTag(UiTags.RecentConversationScroll),
                 contentPadding = PaddingValues(bottom = DRAWER_BOTTOM_CONTENT_PADDING),
             ) {
-                item {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-                        Text("DeerFlow", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            state.user?.email.orEmpty(),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
                 item {
                     DrawerDestinationRow(Icons.Outlined.SmartToy, stringResource(R.string.tab_agents)) {
                         onDestination(DrawerDestination.Agents)
@@ -405,17 +405,11 @@ fun SkillsSheet(
     state: AppUiState,
     viewModel: AppViewModel,
     onDismiss: () -> Unit,
-    onSkillSelected: ((String) -> Unit)? = null,
 ) {
     var detail by remember { mutableStateOf<SkillInfo?>(null) }
     var tab by remember { mutableStateOf(SkillCatalogTab.Public) }
     var editingConfiguration by remember { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = onDismiss, modifier = Modifier.testTag(UiTags.SkillsSheet)) {
-        val selectSkill: (String) -> Unit = { skillName ->
-            if (onSkillSelected != null) onSkillSelected(skillName)
-            else viewModel.toggleSkill(skillName)
-        }
-        val selectedSkills = state.composer.options.enabledSkills
         val selectedDetail = detail?.let { detailSkill ->
             state.capabilities.skills.firstOrNull { it.name == detailSkill.name } ?: detailSkill
         }
@@ -451,14 +445,11 @@ fun SkillsSheet(
                     val custom = tab == SkillCatalogTab.Custom
                     SkillsSheetContent(
                         skills = state.capabilities.skills.filter { skill -> skill.isCustom == custom },
-                        selectedSkills = selectedSkills,
-                        onSkillSelected = selectSkill,
                         onSkillDetail = { detail = it },
                         showDisabledSkills = canManageSkillStates,
                         canManageSkillStates = canManageSkillStates,
                         mutationBusy = state.workspaceMutationBusy,
                         onSkillEnabledChanged = viewModel::setSkillEnabled,
-                        titleRes = tab.labelRes,
                     )
                 }
                 SkillCatalogTab.Tools -> McpSheetContent(
@@ -468,14 +459,13 @@ fun SkillsSheet(
                     canManageServers = canManageSkillStates,
                     onServerEnabledChanged = viewModel::setMcpServerEnabled,
                     onEditConfiguration = { editingConfiguration = true },
+                    showTitle = false,
                 )
             }
         } else {
             SkillDetailContent(
                 skill = selectedDetail,
-                selected = selectedDetail.name in selectedSkills,
                 onBack = { detail = null },
-                onSkillSelected = selectSkill,
                 canManageSkillStates = canManageSkillStates,
                 mutationBusy = state.workspaceMutationBusy,
                 onSkillEnabledChanged = viewModel::setSkillEnabled,
@@ -521,23 +511,30 @@ internal fun McpSheetContent(
     canManageServers: Boolean = true,
     onServerEnabledChanged: (String, Boolean) -> Unit,
     onEditConfiguration: () -> Unit = {},
+    showTitle: Boolean = true,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 8.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            stringResource(R.string.mcp_servers),
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.weight(1f),
-        )
-        if (config != null && canManageServers) {
-            IconButton(
-                onClick = onEditConfiguration,
-                enabled = !mutationBusy,
-                modifier = Modifier.testTag(UiTags.McpConfigEdit),
-            ) {
-                Icon(Icons.Outlined.Edit, contentDescription = stringResource(R.string.mcp_edit_configuration))
+    if (showTitle || (config != null && canManageServers)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 8.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (showTitle) {
+                Text(
+                    stringResource(R.string.mcp_servers),
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
+            if (config != null && canManageServers) {
+                IconButton(
+                    onClick = onEditConfiguration,
+                    enabled = !mutationBusy,
+                    modifier = Modifier.testTag(UiTags.McpConfigEdit),
+                ) {
+                    Icon(Icons.Outlined.Edit, contentDescription = stringResource(R.string.mcp_edit_configuration))
+                }
             }
         }
     }
@@ -892,14 +889,11 @@ private fun ChannelRuntimeConfigDialog(
 @Composable
 internal fun SkillsSheetContent(
     skills: List<SkillInfo>,
-    selectedSkills: Set<String>,
-    onSkillSelected: (String) -> Unit,
-    onSkillDetail: (SkillInfo) -> Unit = { onSkillSelected(it.name) },
+    onSkillDetail: (SkillInfo) -> Unit = {},
     showDisabledSkills: Boolean = false,
     canManageSkillStates: Boolean = false,
     mutationBusy: Boolean = false,
     onSkillEnabledChanged: (String, Boolean) -> Unit = { _, _ -> },
-    titleRes: Int = R.string.skills,
 ) {
     var query by remember { mutableStateOf("") }
     val visibleSkills = skills.filter { skill ->
@@ -908,11 +902,6 @@ internal fun SkillsSheetContent(
                 .any { value -> value.contains(query, ignoreCase = true) }
         )
     }
-    Text(
-        stringResource(titleRes),
-        style = MaterialTheme.typography.titleLarge,
-        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-    )
     OutlinedTextField(
         value = query,
         onValueChange = { query = it },
@@ -939,11 +928,14 @@ internal fun SkillsSheetContent(
             verticalItemSpacing = 10.dp,
         ) {
             staggeredItems(visibleSkills, key = { it.name }) { skill ->
-                val selected = skill.name in selectedSkills
                 Surface(
                     onClick = { onSkillDetail(skill) },
                     shape = MaterialTheme.shapes.large,
-                    color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                    color = if (skill.enabled) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    },
                     modifier = Modifier.fillMaxWidth().testTag(UiTags.SkillCardPrefix + skill.name),
                 ) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -951,7 +943,11 @@ internal fun SkillsSheetContent(
                         Text(
                             skill.description.ifBlank { stringResource(R.string.skill_no_description) },
                             style = MaterialTheme.typography.bodyMedium,
-                            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (skill.enabled) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                         )
                         if (canManageSkillStates) {
                             Row(
@@ -982,9 +978,7 @@ internal fun SkillsSheetContent(
 @Composable
 internal fun SkillDetailContent(
     skill: SkillInfo,
-    selected: Boolean,
     onBack: () -> Unit,
-    onSkillSelected: (String) -> Unit,
     canManageSkillStates: Boolean = false,
     mutationBusy: Boolean = false,
     onSkillEnabledChanged: (String, Boolean) -> Unit = { _, _ -> },
@@ -1035,18 +1029,6 @@ internal fun SkillDetailContent(
                     modifier = Modifier.testTag(UiTags.SkillDetailGlobalEnable),
                 )
             }
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Checkbox(
-                checked = selected,
-                onCheckedChange = { onSkillSelected(skill.name) },
-                enabled = skill.enabled,
-                modifier = Modifier.testTag(UiTags.SkillDetailSelect),
-            )
-            Text(stringResource(R.string.enable_skill_for_next_run))
         }
         Spacer(Modifier.navigationBarsPadding().height(20.dp))
     }

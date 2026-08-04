@@ -201,6 +201,7 @@
     <string name="input_polish_undo">Undo polish</string>
     <string name="input_polish_cancel">Cancel polishing</string>
     <string name="stop_run">Stop run</string>
+    <string name="view">View</string>
     <string name="stop_not_confirmed">Could not confirm that the run stopped. Try again.</string>
     <string name="send_message">Send message</string>
     <string name="model_unavailable_title">Model unavailable</string>
@@ -274,7 +275,6 @@
     <string name="no_matching_skills">No matching skills</string>
     <string name="skill_category">Category</string>
     <string name="skill_uncategorized">Uncategorized</string>
-    <string name="enable_skill_for_next_run">Enable for next run</string>
     <string name="enable_skill_for_workspace">Enable across workspace</string>
     <string name="run_mode">Run mode</string>
     <string name="model">Model</string>

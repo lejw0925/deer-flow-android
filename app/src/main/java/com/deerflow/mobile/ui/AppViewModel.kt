@@ -214,6 +214,23 @@ data class BrowserUiState(
     val error: String? = null,
 )
 
+internal fun browserLiveErrorMessageResource(event: BrowserLiveEvent): Int? = when (event) {
+    is BrowserLiveEvent.NavigationRejected -> R.string.browser_live_navigation_rejected
+    is BrowserLiveEvent.Failure -> R.string.browser_live_connection_failed
+    is BrowserLiveEvent.Closed -> when (event.code) {
+        4401 -> R.string.browser_live_unauthenticated
+        4404, 4501 -> R.string.browser_live_unavailable
+        4409 -> R.string.browser_live_in_use
+        4429 -> R.string.browser_live_capacity_reached
+        else -> R.string.browser_live_disconnected
+    }
+    BrowserLiveEvent.Opened,
+    is BrowserLiveEvent.Frame,
+    is BrowserLiveEvent.Url,
+    is BrowserLiveEvent.Tabs,
+    -> null
+}
+
 enum class ArtifactSessionPhase {
     Probing,
     AwaitingConfirm,
@@ -1512,15 +1529,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     is BrowserLiveEvent.Tabs -> browser.copy(tabs = event.values, status = BrowserLiveStatus.Live)
                     is BrowserLiveEvent.NavigationRejected -> browser.copy(
                         status = BrowserLiveStatus.Live,
-                        error = event.message ?: getApplication<Application>().getString(R.string.browser_live_navigation_rejected),
+                        error = browserLiveErrorMessage(event),
                     )
                     is BrowserLiveEvent.Closed -> browser.copy(
                         status = BrowserLiveStatus.Error,
-                        error = browserCloseMessage(event.code, event.reason),
+                        error = browserLiveErrorMessage(event),
                     )
                     is BrowserLiveEvent.Failure -> browser.copy(
                         status = BrowserLiveStatus.Error,
-                        error = event.message.ifBlank { getApplication<Application>().getString(R.string.browser_live_connection_failed) },
+                        error = browserLiveErrorMessage(event),
                     )
                 }
                 current.copy(browser = updatedBrowser)
@@ -1528,14 +1545,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun browserCloseMessage(code: Int, reason: String): String = when (code) {
-        4401 -> getApplication<Application>().getString(R.string.browser_live_unauthenticated)
-        4404, 4501 -> getApplication<Application>().getString(R.string.browser_live_unavailable)
-        4409 -> getApplication<Application>().getString(R.string.browser_live_in_use)
-        4429 -> getApplication<Application>().getString(R.string.browser_live_capacity_reached)
-        else -> reason.takeIf(String::isNotBlank)
-            ?: getApplication<Application>().getString(R.string.browser_live_disconnected)
-    }
+    private fun browserLiveErrorMessage(event: BrowserLiveEvent): String =
+        getApplication<Application>().getString(checkNotNull(browserLiveErrorMessageResource(event)))
 
     fun openThread(thread: ThreadSummary) {
         if (mutableState.value.selectedThread?.id == thread.id && mutableState.value.route == AppRoute.Conversation) return

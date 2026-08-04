@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import com.deerflow.mobile.R
+import com.deerflow.mobile.data.DeerFlowUser
 import com.deerflow.mobile.data.ThreadSummary
 import com.deerflow.mobile.data.TodoItem
 import java.io.File
@@ -97,6 +98,7 @@ class WorkspaceNavigationTest {
                 WorkspaceDrawer(
                     state = AppUiState(
                         serverUrl = "http://10.0.2.2:2027",
+                        user = DeerFlowUser("user-1", "user@example.com", "member", needsSetup = false),
                         threads = (0 until 24).map { index ->
                             ThreadSummary(
                                 id = "thread-$index",
@@ -122,10 +124,12 @@ class WorkspaceNavigationTest {
         val actionBar = compose.onNodeWithTag(UiTags.ConversationActionsBar).fetchSemanticsNode().boundsInRoot
         val profile = compose.onNodeWithContentDescription(context.getString(R.string.tab_profile))
         val profileTop = profile.fetchSemanticsNode().boundsInRoot.top
+        val identityTop = compose.onNodeWithTag(UiTags.DrawerIdentityHeader).fetchSemanticsNode().boundsInRoot.top
 
         assertTrue(search.right <= newChat.left)
         assertEquals(search.bottom, newChat.bottom, 2f)
         assertTrue(newChat.bottom <= actionBar.bottom)
+        compose.onAllNodesWithText("user@example.com").assertCountEquals(1)
 
         repeat(4) {
             compose.onNodeWithTag(UiTags.RecentConversationScroll).performTouchInput { swipeUp() }
@@ -133,6 +137,7 @@ class WorkspaceNavigationTest {
         compose.onNodeWithText("Conversation 23").assertIsDisplayed()
 
         assertEquals(profileTop, profile.fetchSemanticsNode().boundsInRoot.top, 2f)
+        assertEquals(identityTop, compose.onNodeWithTag(UiTags.DrawerIdentityHeader).fetchSemanticsNode().boundsInRoot.top, 2f)
         assertEquals(search.bottom, compose.onNodeWithTag(UiTags.ConversationSearch).fetchSemanticsNode().boundsInRoot.bottom, 2f)
         assertEquals(newChat.bottom, compose.onNodeWithTag(UiTags.NewChatButton).fetchSemanticsNode().boundsInRoot.bottom, 2f)
         recordDrawerScreenshot()
@@ -302,6 +307,9 @@ class WorkspaceNavigationTest {
 
         compose.onNodeWithTag(UiTags.TodoProgressDetails).assertIsDisplayed()
         compose.onNodeWithText("Add tests").assertIsDisplayed()
+        val todoStatus = compose.onNodeWithTag(UiTags.TodoStatusPrefix + "Add tests").fetchSemanticsNode().boundsInRoot
+        val todoText = compose.onNodeWithText("Add tests").fetchSemanticsNode().boundsInRoot
+        assertEquals(todoText.center.y, todoStatus.center.y, 2f)
         recordTodoProgressScreenshot("expanded")
         val conversationBoundsAfter = compose.onNodeWithTag(UiTags.TodoConversationArea).fetchSemanticsNode().boundsInRoot
         assertEquals(conversationBoundsBefore.top, conversationBoundsAfter.top, 0.5f)

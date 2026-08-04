@@ -1066,6 +1066,9 @@ internal fun resumableRun(saved: RunState, activeRunId: String?): RunState? = wh
 internal fun isRetryableStreamHttpFailure(statusCode: Int): Boolean =
     statusCode == 408 || statusCode == 409 || statusCode == 425 || statusCode == 429 || statusCode >= 500
 
+private fun StreamUpdate.RunNotice?.afterStreamProgress(): StreamUpdate.RunNotice? =
+    takeUnless { it?.kind == com.deerflow.mobile.data.RunNoticeKind.LlmRetry }
+
 internal fun reduceRunState(current: CoordinatedRunState, update: StreamUpdate): CoordinatedRunState {
     val revision = current.revision + 1
     return when (update) {
@@ -1074,10 +1077,12 @@ internal fun reduceRunState(current: CoordinatedRunState, update: StreamUpdate):
                 status = current.run.status.preserveStopRequest(RunStatus.Streaming),
                 runId = update.runId ?: current.run.runId,
             ),
+            runNotice = current.runNotice.afterStreamProgress(),
             revision = revision,
         )
         is StreamUpdate.EventId -> current.copy(
             run = current.run.copy(lastEventId = update.value),
+            runNotice = current.runNotice.afterStreamProgress(),
             revision = revision,
         )
         is StreamUpdate.Reconnecting -> current.copy(
@@ -1105,6 +1110,7 @@ internal fun reduceRunState(current: CoordinatedRunState, update: StreamUpdate):
                     } == true
                 },
                 latestToolName = toolName ?: current.latestToolName,
+                runNotice = current.runNotice.afterStreamProgress(),
                 revision = revision,
             )
         }
@@ -1129,6 +1135,7 @@ internal fun reduceRunState(current: CoordinatedRunState, update: StreamUpdate):
                 todos = update.value.todos ?: current.todos,
                 artifacts = mergeArtifacts(current.artifacts, update.value.artifacts),
                 latestToolName = toolName ?: current.latestToolName,
+                runNotice = current.runNotice.afterStreamProgress(),
                 revision = revision,
             )
         }
@@ -1138,6 +1145,7 @@ internal fun reduceRunState(current: CoordinatedRunState, update: StreamUpdate):
             current.copy(
                 serverMessages = applySubagentProgress(current.serverMessages, update),
                 latestToolName = toolName ?: current.latestToolName,
+                runNotice = current.runNotice.afterStreamProgress(),
                 revision = revision,
             )
         }
@@ -1152,6 +1160,7 @@ internal fun reduceRunState(current: CoordinatedRunState, update: StreamUpdate):
         )
         StreamUpdate.Finished -> current.copy(
             serverMessages = current.serverMessages.map { it.copy(isStreaming = false) },
+            runNotice = current.runNotice.afterStreamProgress(),
             revision = revision,
         )
     }

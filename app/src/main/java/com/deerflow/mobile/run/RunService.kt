@@ -208,6 +208,7 @@ class RunService : Service() {
                     return START_STICKY
                 }
                 title = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { title }
+                progress = progress.copy(phase = RunProgress.Completed, currentTodo = null)
                 terminalSmallIconRes = android.R.drawable.ic_dialog_alert
                 finish(intent.getStringExtra(EXTRA_DETAIL).orEmpty().ifBlank { getString(R.string.run_failed) }, startId)
                 return START_NOT_STICKY
@@ -396,6 +397,7 @@ class RunService : Service() {
     ): Notification = buildProgressNotification(
         openIntent = openIntent,
         stopIntent = stopIntent,
+        viewIntent = null,
         dismissIntent = dismissIntent,
         ongoing = ongoing,
         detail = detail,
@@ -407,6 +409,7 @@ class RunService : Service() {
     private fun buildProgressNotification(
         openIntent: PendingIntent,
         stopIntent: PendingIntent?,
+        viewIntent: PendingIntent?,
         dismissIntent: PendingIntent?,
         ongoing: Boolean,
         detail: String?,
@@ -430,7 +433,7 @@ class RunService : Service() {
                         ),
                     )
                 }
-                if (!ongoing && iconRes == R.drawable.ic_notification_completed) {
+                if (this@RunService.progress.phase == RunProgress.Completed && iconRes == R.drawable.ic_notification_completed) {
                     setProgressEndIcon(Icon.createWithResource(this@RunService, iconRes))
                 }
             }
@@ -441,7 +444,7 @@ class RunService : Service() {
             .setContentText(detail ?: progressLabel())
             .setContentIntent(openIntent)
             .setOngoing(ongoing)
-            .setAutoCancel(!ongoing)
+            .setAutoCancel(false)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setForegroundServiceBehavior(
@@ -461,6 +464,15 @@ class RunService : Service() {
                         Notification.Action.Builder(
                             Icon.createWithResource(this@RunService, android.R.drawable.ic_media_pause),
                             getString(R.string.stop_run),
+                            it,
+                        ).build(),
+                    )
+                }
+                viewIntent?.let {
+                    addAction(
+                        Notification.Action.Builder(
+                            Icon.createWithResource(this@RunService, android.R.drawable.ic_menu_view),
+                            getString(R.string.view),
                             it,
                         ).build(),
                     )
@@ -497,15 +509,20 @@ class RunService : Service() {
             .apply { if (ongoing && stopIntent != null) addAction(0, getString(R.string.stop_run), stopIntent) }
             .build()
 
-    private fun buildTerminalNotification(openIntent: PendingIntent, detail: String?): Notification {
+    private fun buildTerminalNotification(
+        openIntent: PendingIntent,
+        detail: String?,
+        retainLiveUpdate: Boolean = false,
+    ): Notification {
         if (Build.VERSION.SDK_INT >= 36) {
             return buildProgressNotification(
                 openIntent = openIntent,
                 stopIntent = null,
+                viewIntent = openIntent,
                 dismissIntent = null,
-                ongoing = false,
+                ongoing = retainLiveUpdate,
                 detail = detail,
-                requestPromotion = false,
+                requestPromotion = retainLiveUpdate,
                 iconRes = terminalSmallIconRes,
             )
         }
@@ -516,11 +533,12 @@ class RunService : Service() {
             .setContentTitle(terminalTitle)
             .setContentText(terminalDetail)
             .setContentIntent(openIntent)
-            .setAutoCancel(true)
+            .setAutoCancel(false)
             .setOnlyAlertOnce(true)
             .setColor(notificationSurfaceColor)
             .setProgress(100, progress.percent, false)
             .setStyle(NotificationCompat.BigTextStyle().bigText(terminalDetail))
+            .addAction(android.R.drawable.ic_menu_view, getString(R.string.view), openIntent)
             .build()
     }
 
@@ -580,21 +598,24 @@ class RunService : Service() {
             // A newer active snapshot may have reached the service while SettingsStore was read.
             if (terminalGeneration != terminalTransitionGeneration || !terminalTransitionInProgress) return@launch
             if (notifyOnCompletion) {
-                // Removing the foreground notification first ensures System UI drops its Live
-                // Update treatment before the non-ongoing terminal notification is posted.
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                getSystemService(NotificationManager::class.java).notify(
-                    NOTIFICATION_ID,
-                    buildTerminalNotification(
-                        PendingIntent.getActivity(
-                            this@RunService,
-                            threadId?.hashCode() ?: 0,
-                            MainActivity.runDestinationIntent(this@RunService, serverUrl, threadId),
-                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                        ),
-                        detail,
+                val retainLiveUpdate = Build.VERSION.SDK_INT >= 36 && shouldUseLiveUpdate()
+                val notification = buildTerminalNotification(
+                    PendingIntent.getActivity(
+                        this@RunService,
+                        threadId?.hashCode() ?: 0,
+                        MainActivity.runDestinationIntent(this@RunService, serverUrl, threadId),
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                     ),
+                    detail,
+                    retainLiveUpdate,
                 )
+                if (retainLiveUpdate) {
+                    getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification)
+                    stopForeground(STOP_FOREGROUND_DETACH)
+                } else {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification)
+                }
             } else {
                 getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
                 stopForeground(STOP_FOREGROUND_REMOVE)

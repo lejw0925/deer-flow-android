@@ -15,6 +15,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeUp
 import androidx.test.core.app.ApplicationProvider
 import com.deerflow.mobile.R
@@ -23,6 +24,7 @@ import com.deerflow.mobile.data.AgentRunInfo
 import com.deerflow.mobile.data.ModelInfo
 import com.deerflow.mobile.data.WorkspaceCapabilities
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -34,6 +36,7 @@ class AgentsScreenTest {
         var selected = ""
         setAgentRow(isDefault = false, onSetDefault = { selected = "researcher" })
 
+        compose.onNodeWithTag(UiTags.AgentRowPrefix + "researcher").performTouchInput { swipeLeft() }
         compose.onNodeWithTag(UiTags.AgentDefaultPrefix + "researcher").performClick()
 
         compose.runOnIdle { assertEquals("researcher", selected) }
@@ -44,8 +47,30 @@ class AgentsScreenTest {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         setAgentRow(isDefault = true)
 
+        compose.onNodeWithTag(UiTags.AgentRowPrefix + "researcher").performTouchInput { swipeLeft() }
         compose.onNodeWithContentDescription(context.getString(R.string.default_agent))
             .assertIsDisplayed()
+    }
+
+    @Test
+    fun chatRemainsAVisibleDirectAction() {
+        var chatted = false
+        setAgentRow(isDefault = false, onChat = { chatted = true })
+
+        compose.onNodeWithTag(UiTags.AgentChatPrefix + "researcher").performClick()
+
+        compose.runOnIdle { assertTrue(chatted) }
+    }
+
+    @Test
+    fun leftSwipeRevealsTheEditAction() {
+        var edited = false
+        setAgentRow(isDefault = false, onEdit = { edited = true })
+
+        compose.onNodeWithTag(UiTags.AgentRowPrefix + "researcher").performTouchInput { swipeLeft() }
+        compose.onNodeWithTag(UiTags.AgentEditPrefix + "researcher").performClick()
+
+        compose.runOnIdle { assertTrue(edited) }
     }
 
     @Test
@@ -257,6 +282,8 @@ class AgentsScreenTest {
         isDefault: Boolean,
         onOpen: () -> Unit = {},
         onSetDefault: () -> Unit = {},
+        onChat: () -> Unit = {},
+        onEdit: () -> Unit = {},
     ) {
         compose.setContent {
             MaterialTheme {
@@ -265,8 +292,8 @@ class AgentsScreenTest {
                     isDefault = isDefault,
                     onOpen = onOpen,
                     onSetDefault = onSetDefault,
-                    onChat = {},
-                    onEdit = {},
+                    onChat = onChat,
+                    onEdit = onEdit,
                 )
             }
         }

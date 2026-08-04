@@ -114,7 +114,8 @@ class RunServiceLiveUpdateTest {
     }
 
     @Test
-    fun enabledPreferenceKeepsTerminalNotification() {
+    fun enabledPreferenceKeepsCompletedLiveUpdateWithViewAction() {
+        assumeTrue(notifications.canPostPromotedNotifications())
         RunService.start(context, "Research workspace")
         val ongoing = awaitRunNotification(isOngoing = true)
         assertEquals(context.getColor(com.deerflow.mobile.R.color.ic_launcher_background), ongoing.color)
@@ -124,8 +125,8 @@ class RunServiceLiveUpdateTest {
 
         RunService.complete(context, "Research workspace")
 
-        val completed = awaitRunNotification(isOngoing = false)
-        assertTrue(completed.flags and Notification.FLAG_ONGOING_EVENT == 0)
+        val completed = awaitRunNotification(expectedProgress = 100, isOngoing = true, expectedPromoted = true)
+        assertTrue(completed.flags and Notification.FLAG_ONGOING_EVENT != 0)
         assertEquals(context.getColor(com.deerflow.mobile.R.color.ic_launcher_background), completed.color)
         assertEquals("Research workspace", completed.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
         assertEquals(Notification.ProgressStyle::class.java.name, completed.extras.getString(Notification.EXTRA_TEMPLATE))
@@ -136,7 +137,9 @@ class RunServiceLiveUpdateTest {
             com.deerflow.mobile.R.drawable.ic_notification_completed,
             completed.extras.getParcelable("android.progressEndIcon", Icon::class.java)?.resId,
         )
-        assertFalse(completed.flags and Notification.FLAG_PROMOTED_ONGOING != 0)
+        assertTrue(completed.flags and Notification.FLAG_PROMOTED_ONGOING != 0)
+        assertFalse(completed.flags and Notification.FLAG_AUTO_CANCEL != 0)
+        assertEquals(context.getString(com.deerflow.mobile.R.string.view), completed.actions.single().title.toString())
     }
 
     @Test
@@ -156,9 +159,12 @@ class RunServiceLiveUpdateTest {
         RunService.synchronize(context, mapOf(terminal.key to terminal))
         RunService.synchronize(context, mapOf(active.key to active))
 
-        val completed = awaitRunNotification(isOngoing = false)
+        val promoted = notifications.canPostPromotedNotifications()
+        val completed = awaitRunNotification(expectedProgress = 100, isOngoing = promoted, expectedPromoted = promoted)
         assertEquals(100, completed.extras.getInt(Notification.EXTRA_PROGRESS))
-        assertFalse(completed.flags and Notification.FLAG_PROMOTED_ONGOING != 0)
+        assertEquals(promoted, completed.flags and Notification.FLAG_PROMOTED_ONGOING != 0)
+        assertFalse(completed.flags and Notification.FLAG_AUTO_CANCEL != 0)
+        assertEquals(context.getString(com.deerflow.mobile.R.string.view), completed.actions.single().title.toString())
     }
 
     @Test

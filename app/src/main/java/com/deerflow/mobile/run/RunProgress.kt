@@ -35,7 +35,7 @@ data class RunProgressUpdate(
 
 /** A completed notification must show its final value rather than keep animating. */
 internal fun RunProgressUpdate.usesIndeterminateNotificationProgress(ongoing: Boolean): Boolean =
-    ongoing && indeterminate
+    ongoing && phase != RunProgress.Completed && indeterminate
 
 internal sealed interface RunNotificationIcon {
     data object Thinking : RunNotificationIcon

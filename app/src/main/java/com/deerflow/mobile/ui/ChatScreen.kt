@@ -70,6 +70,7 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.DesktopWindows
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
@@ -135,6 +136,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.platform.testTag
 import androidx.core.content.FileProvider
 import com.deerflow.mobile.R
@@ -276,7 +278,6 @@ fun ChatScreen(
                 editorValue = value
                 viewModel.updateDraft(value.text)
             },
-            onSkillSelected = viewModel::enableSkill,
             onAttachment = { showAttachments = true },
             onAgent = { showAgentPicker = true },
             onQuickAction = viewModel::applyQuickAction,
@@ -1118,20 +1119,22 @@ private fun TodoProgressRow(todo: TodoItem) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 2.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.Top,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         when {
             completed -> Icon(
                 Icons.Outlined.CheckCircle,
                 contentDescription = null,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(20.dp).testTag(UiTags.TodoStatusPrefix + todo.content),
                 tint = MaterialTheme.colorScheme.primary,
             )
-            inProgress -> LoadingIndicator(Modifier.size(20.dp))
+            inProgress -> LoadingIndicator(
+                Modifier.size(20.dp).testTag(UiTags.TodoStatusPrefix + todo.content),
+            )
             else -> Icon(
                 Icons.Outlined.RadioButtonUnchecked,
                 contentDescription = null,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(20.dp).testTag(UiTags.TodoStatusPrefix + todo.content),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -1359,7 +1362,6 @@ internal fun MessageComposer(
     state: AppUiState,
     editorValue: TextFieldValue,
     onDraftChange: (TextFieldValue) -> Unit,
-    onSkillSelected: (String) -> Unit = {},
     onAttachment: () -> Unit,
     onAgent: () -> Unit,
     onQuickAction: (String, List<String>) -> Unit,
@@ -1425,7 +1427,10 @@ internal fun MessageComposer(
                     CapabilityRow(state, onAgent, onQuickAction)
                 }
                 if (state.composer.attachments.isNotEmpty()) {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 6.dp)) {
+                    LazyRow(
+                        modifier = Modifier.testTag(UiTags.ComposerAttachmentRow),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         items(state.composer.attachments, key = { it.uri }) { file ->
                             AttachmentChip(
                                 file = file,
@@ -1515,6 +1520,7 @@ internal fun MessageComposer(
                         DropdownMenu(
                             expanded = showSlashSkillSuggestions,
                             onDismissRequest = { dismissedSkillSuggestionValue = composerDisplayValue.text },
+                            properties = PopupProperties(focusable = false),
                             modifier = Modifier
                                 .heightIn(max = 320.dp)
                                 .testTag(UiTags.SlashSkillSuggestions),
@@ -1541,12 +1547,11 @@ internal fun MessageComposer(
                                         }
                                     },
                                     leadingIcon = {
-                                        Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
+                                        Icon(Icons.Outlined.Extension, contentDescription = null)
                                     },
                                     onClick = {
                                         val updated = replaceLeadingSlashSkillCommand(composerDisplayValue, skill.name)
                                         onDraftChange(updated)
-                                        onSkillSelected(skill.name)
                                         inputFocusRequester.requestFocus()
                                     },
                                     modifier = Modifier.testTag(UiTags.SlashSkillSuggestionPrefix + skill.name),
@@ -1704,7 +1709,9 @@ internal fun AttachmentChip(file: PendingAttachment, onRemove: () -> Unit, onRet
                 }
             }
         },
-        modifier = Modifier.widthIn(max = 240.dp),
+        modifier = Modifier
+            .widthIn(max = 240.dp)
+            .testTag(UiTags.ComposerAttachmentPrefix + file.uri),
     )
 }
 

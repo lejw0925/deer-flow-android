@@ -76,6 +76,7 @@ class RunProgressTest {
 
         assertEquals(99, active.percent)
         assertEquals(100, terminal.percent)
+        assertFalse(terminal.usesIndeterminateNotificationProgress(ongoing = true))
     }
 
     @Test
