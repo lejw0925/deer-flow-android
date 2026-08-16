@@ -30,7 +30,7 @@ class ConversationMessageListTest {
     }
 
     @Test
-    fun followsAgainWhenTheExpandedProcessingGroupHasFinished() {
+    fun followsTerminalMessageOnceAfterTheExpandedProcessingGroupHasFinished() {
         val finalMessage = ChatMessageGroup.Message(ChatMessage("assistant-final", MessageRole.Assistant, "Done"))
 
         assertTrue(
@@ -38,6 +38,19 @@ class ConversationMessageListTest {
                 messageGroups = listOf(processing, finalMessage),
                 runActive = false,
                 expandedProcessingGroups = setOf(processing.key),
+                userPinnedToBottom = true,
+                terminalFollowPending = true,
+            ),
+        )
+    }
+
+    @Test
+    fun doesNotFollowCompletedHistory() {
+        assertFalse(
+            shouldAutoFollowConversation(
+                messageGroups = listOf(processing),
+                runActive = false,
+                expandedProcessingGroups = emptySet(),
                 userPinnedToBottom = true,
             ),
         )
@@ -51,6 +64,19 @@ class ConversationMessageListTest {
                 runActive = true,
                 expandedProcessingGroups = emptySet(),
                 userPinnedToBottom = false,
+            ),
+        )
+    }
+
+    @Test
+    fun doesNotFollowDuringAnInertialUserScroll() {
+        assertFalse(
+            shouldAutoFollowConversation(
+                messageGroups = listOf(processing),
+                runActive = true,
+                expandedProcessingGroups = emptySet(),
+                userPinnedToBottom = true,
+                manualScrollInProgress = true,
             ),
         )
     }

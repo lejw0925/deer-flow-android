@@ -3,6 +3,7 @@
 package com.deerflow.mobile.ui
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -314,7 +315,6 @@ private fun ProcessingMessageGroup(
             .fillMaxWidth()
             .widthIn(max = 760.dp)
             .testTag(UiTags.ProcessingCard)
-            .animateContentSize(ExpressiveMotion.spatial()),
     ) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (collapsibleAboveLastTool.isNotEmpty()) {
@@ -328,14 +328,13 @@ private fun ProcessingMessageGroup(
                     },
                 )
             }
-            val visibleAboveLastTool = if (showPreviousSteps) {
-                aboveLastTool
-            } else {
-                aboveLastTool.filterIsInstance<ProcessingStep.AssistantText>()
-            }
-            visibleAboveLastTool.forEach {
-                ProcessingStepView(step = it, runActive = false, onArtifact = onArtifact, onBrowser = onBrowser)
-            }
+            // Keep the disclosure reflow atomic. Animating each historical step separately
+            // briefly remeasures the outer Column and makes the gap below this control flicker.
+            aboveLastTool
+                .filter { showPreviousSteps || it is ProcessingStep.AssistantText }
+                .forEach { step ->
+                    ProcessingStepView(step = step, runActive = false, onArtifact = onArtifact, onBrowser = onBrowser)
+                }
             lastTool?.let {
                 ProcessingStepView(step = it, runActive = runActive, onArtifact = onArtifact, onBrowser = onBrowser)
             }
@@ -354,16 +353,38 @@ private fun ProcessingMessageGroup(
 
 @Composable
 private fun ProcessingStepsToggle(count: Int, expanded: Boolean, onClick: () -> Unit) {
-    TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
-        Icon(
-            Icons.Outlined.ExpandMore,
-            contentDescription = null,
-            modifier = Modifier.rotate(if (expanded) 180f else 0f),
-        )
-        Text(
-            stringResource(if (expanded) R.string.fewer_tool_steps else R.string.more_tool_steps, count),
-            modifier = Modifier.padding(start = 6.dp),
-        )
+    val arrowRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        animationSpec = ExpressiveMotion.fastSpatial(),
+        label = "processing-steps-arrow",
+    )
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                Icons.Outlined.Psychology,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                stringResource(if (expanded) R.string.fewer_tool_steps else R.string.more_tool_steps, count),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Icon(
+                Icons.Outlined.ExpandMore,
+                contentDescription = null,
+                modifier = Modifier.rotate(arrowRotation),
+            )
+        }
     }
 }
 

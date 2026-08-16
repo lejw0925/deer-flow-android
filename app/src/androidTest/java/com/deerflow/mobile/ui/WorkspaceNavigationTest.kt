@@ -28,6 +28,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
@@ -47,6 +48,31 @@ class WorkspaceNavigationTest {
     @get:Rule val compose = createComposeRule()
 
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+
+    @Test
+    fun drawerPullToRefreshRequestsTheLatestThreads() {
+        var refreshRequests = 0
+        compose.setContent {
+            MaterialTheme {
+                WorkspaceDrawer(
+                    state = AppUiState(
+                        serverUrl = "http://10.0.2.2:2027",
+                        threads = listOf(testThread()),
+                    ),
+                    onNewChat = {},
+                    onOpenThread = {},
+                    onRenameThread = { _, _ -> },
+                    onDeleteThread = {},
+                    onPinThread = {},
+                    onDestination = {},
+                    onRefreshThreads = { refreshRequests += 1 },
+                )
+            }
+        }
+
+        compose.onNodeWithTag(UiTags.RecentConversationRefresh).performTouchInput { swipeDown() }
+        compose.runOnIdle { assertEquals(1, refreshRequests) }
+    }
 
     @Test
     fun drawerAgentsDestinationUsesChildRoute() {

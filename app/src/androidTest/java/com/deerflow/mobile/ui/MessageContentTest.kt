@@ -75,6 +75,54 @@ class MessageContentTest {
     }
 
     @Test
+    fun collapsingProcessingStepsKeepsTheLatestToolPositionStable() {
+        val group = ChatMessageGroup.Processing(
+            key = "processing-stable-collapse",
+            messages = listOf(
+                ChatMessage(
+                    id = "ai-1",
+                    role = MessageRole.Assistant,
+                    text = "",
+                    blocks = listOf(
+                        MessageBlock.Reasoning("Plan the search"),
+                        MessageBlock.ToolCall("web_search", "{\"query\":\"old query\"}", "call-1"),
+                        MessageBlock.Reasoning("Review the result"),
+                        MessageBlock.ToolCall("bash", "{\"description\":\"Inspect renderer\"}", "call-2"),
+                    ),
+                ),
+            ),
+        )
+        compose.setContent {
+            MaterialTheme {
+                ChatMessageGroupItem(group, runActive = false, onHumanInput = { _, _, _ -> })
+            }
+        }
+
+        compose.onNodeWithText("3 more steps").performClick()
+        compose.onNodeWithText("Hide 3 previous steps").assertExists()
+
+        compose.mainClock.autoAdvance = false
+        try {
+            compose.onNodeWithText("Hide 3 previous steps").performClick()
+            compose.mainClock.advanceTimeByFrame()
+            val firstFrameTop = compose.onNodeWithText("Inspect renderer")
+                .fetchSemanticsNode()
+                .boundsInRoot
+                .top
+
+            compose.mainClock.advanceTimeBy(300)
+            val settledTop = compose.onNodeWithText("Inspect renderer")
+                .fetchSemanticsNode()
+                .boundsInRoot
+                .top
+
+            assertEquals(firstFrameTop, settledTop, 0.5f)
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+    }
+
+    @Test
     fun webSearchToolShowsLinkedSourceResults() {
         setProcessingToolResult(
             MessageBlock.ToolCall("web_search", "{\"query\":\"Android\"}", "search-1"),
@@ -434,6 +482,29 @@ class MessageContentTest {
         compose.onNodeWithText("Flow").assertExists()
         compose.onNodeWithText("Download report").performClick()
         compose.runOnIdle { assertEquals("/mnt/user-data/outputs/report.md", opened) }
+    }
+
+    @Test
+    fun standardMarkdownUsesEnhancedGfmRendererWithCodeHighlighting() {
+        compose.setContent {
+            MaterialTheme {
+                MarkdownContent(
+                    """
+                    ## Deployment
+
+                    - [x] Ready
+
+                    ```kotlin
+                    val ready = true
+                    ```
+                    """.trimIndent(),
+                )
+            }
+        }
+
+        compose.onNodeWithTag(UiTags.EnhancedMarkdown).assertIsDisplayed()
+        compose.onNodeWithText("Deployment").assertIsDisplayed()
+        compose.onNodeWithText("val ready = true").assertIsDisplayed()
     }
 
     @Test

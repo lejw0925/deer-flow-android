@@ -372,11 +372,13 @@ internal fun modelUnavailableMessage(
     if (runError.isNullOrBlank()) return null
     val latestUserIndex = messages.indexOfLast { it.role == MessageRole.User }
     if (latestUserIndex < 0) return null
+    // A completed turn can contain intermediate assistant status text. Only the
+    // final user-visible assistant reply is evidence for an opaque model failure.
     return messages
         .drop(latestUserIndex + 1)
-        .asReversed()
-        .firstOrNull { it.role == MessageRole.Assistant && isModelUnavailableError(it.text) }
+        .lastOrNull { it.role == MessageRole.Assistant && it.text.isNotBlank() }
         ?.text
+        ?.takeIf(::isModelUnavailableError)
 }
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
@@ -498,6 +500,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     null
                 }
+                val retainedModelUnavailableError = when {
+                    selected?.id != coordinated.threadId -> current.modelUnavailableError
+                    coordinated.run.active -> null
+                    modelUnavailableError != null -> modelUnavailableError
+                    else -> current.modelUnavailableError
+                }
                 current.copy(
                     threads = updatedThreads,
                     selectedThread = selected?.takeIf { it.id == coordinated.threadId }?.copy(
@@ -509,7 +517,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     runNotice = if (selected?.id == coordinated.threadId) coordinated.runNotice else current.runNotice,
                     run = if (selected?.id == coordinated.threadId) coordinated.run else current.run,
                     messageActionBusy = if (selected?.id == coordinated.threadId && !coordinated.run.active) false else current.messageActionBusy,
-                    modelUnavailableError = modelUnavailableError ?: current.modelUnavailableError,
+                    modelUnavailableError = retainedModelUnavailableError,
                     error = when {
                         modelUnavailableError != null -> null
                         selectedRunError != null -> selectedRunError
@@ -764,7 +772,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshThreads() {
-        if (mutableState.value.user == null) return
+        if (mutableState.value.user == null || mutableState.value.loadingThreads) return
         viewModelScope.launch {
             mutableState.update { it.copy(loadingThreads = true, error = null) }
             try {

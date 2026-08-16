@@ -22,6 +22,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.Alignment
@@ -32,6 +34,7 @@ import com.deerflow.mobile.R
 import com.deerflow.mobile.data.ChannelCredentialField
 import com.deerflow.mobile.data.ChannelProviderInfo
 import com.deerflow.mobile.data.ChannelProviders
+import com.deerflow.mobile.data.AgentInfo
 import com.deerflow.mobile.data.ComposerState
 import com.deerflow.mobile.data.ModelInfo
 import com.deerflow.mobile.data.McpConfig
@@ -70,6 +73,37 @@ class ChatControlsTest {
     }
 
     @Test
+    fun modelMenuStaysWithinHalfTheScreenAndScrolls() {
+        val models = (0 until 28).map { index ->
+            ModelInfo(
+                name = "model-$index",
+                displayName = "Model $index",
+                description = "Model $index description",
+                supportsThinking = true,
+                supportsReasoningEffort = true,
+            )
+        }
+        setTopSelectors(
+            state = selectorState(modelName = "model-0", mode = RunMode.Thinking).copy(
+                capabilities = WorkspaceCapabilities(models = models),
+            ),
+        )
+
+        compose.onNodeWithTag(UiTags.ModelSelector).performClick()
+        val menu = compose.onNodeWithTag(UiTags.ModelSelectorMenu)
+        menu.assertIsDisplayed()
+
+        val maxHeight = context.resources.configuration.screenHeightDp *
+            context.resources.displayMetrics.density / 2f
+        assertTrue(menu.fetchSemanticsNode().boundsInRoot.height <= maxHeight + 2f)
+
+        repeat(5) {
+            menu.performTouchInput { swipeUp() }
+        }
+        compose.onNodeWithText("Model 27").assertIsDisplayed()
+    }
+
+    @Test
     fun runModeMenuDispatchesSupportedMode() {
         var selectedMode: RunMode? = null
         setTopSelectors(
@@ -93,7 +127,7 @@ class ChatControlsTest {
             MaterialTheme {
                 CapabilityRow(
                     state = AppUiState(serverUrl = "http://10.0.2.2:2027"),
-                    onAgent = {},
+                    onAgentSelected = {},
                     onQuickAction = { prompt, _ -> selectedPrompt = prompt },
                 )
             }
@@ -103,6 +137,109 @@ class ChatControlsTest {
         compose.onNodeWithText(writing).performClick()
 
         compose.runOnIdle { assertEquals(writingPrompt, selectedPrompt) }
+    }
+
+    @Test
+    fun agentSelectorExpandsAboveTheComposerAndDispatchesSelection() {
+        var selectedAgent = ""
+        val state = AppUiState(
+            serverUrl = "http://10.0.2.2:2027",
+            capabilities = WorkspaceCapabilities(
+                agents = listOf(
+                    AgentInfo(
+                        name = "writer",
+                        description = "Drafts concise responses",
+                        model = null,
+                        skills = emptyList(),
+                    ),
+                ),
+            ),
+        )
+        compose.setContent {
+            MaterialTheme {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.BottomCenter,
+                ) {
+                    CapabilityRow(
+                        state = state,
+                        onAgentSelected = { selectedAgent = it },
+                        onQuickAction = { _, _ -> },
+                    )
+                }
+            }
+        }
+
+        val trigger = compose.onNodeWithTag(UiTags.AgentSelector)
+        trigger.performClick()
+        val menu = compose.onNodeWithTag(UiTags.AgentSelectorMenu)
+        menu.assertIsDisplayed()
+        assertTrue(menu.fetchSemanticsNode().boundsInRoot.bottom <= trigger.fetchSemanticsNode().boundsInRoot.top)
+
+        compose.onNodeWithTag(UiTags.AgentSelectorOptionPrefix + "writer").performClick()
+        compose.runOnIdle { assertEquals("writer", selectedAgent) }
+    }
+
+    @Test
+    fun startingConversationClosesExpandedAgentSelectorWithTheComposer() {
+        var state by mutableStateOf(
+            AppUiState(
+                serverUrl = "http://10.0.2.2:2027",
+                composer = ComposerState(text = "Start a conversation"),
+                capabilities = WorkspaceCapabilities(
+                    agents = listOf(
+                        AgentInfo(
+                            name = "writer",
+                            description = "Drafts concise responses",
+                            model = null,
+                            skills = emptyList(),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        compose.setContent {
+            MaterialTheme {
+                TestComposer(
+                    state = state,
+                    editorValue = TextFieldValue(state.composer.text),
+                    onSend = {
+                        state = state.copy(
+                            showQuickCapabilities = false,
+                            run = RunState(RunStatus.Connecting),
+                        )
+                    },
+                )
+            }
+        }
+
+        compose.onNodeWithTag(UiTags.AgentSelector).performClick()
+        compose.onNodeWithTag(UiTags.AgentSelectorMenu).assertIsDisplayed()
+        compose.onNodeWithTag(UiTags.SendStopButton).performClick()
+        compose.waitForIdle()
+
+        compose.onAllNodesWithTag(UiTags.AgentSelectorMenu).assertCountEquals(0)
+    }
+
+    @Test
+    fun reconnectActivityShowsStatusImmediatelyBesideTheLoadingIndicator() {
+        compose.setContent {
+            MaterialTheme {
+                RunActivityRow(
+                    startedAtEpochMs = System.currentTimeMillis(),
+                    status = RunStatus.Reconnecting,
+                )
+            }
+        }
+
+        val indicatorBounds = compose.onNodeWithTag(UiTagsRunActivity.LoadingIndicator)
+            .fetchSemanticsNode()
+            .boundsInRoot
+        val statusBounds = compose.onNodeWithTag(UiTagsRunActivity.ReconnectStatus)
+            .fetchSemanticsNode()
+            .boundsInRoot
+        compose.onNodeWithText(context.getString(R.string.run_reconnecting)).assertIsDisplayed()
+        assertTrue(statusBounds.left >= indicatorBounds.right)
     }
 
     @Test
@@ -134,7 +271,7 @@ class ChatControlsTest {
                             selectedText = it.text
                         },
                         onAttachment = {},
-                        onAgent = {},
+                        onAgentSelected = {},
                         onQuickAction = { _, _ -> },
                         onRemoveAttachment = {},
                         onRetryAttachment = {},
@@ -452,7 +589,7 @@ class ChatControlsTest {
             MaterialTheme {
                 CapabilityRow(
                     state = state,
-                    onAgent = {},
+                    onAgentSelected = {},
                     onQuickAction = { selectedPrompt, selectedKeywords ->
                         prompt = selectedPrompt
                         keywords = selectedKeywords
@@ -792,7 +929,7 @@ class ChatControlsTest {
             editorValue = editorValue,
             onDraftChange = {},
             onAttachment = {},
-            onAgent = {},
+            onAgentSelected = {},
             onQuickAction = { _, _ -> },
             onRemoveAttachment = {},
             onRetryAttachment = {},

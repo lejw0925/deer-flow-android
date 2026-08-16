@@ -238,7 +238,7 @@ class WorkspaceScreenshotTest {
                 editorValue = TextFieldValue(state.composer.text),
                 onDraftChange = {},
                 onAttachment = {},
-                onAgent = {},
+                onAgentSelected = {},
                 onQuickAction = { _, _ -> },
                 onRemoveAttachment = {},
                 onRetryAttachment = {},

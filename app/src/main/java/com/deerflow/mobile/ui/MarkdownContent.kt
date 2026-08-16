@@ -48,6 +48,11 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.deerflow.mobile.R
+import com.mikepenz.markdown.compose.components.markdownComponents
+import com.mikepenz.markdown.compose.elements.highlightedCodeBlock
+import com.mikepenz.markdown.compose.elements.highlightedCodeFence
+import com.mikepenz.markdown.m3.Markdown as EnhancedMarkdown
+import com.mikepenz.markdown.m3.markdownColor
 import io.ratex.RaTeXView
 import java.net.URI
 import kotlinx.coroutines.launch
@@ -90,6 +95,44 @@ private val LocalCitationNavigator = staticCompositionLocalOf<(String) -> Unit> 
 @Composable
 fun MarkdownContent(markdown: String, modifier: Modifier = Modifier, onArtifact: (String) -> Unit = {}) {
     val presentation = remember(markdown) { citationPresentation(markdown) }
+    if (!requiresCustomMarkdownRenderer(markdown, presentation)) {
+        EnhancedMarkdownContent(markdown, modifier)
+        return
+    }
+    LegacyMarkdownContent(markdown, modifier, onArtifact, presentation)
+}
+
+@Composable
+private fun EnhancedMarkdownContent(markdown: String, modifier: Modifier) {
+    EnhancedMarkdown(
+        content = markdown,
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag(UiTags.EnhancedMarkdown),
+        colors = markdownColor(
+            text = MaterialTheme.colorScheme.onSurface,
+            codeText = MaterialTheme.colorScheme.onSurface,
+            linkText = MaterialTheme.colorScheme.primary,
+            codeBackground = MaterialTheme.colorScheme.surfaceContainerHigh,
+            inlineCodeBackground = MaterialTheme.colorScheme.secondaryContainer,
+            dividerColor = MaterialTheme.colorScheme.outlineVariant,
+            tableText = MaterialTheme.colorScheme.onSurface,
+            tableBackground = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+        components = markdownComponents(
+            codeBlock = highlightedCodeBlock,
+            codeFence = highlightedCodeFence,
+        ),
+    )
+}
+
+@Composable
+private fun LegacyMarkdownContent(
+    markdown: String,
+    modifier: Modifier,
+    onArtifact: (String) -> Unit,
+    presentation: MarkdownCitationPresentation,
+) {
     val sourceRequesters = remember(presentation.sources) {
         presentation.sources.associate { source -> source.url to BringIntoViewRequester() }
     }
@@ -108,6 +151,21 @@ fun MarkdownContent(markdown: String, modifier: Modifier = Modifier, onArtifact:
             CitationSources(presentation.sources, sourceRequesters)
         }
     }
+}
+
+internal fun requiresCustomMarkdownRenderer(
+    markdown: String,
+    presentation: MarkdownCitationPresentation = citationPresentation(markdown),
+): Boolean {
+    if (presentation.sources.isNotEmpty()) return true
+    return presentation.bodyNodes.any { node -> node.requiresCustomMarkdownRenderer(markdown) }
+}
+
+private fun Node.requiresCustomMarkdownRenderer(markdown: String): Boolean {
+    if (this is Image) return true
+    if (this is Link && destination.isArtifactPath()) return true
+    if (this is Paragraph && displayMathFormula(this, markdown) != null) return true
+    return children().any { child -> child.requiresCustomMarkdownRenderer(markdown) }
 }
 
 @Composable

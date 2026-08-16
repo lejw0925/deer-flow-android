@@ -26,16 +26,20 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.deerflow.mobile.R
 import com.deerflow.mobile.data.RunNoticeKind
+import com.deerflow.mobile.data.RunStatus
 import com.deerflow.mobile.data.StreamUpdate
 import kotlinx.coroutines.delay
 
 internal object UiTagsRunActivity {
     const val RunActivity = "run-activity"
+    const val LoadingIndicator = "run-activity-loading-indicator"
+    const val ReconnectStatus = "run-activity-reconnect-status"
 }
 
 @Composable
 fun RunActivityRow(
     startedAtEpochMs: Long?,
+    status: RunStatus = RunStatus.Streaming,
     notice: StreamUpdate.RunNotice? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -66,6 +70,7 @@ fun RunActivityRow(
         )
     }
     val formatted = formatRunDuration(elapsedSeconds, labels)
+    val reconnecting = status == RunStatus.Reconnecting
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -76,11 +81,20 @@ fun RunActivityRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            LoadingIndicator(modifier = Modifier.size(18.dp))
+            LoadingIndicator(
+                modifier = Modifier
+                    .size(18.dp)
+                    .testTag(UiTagsRunActivity.LoadingIndicator),
+            )
             Text(
-                stringResource(R.string.run_activity_working),
+                stringResource(if (reconnecting) R.string.run_reconnecting else R.string.run_activity_working),
                 style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (reconnecting) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = if (reconnecting) Modifier.testTag(UiTagsRunActivity.ReconnectStatus) else Modifier,
             )
             if (formatted != null) {
                 Text(

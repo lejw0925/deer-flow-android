@@ -15,10 +15,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -51,6 +53,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -75,6 +78,7 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
@@ -92,7 +96,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingToolbarDefaults
 import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -118,12 +121,14 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.stringResource
@@ -172,7 +177,6 @@ fun ChatScreen(
 ) {
     var showAttachments by remember { mutableStateOf(false) }
     var expandedTopSelector by remember { mutableStateOf<TopSelectorKind?>(null) }
-    var showAgentPicker by remember { mutableStateOf(false) }
     var showRunDetails by remember { mutableStateOf(false) }
     var pendingExportFormat by remember { mutableStateOf<ConversationExportFormat?>(null) }
     var editorValue by rememberSaveable(
@@ -276,6 +280,7 @@ fun ChatScreen(
         if (state.run.active && state.selectedThread != null) {
             RunActivityRow(
                 startedAtEpochMs = state.run.startedAtEpochMs,
+                status = state.run.status,
                 notice = state.runNotice,
             )
         }
@@ -287,7 +292,7 @@ fun ChatScreen(
                 viewModel.updateDraft(value.text)
             },
             onAttachment = { showAttachments = true },
-            onAgent = { showAgentPicker = true },
+            onAgentSelected = viewModel::selectAgent,
             onQuickAction = viewModel::applyQuickAction,
             onRemoveAttachment = viewModel::removeAttachment,
             onRetryAttachment = viewModel::retryAttachment,
@@ -317,9 +322,6 @@ fun ChatScreen(
                 showAttachments = false
             },
         )
-    }
-    if (showAgentPicker) {
-        AgentPickerSheet(state, viewModel, onDismiss = { showAgentPicker = false })
     }
     if (showRunDetails) {
         RunDetailsSheet(
@@ -434,6 +436,9 @@ internal fun ConversationMessageList(
     var expandedProcessingGroups by remember(conversationKey) { mutableStateOf(emptySet<String>()) }
     var initialPositionRestored by remember(conversationKey) { mutableStateOf(false) }
     var userPinnedToBottom by remember(conversationKey) { mutableStateOf(true) }
+    var manualScrollInProgress by remember(conversationKey) { mutableStateOf(false) }
+    var wasRunActive by remember(conversationKey) { mutableStateOf(runActive) }
+    var terminalFollowPending by remember(conversationKey) { mutableStateOf(false) }
     var programmaticScroll by remember { mutableStateOf(false) }
     val autoFollowEnabled by rememberUpdatedState(
         shouldAutoFollowConversation(
@@ -441,8 +446,17 @@ internal fun ConversationMessageList(
             runActive = runActive,
             expandedProcessingGroups = expandedProcessingGroups,
             userPinnedToBottom = userPinnedToBottom,
+            manualScrollInProgress = manualScrollInProgress,
+            terminalFollowPending = terminalFollowPending,
         ),
     )
+
+    LaunchedEffect(conversationKey, runActive, userPinnedToBottom, manualScrollInProgress) {
+        if (wasRunActive && !runActive && userPinnedToBottom && !manualScrollInProgress) {
+            terminalFollowPending = true
+        }
+        wasRunActive = runActive
+    }
 
     LaunchedEffect(listState, conversationKey) {
         snapshotFlow {
@@ -454,15 +468,25 @@ internal fun ConversationMessageList(
         }.collect { (scrolling, nearBottom, programmatic) ->
             // Ignore layout noise while we drive the list; growth during stream must not unpin.
             if (programmatic) return@collect
+            manualScrollInProgress = scrolling
             when {
                 nearBottom -> userPinnedToBottom = true
-                // Only unpin from a settled user scroll away from bottom (not content growth).
-                !scrolling && !nearBottom -> userPinnedToBottom = false
+                // Stop following as soon as a user fling leaves the bottom threshold.
+                // A delayed stream update must not interrupt its inertial motion.
+                !nearBottom -> userPinnedToBottom = false
             }
         }
     }
 
-    LaunchedEffect(conversationKey, messageGroups.size, messages.lastOrNull()?.text?.length, userPinnedToBottom) {
+    LaunchedEffect(
+        conversationKey,
+        messageGroups.size,
+        messages.lastOrNull()?.text?.length,
+        userPinnedToBottom,
+        manualScrollInProgress,
+        runActive,
+        terminalFollowPending,
+    ) {
         if (messageGroups.isEmpty()) return@LaunchedEffect
         if (!initialPositionRestored) {
             programmaticScroll = true
@@ -475,11 +499,13 @@ internal fun ConversationMessageList(
             }
         } else if (autoFollowEnabled) {
             delay(40)
+            if (!autoFollowEnabled || listState.isScrollInProgress) return@LaunchedEffect
             programmaticScroll = true
             try {
                 // Streaming follow keeps animation; scrollToConversationEnd avoids top-align flash.
                 listState.scrollToConversationEnd(messageGroups.lastIndex, animated = true)
                 userPinnedToBottom = true
+                terminalFollowPending = false
             } finally {
                 programmaticScroll = false
             }
@@ -488,9 +514,14 @@ internal fun ConversationMessageList(
 
     LazyColumn(
         state = listState,
-        modifier = modifier.testTag(UiTags.ConversationList),
+        // The first history layout starts at index zero. Keep it out of view and
+        // non-interactive until the synchronous end positioning has completed.
+        modifier = modifier
+            .testTag(UiTags.ConversationList)
+            .alpha(if (initialPositionRestored || messageGroups.isEmpty()) 1f else 0f),
         contentPadding = PaddingValues(start = 16.dp, top = 20.dp, end = 16.dp, bottom = 72.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
+        userScrollEnabled = initialPositionRestored,
     ) {
         itemsIndexed(messageGroups, key = { _, group -> group.key }) { _, group ->
             ChatMessageGroupItem(
@@ -520,9 +551,11 @@ internal fun shouldAutoFollowConversation(
     runActive: Boolean,
     expandedProcessingGroups: Set<String>,
     userPinnedToBottom: Boolean = true,
+    manualScrollInProgress: Boolean = false,
+    terminalFollowPending: Boolean = false,
 ): Boolean {
-    if (!userPinnedToBottom || messageGroups.isEmpty()) return false
-    if (!runActive) return true
+    if (manualScrollInProgress || !userPinnedToBottom || messageGroups.isEmpty()) return false
+    if (!runActive) return terminalFollowPending
     val latestProcessingKey = messageGroups.lastOrNull { it is ChatMessageGroup.Processing }?.key
     return latestProcessingKey !in expandedProcessingGroups
 }
@@ -721,6 +754,7 @@ internal fun ChatTopSelectors(
     val selectedModel = state.capabilities.selectedModel(state.composer.options.modelName)
     val model = selectedModel?.displayName ?: stringResource(R.string.model)
     val availableModes = state.capabilities.availableRunModes(state.composer.options.modelName)
+    val modelMenuMaxHeight = LocalConfiguration.current.screenHeightDp.dp / 2
     Row(
         modifier = Modifier.testTag(UiTags.TopSelectors),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -738,34 +772,41 @@ internal fun ChatTopSelectors(
             },
             onDismiss = { onExpandedSelectorChange(null) },
         ) {
-            Text(
-                stringResource(R.string.model),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-            )
-            if (state.capabilities.models.isEmpty()) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.no_models_available)) },
-                    onClick = { onExpandedSelectorChange(null) },
-                    enabled = false,
+            Column(
+                modifier = Modifier
+                    .heightIn(max = modelMenuMaxHeight)
+                    .verticalScroll(rememberScrollState())
+                    .testTag(UiTags.ModelSelectorMenu),
+            ) {
+                Text(
+                    stringResource(R.string.model),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                 )
-            } else {
-                state.capabilities.models.forEach { option ->
+                if (state.capabilities.models.isEmpty()) {
                     DropdownMenuItem(
-                        text = {
-                            Text(option.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        },
-                        trailingIcon = {
-                            if (state.composer.options.modelName == option.name) {
-                                Icon(Icons.Outlined.Check, contentDescription = stringResource(R.string.option_selected))
-                            }
-                        },
-                        onClick = {
-                            onModelSelected(option.name)
-                            onExpandedSelectorChange(null)
-                        },
+                        text = { Text(stringResource(R.string.no_models_available)) },
+                        onClick = { onExpandedSelectorChange(null) },
+                        enabled = false,
                     )
+                } else {
+                    state.capabilities.models.forEach { option ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(option.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            },
+                            trailingIcon = {
+                                if (state.composer.options.modelName == option.name) {
+                                    Icon(Icons.Outlined.Check, contentDescription = stringResource(R.string.option_selected))
+                                }
+                            },
+                            onClick = {
+                                onModelSelected(option.name)
+                                onExpandedSelectorChange(null)
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -1371,7 +1412,7 @@ internal fun MessageComposer(
     editorValue: TextFieldValue,
     onDraftChange: (TextFieldValue) -> Unit,
     onAttachment: () -> Unit,
-    onAgent: () -> Unit,
+    onAgentSelected: (String) -> Unit,
     onQuickAction: (String, List<String>) -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onRetryAttachment: (String) -> Unit,
@@ -1416,14 +1457,14 @@ internal fun MessageComposer(
     var composerAnchorWidthPx by remember { mutableStateOf(0) }
     Surface(tonalElevation = 2.dp) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag(UiTags.Composer)
-                .navigationBarsPadding()
-                .imePadding()
-                .padding(start = 12.dp, top = composerTopPadding, end = 12.dp, bottom = 14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag(UiTags.Composer)
+                    .navigationBarsPadding()
+                    .imePadding()
+                    .padding(start = 12.dp, top = composerTopPadding, end = 12.dp, bottom = 14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
             Column(Modifier.widthIn(max = 820.dp).fillMaxWidth()) {
                 AnimatedVisibility(
                     visible = quickCapabilitiesVisible,
@@ -1437,7 +1478,7 @@ internal fun MessageComposer(
                     ) + fadeOut(animationSpec = ExpressiveMotion.fastSpatial()),
                     label = "composer-quick-capabilities",
                 ) {
-                    CapabilityRow(state, onAgent, onQuickAction)
+                    CapabilityRow(state, onAgentSelected, onQuickAction)
                 }
                 if (state.composer.attachments.isNotEmpty()) {
                     LazyRow(
@@ -1621,9 +1662,24 @@ internal fun MessageComposer(
 @Composable
 internal fun CapabilityRow(
     state: AppUiState,
-    onAgent: () -> Unit,
+    onAgentSelected: (String) -> Unit,
     onQuickAction: (String, List<String>) -> Unit,
 ) {
+    var agentSelectorExpanded by rememberSaveable(state.draftSessionKey) { mutableStateOf(false) }
+    val capabilityHostVisible = state.showQuickCapabilities && !state.run.active
+    val agentMenuVisible = agentSelectorExpanded && capabilityHostVisible
+    BackHandler(enabled = agentMenuVisible) {
+        agentSelectorExpanded = false
+    }
+    LaunchedEffect(capabilityHostVisible) {
+        if (!capabilityHostVisible) agentSelectorExpanded = false
+    }
+    val agentMenuMaxHeight = LocalConfiguration.current.screenHeightDp.dp / 2
+    val agentArrowRotation by animateFloatAsState(
+        targetValue = if (agentMenuVisible) 180f else 0f,
+        animationSpec = ExpressiveMotion.fastSpatial(),
+        label = "agent-selector-arrow",
+    )
     val actions = listOf(
         QuickActionSpec(
             label = stringResource(R.string.quick_surprise),
@@ -1668,36 +1724,186 @@ internal fun CapabilityRow(
             icon = Icons.Outlined.Image,
         ),
     )
-    HorizontalFloatingToolbar(
-        expanded = true,
-        modifier = Modifier.fillMaxWidth().testTag(UiTags.QuickCapabilities),
-        colors = FloatingToolbarDefaults.standardFloatingToolbarColors(
-            toolbarContainerColor = Color.Transparent,
-            toolbarContentColor = MaterialTheme.colorScheme.onSurface,
-        ),
-        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-        shape = MaterialTheme.shapes.extraLarge,
-        expandedShadowElevation = 0.dp,
-        collapsedShadowElevation = 0.dp,
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        AnimatedVisibility(
+            visible = agentMenuVisible,
+            enter = expandVertically(
+                animationSpec = ExpressiveMotion.fastSpatial(),
+                expandFrom = Alignment.Bottom,
+            ) + fadeIn(animationSpec = ExpressiveMotion.fastSpatial()),
+            exit = if (capabilityHostVisible) {
+                shrinkVertically(
+                    animationSpec = ExpressiveMotion.fastSpatial(),
+                    shrinkTowards = Alignment.Bottom,
+                ) + fadeOut(animationSpec = ExpressiveMotion.fastSpatial())
+            } else {
+                ExitTransition.None
+            },
+            label = "agent-selector-menu",
         ) {
-            AssistChip(
-                onClick = onAgent,
-                label = { Text(state.composer.options.agentLabel()) },
-                leadingIcon = { Icon(Icons.Outlined.SmartToy, contentDescription = null, modifier = Modifier.size(18.dp)) },
+            AgentSelectorMenu(
+                state = state,
+                maxHeight = agentMenuMaxHeight,
+                onAgentSelected = { agentId ->
+                    onAgentSelected(agentId)
+                    agentSelectorExpanded = false
+                },
             )
-            actions.forEach { action ->
+        }
+        HorizontalFloatingToolbar(
+            expanded = true,
+            modifier = Modifier.fillMaxWidth().testTag(UiTags.QuickCapabilities),
+            colors = FloatingToolbarDefaults.standardFloatingToolbarColors(
+                toolbarContainerColor = Color.Transparent,
+                toolbarContentColor = MaterialTheme.colorScheme.onSurface,
+            ),
+            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+            shape = MaterialTheme.shapes.extraLarge,
+            expandedShadowElevation = 0.dp,
+            collapsedShadowElevation = 0.dp,
+        ) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 AssistChip(
-                    onClick = { onQuickAction(action.prompt, action.keywords) },
-                    label = { Text(action.label) },
-                    leadingIcon = { Icon(action.icon, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    onClick = { agentSelectorExpanded = !agentSelectorExpanded },
+                    label = { Text(state.composer.options.agentLabel()) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Outlined.KeyboardArrowUp,
+                            contentDescription = stringResource(R.string.agent),
+                            modifier = Modifier.size(18.dp).rotate(agentArrowRotation),
+                        )
+                    },
+                    modifier = Modifier.testTag(UiTags.AgentSelector),
+                )
+                actions.forEach { action ->
+                    AssistChip(
+                        onClick = {
+                            agentSelectorExpanded = false
+                            onQuickAction(action.prompt, action.keywords)
+                        },
+                        label = { Text(action.label) },
+                        leadingIcon = { Icon(action.icon, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AgentSelectorMenu(
+    state: AppUiState,
+    maxHeight: androidx.compose.ui.unit.Dp,
+    onAgentSelected: (String) -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = maxHeight)
+            .testTag(UiTags.AgentSelectorMenu),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        tonalElevation = 3.dp,
+        shadowElevation = 6.dp,
+    ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = maxHeight),
+            contentPadding = PaddingValues(vertical = 8.dp),
+        ) {
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Surface(
+                        modifier = Modifier.size(32.dp),
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Outlined.AutoAwesome,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                    }
+                    Text(
+                        stringResource(R.string.agent),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+            }
+            item {
+                AgentSelectorOption(
+                    name = "lead_agent",
+                    label = "DeerFlow",
+                    description = stringResource(R.string.lead_agent_description),
+                    selected = state.composer.options.assistantId == "lead_agent",
+                    onClick = { onAgentSelected("lead_agent") },
+                )
+            }
+            items(state.capabilities.agents.customAgentsOnly(), key = { it.name }) { agent ->
+                AgentSelectorOption(
+                    name = agent.name,
+                    label = agent.name,
+                    description = agent.description,
+                    selected = state.composer.options.assistantId == agent.name,
+                    onClick = { onAgentSelected(agent.name) },
                 )
             }
         }
     }
+}
+
+@Composable
+private fun AgentSelectorOption(
+    name: String,
+    label: String,
+    description: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    DropdownMenuItem(
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(label, style = MaterialTheme.typography.titleSmall)
+                if (description.isNotBlank()) {
+                    Text(
+                        description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        },
+        leadingIcon = {
+            Icon(Icons.Outlined.SmartToy, contentDescription = null)
+        },
+        trailingIcon = {
+            if (selected) {
+                Icon(Icons.Outlined.Check, contentDescription = stringResource(R.string.option_selected))
+            }
+        },
+        onClick = onClick,
+        modifier = Modifier.testTag(UiTags.AgentSelectorOptionPrefix + name),
+    )
 }
 
 private data class QuickActionSpec(
@@ -1771,47 +1977,6 @@ private fun AttachmentAction(icon: androidx.compose.ui.graphics.vector.ImageVect
             Text(label, style = MaterialTheme.typography.labelLarge)
         }
     }
-}
-
-@Composable
-private fun AgentPickerSheet(state: AppUiState, viewModel: AppViewModel, onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Text(
-            stringResource(R.string.agent),
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-        )
-        LazyColumn(Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
-            item {
-                AgentOption("lead_agent", stringResource(R.string.lead_agent_description), state.composer.options.assistantId == "lead_agent") {
-                    viewModel.selectAgent("lead_agent")
-                    onDismiss()
-                }
-            }
-            items(state.capabilities.agents.customAgentsOnly(), key = { it.name }) { agent ->
-                AgentOption(agent.name, agent.description, state.composer.options.assistantId == agent.name) {
-                    viewModel.selectAgent(agent.name)
-                    onDismiss()
-                }
-            }
-            item { Spacer(Modifier.height(28.dp)) }
-        }
-    }
-}
-
-@Composable
-private fun AgentOption(name: String, description: String, selected: Boolean, onClick: () -> Unit) {
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        label = {
-            Column(Modifier.padding(vertical = 8.dp)) {
-                Text(name, fontWeight = FontWeight.Medium)
-                if (description.isNotBlank()) Text(description, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-        },
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-    )
 }
 
 @Composable

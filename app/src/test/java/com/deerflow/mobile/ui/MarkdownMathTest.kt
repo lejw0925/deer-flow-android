@@ -5,7 +5,9 @@ import org.commonmark.node.BlockQuote
 import org.commonmark.parser.IncludeSourceSpans
 import org.commonmark.parser.Parser
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MarkdownMathTest {
@@ -69,5 +71,29 @@ class MarkdownMathTest {
         assertNull(displayMathSource("The result is \$x^2\$."))
         assertNull(displayMathSource("$$\\frac{1}{2}"))
         assertNull(displayMathSource("$$$$"))
+    }
+
+    @Test
+    fun keepsSpecialConversationContentOnTheCustomRenderer() {
+        assertTrue(requiresCustomMarkdownRenderer("$$\\frac{1}{2}$$"))
+        assertTrue(requiresCustomMarkdownRenderer("[Report](/mnt/user-data/report.md)"))
+        assertTrue(requiresCustomMarkdownRenderer("[citation: Docs](https://example.com/docs)"))
+    }
+
+    @Test
+    fun sendsStandardGfmToTheEnhancedRenderer() {
+        assertFalse(
+            requiresCustomMarkdownRenderer(
+                """
+                ## Status
+
+                | Name | Value |
+                | --- | --- |
+                | DeerFlow | Ready |
+
+                - [x] Complete
+                """.trimIndent(),
+            ),
+        )
     }
 }

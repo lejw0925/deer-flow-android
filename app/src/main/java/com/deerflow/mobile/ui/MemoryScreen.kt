@@ -129,7 +129,6 @@ fun MemoryScreen(
             },
             colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
         )
-
         if (state.offline && state.memory != null) {
             Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
                 Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) { OfflineBanner() }

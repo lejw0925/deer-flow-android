@@ -59,6 +59,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -112,6 +113,7 @@ fun WorkspaceDrawer(
     onDeleteThread: (ThreadSummary) -> Unit,
     onPinThread: (ThreadSummary) -> Unit,
     onDestination: (DrawerDestination) -> Unit,
+    onRefreshThreads: () -> Unit = {},
     onOpenProfile: () -> Unit = {},
     drawerOpen: Boolean = false,
 ) {
@@ -166,67 +168,77 @@ fun WorkspaceDrawer(
                     )
                 }
             }
-            LazyColumn(
+            PullToRefreshBox(
+                isRefreshing = state.loadingThreads,
+                onRefresh = onRefreshThreads,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .testTag(UiTags.RecentConversationScroll),
-                contentPadding = PaddingValues(bottom = DRAWER_BOTTOM_CONTENT_PADDING),
+                    .testTag(UiTags.RecentConversationRefresh),
             ) {
-                item {
-                    DrawerDestinationRow(Icons.Outlined.SmartToy, stringResource(R.string.tab_agents)) {
-                        onDestination(DrawerDestination.Agents)
-                    }
-                }
-                item {
-                    DrawerDestinationRow(Icons.Outlined.Schedule, stringResource(R.string.tab_tasks)) {
-                        onDestination(DrawerDestination.Tasks)
-                    }
-                }
-                if (state.capabilities.skills.isNotEmpty()) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag(UiTags.RecentConversationScroll),
+                    contentPadding = PaddingValues(bottom = DRAWER_BOTTOM_CONTENT_PADDING),
+                ) {
                     item {
-                        DrawerDestinationRow(Icons.Outlined.Tune, stringResource(R.string.skills)) {
-                            onDestination(DrawerDestination.Skills)
+                        DrawerDestinationRow(Icons.Outlined.SmartToy, stringResource(R.string.tab_agents)) {
+                            onDestination(DrawerDestination.Agents)
                         }
                     }
-                }
-                item {
-                    DrawerDestinationRow(Icons.Outlined.Psychology, stringResource(R.string.tab_memory)) {
-                        onDestination(DrawerDestination.Memory)
-                    }
-                }
-                item { HorizontalDivider(Modifier.padding(vertical = 10.dp)) }
-                item {
-                    Text(
-                        stringResource(R.string.recent_conversations),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    )
-                }
-                if (state.offline) {
                     item {
-                        Box(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { OfflineBanner() }
+                        DrawerDestinationRow(Icons.Outlined.Schedule, stringResource(R.string.tab_tasks)) {
+                            onDestination(DrawerDestination.Tasks)
+                        }
                     }
-                }
-                items(filtered, key = { it.id }) { thread ->
-                    ThreadDrawerRow(
-                        thread = thread,
-                        selected = state.selectedThread?.id == thread.id,
-                        active = thread.id in state.activeRunThreadIds,
-                        onClick = { onOpenThread(thread) },
-                        onRename = { renameTarget = thread },
-                        onDelete = { deleteTarget = thread },
-                        onPin = { onPinThread(thread) },
-                    )
-                }
-                if (filtered.isEmpty()) {
+                    if (state.capabilities.skills.isNotEmpty()) {
+                        item {
+                            DrawerDestinationRow(Icons.Outlined.Tune, stringResource(R.string.skills)) {
+                                onDestination(DrawerDestination.Skills)
+                            }
+                        }
+                    }
+                    item {
+                        DrawerDestinationRow(Icons.Outlined.Psychology, stringResource(R.string.tab_memory)) {
+                            onDestination(DrawerDestination.Memory)
+                        }
+                    }
+                    item {
+                        HorizontalDivider(Modifier.padding(vertical = 10.dp))
+                    }
                     item {
                         Text(
-                            stringResource(if (query.isBlank()) R.string.no_conversations else R.string.no_search_results),
+                            stringResource(R.string.recent_conversations),
+                            style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(16.dp),
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                         )
+                    }
+                    if (state.offline) {
+                        item {
+                            Box(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { OfflineBanner() }
+                        }
+                    }
+                    items(filtered, key = { it.id }) { thread ->
+                        ThreadDrawerRow(
+                            thread = thread,
+                            selected = state.selectedThread?.id == thread.id,
+                            active = thread.id in state.activeRunThreadIds,
+                            onClick = { onOpenThread(thread) },
+                            onRename = { renameTarget = thread },
+                            onDelete = { deleteTarget = thread },
+                            onPin = { onPinThread(thread) },
+                        )
+                    }
+                    if (filtered.isEmpty()) {
+                        item {
+                            Text(
+                                stringResource(if (query.isBlank()) R.string.no_conversations else R.string.no_search_results),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(16.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -341,13 +353,11 @@ private fun ThreadDrawerRow(
                 )
             },
             leadingContent = {
-                StatusDot(
-                    status = if (active) "running" else thread.status,
-                    description = stringResource(
-                        R.string.status_description,
-                        if (active) "running" else thread.status,
-                    ),
+                val description = stringResource(
+                    R.string.status_description,
+                    if (active) "running" else thread.status,
                 )
+                StatusDot(status = if (active) "running" else thread.status, description = description)
             },
             trailingContent = {
                 if (thread.isPinned) Icon(Icons.Outlined.PushPin, contentDescription = stringResource(R.string.pinned), modifier = Modifier.size(18.dp))

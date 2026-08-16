@@ -171,6 +171,7 @@ class ChatComposerTest {
         assertTrue(isModelUnavailableError("Model 'research' not found in config"))
         assertTrue(isModelUnavailableError("模型服务提供商当前不可用"))
         assertFalse(isModelUnavailableError("The run timed out."))
+        assertFalse(isModelUnavailableError("Artifact delivery incomplete: no produced output artifact was presented"))
         assertFalse(isModelUnavailableError("The model provider stopped this response for safety."))
         assertFalse(isModelUnavailableError(null))
     }
@@ -199,6 +200,31 @@ class ChatComposerTest {
         )
 
         assertEquals(null, modelUnavailableMessage("The run timed out.", messages))
+    }
+
+    @Test
+    fun `completed answer does not promote an earlier model fallback`() {
+        val messages = listOf(
+            com.deerflow.mobile.data.ChatMessage("user-1", com.deerflow.mobile.data.MessageRole.User, "Do the work"),
+            com.deerflow.mobile.data.ChatMessage(
+                "assistant-1",
+                com.deerflow.mobile.data.MessageRole.Assistant,
+                "The configured LLM provider is temporarily unavailable after multiple retries.",
+            ),
+            com.deerflow.mobile.data.ChatMessage(
+                "assistant-2",
+                com.deerflow.mobile.data.MessageRole.Assistant,
+                "The deliverable is complete.",
+            ),
+        )
+
+        assertEquals(
+            null,
+            modelUnavailableMessage(
+                "Artifact delivery incomplete: no produced output artifact was presented",
+                messages,
+            ),
+        )
     }
 
     @Test

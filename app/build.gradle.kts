@@ -52,8 +52,8 @@ android {
         applicationId = "com.deerflow.mobile"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "1.1.7"
+        versionCode = 15
+        versionName = "1.1.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -158,6 +158,8 @@ dependencies {
     implementation("org.commonmark:commonmark:0.29.0")
     implementation("org.commonmark:commonmark-ext-gfm-strikethrough:0.29.0")
     implementation("org.commonmark:commonmark-ext-gfm-tables:0.29.0")
+    implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.28.0")
+    implementation("com.mikepenz:multiplatform-markdown-renderer-code:0.28.0")
     implementation("io.github.erweixin:ratex-android:0.1.13")
     ksp("androidx.room:room-compiler:2.6.1")
 
