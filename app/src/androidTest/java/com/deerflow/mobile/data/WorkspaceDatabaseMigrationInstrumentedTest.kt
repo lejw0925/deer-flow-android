@@ -31,19 +31,19 @@ class WorkspaceDatabaseMigrationInstrumentedTest {
             helper.createDatabase(databaseName, 1).apply {
                 execSQL(
                     "INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?)",
-                    arrayOf(serverUrl, threadId, "Legacy thread", "busy", "2026-07-20T00:00:00Z", 1),
+                    arrayOf<Any>(serverUrl, threadId, "Legacy thread", "busy", "2026-07-20T00:00:00Z", 1),
                 )
                 execSQL(
                     "INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?)",
-                    arrayOf(serverUrl, threadId, "message-v1", 0, MessageRole.User.name, "Legacy message"),
+                    arrayOf<Any>(serverUrl, threadId, "message-v1", 0, MessageRole.User.name, "Legacy message"),
                 )
                 execSQL(
                     "INSERT INTO drafts VALUES (?, ?, ?, ?)",
-                    arrayOf(serverUrl, threadId, "Legacy draft", 1_753_000_000_000L),
+                    arrayOf<Any>(serverUrl, threadId, "Legacy draft", 1_753_000_000_000L),
                 )
                 execSQL(
                     "INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?)",
-                    arrayOf(serverUrl, threadId, "run-v1", "event-v1", RunStatus.Reconnecting.name, 1_753_000_000_001L),
+                    arrayOf<Any>(serverUrl, threadId, "run-v1", "event-v1", RunStatus.Reconnecting.name, 1_753_000_000_001L),
                 )
                 close()
             }
@@ -62,7 +62,7 @@ class WorkspaceDatabaseMigrationInstrumentedTest {
 
                 migrated.execSQL(
                     "INSERT INTO attachments VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    arrayOf(
+                    arrayOf<Any?>(
                         serverUrl,
                         threadId,
                         "content://migration/attachment",
@@ -95,7 +95,7 @@ class WorkspaceDatabaseMigrationInstrumentedTest {
             helper.createDatabase(databaseName, 2).apply {
                 execSQL(
                     "INSERT INTO attachments VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    arrayOf(
+                    arrayOf<Any>(
                         serverUrl,
                         threadId,
                         "content://migration/attachment-v2",
@@ -120,7 +120,7 @@ class WorkspaceDatabaseMigrationInstrumentedTest {
                 assertEquals("version-two.txt", migrated.singleString("SELECT filename FROM attachments"))
                 migrated.execSQL(
                     "INSERT INTO workspace_metadata VALUES (?, ?, ?, ?)",
-                    arrayOf(serverUrl, "capabilities", "{\"version\":1}", 1_753_000_000_004L),
+                    arrayOf<Any>(serverUrl, "capabilities", "{\"version\":1}", 1_753_000_000_004L),
                 )
                 assertEquals("capabilities", migrated.singleString("SELECT kind FROM workspace_metadata"))
                 assertTrue(migrated.hasColumns("workspace_metadata", METADATA_COLUMNS))
@@ -143,7 +143,7 @@ class WorkspaceDatabaseMigrationInstrumentedTest {
             helper.createDatabase(databaseName, 3).apply {
                 execSQL(
                     "INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?)",
-                    arrayOf(serverUrl, threadId, "message-v3", 0, MessageRole.Assistant.name, "Legacy structured text"),
+                    arrayOf<Any>(serverUrl, threadId, "message-v3", 0, MessageRole.Assistant.name, "Legacy structured text"),
                 )
                 close()
             }
@@ -177,7 +177,7 @@ class WorkspaceDatabaseMigrationInstrumentedTest {
             helper.createDatabase(databaseName, 4).apply {
                 execSQL(
                     "INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?)",
-                    arrayOf(serverUrl, threadId, "run-v4", "event-v4", RunStatus.Reconnecting.name, 1_753_000_000_005L),
+                    arrayOf<Any>(serverUrl, threadId, "run-v4", "event-v4", RunStatus.Reconnecting.name, 1_753_000_000_005L),
                 )
                 close()
             }
@@ -210,7 +210,7 @@ class WorkspaceDatabaseMigrationInstrumentedTest {
             helper.createDatabase(databaseName, 1).apply {
                 execSQL(
                     "INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?)",
-                    arrayOf(
+                    arrayOf<Any>(
                         "https://chain.example.test",
                         "thread-v1-chain",
                         "Chain migration",
@@ -221,7 +221,7 @@ class WorkspaceDatabaseMigrationInstrumentedTest {
                 )
                 execSQL(
                     "INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?)",
-                    arrayOf(
+                    arrayOf<Any>(
                         "https://chain.example.test",
                         "thread-v1-chain",
                         "message-v1-chain",

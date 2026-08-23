@@ -425,8 +425,6 @@
     <string name="save_reconnect">保存并重新连接</string>
     <string name="appearance">外观</string>
     <string name="preferences">偏好设置</string>
-    <string name="dynamic_color">动态配色</string>
-    <string name="dynamic_color_subtitle">在 Android 12 及以上使用系统配色</string>
     <string name="language">语言</string>
     <string name="follow_system">跟随系统语言</string>
     <string name="language_system">跟随系统</string>

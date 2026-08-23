@@ -5,7 +5,18 @@
 This is a single-module Kotlin Android client. Production code is under
 `app/src/main/java/com/deerflow/mobile/`: `data/` contains Gateway, Room, and
 DataStore code; `run/` owns active-run coordination and notifications; and
-`ui/` contains Compose screens, presentation helpers, and themes. Android
+`ui/` contains Compose screens, presentation helpers, and themes. Within `ui/`,
+`glass/` is the liquid-glass design system built on Kyant0's Backdrop library
+(`io.github.kyant0:backdrop`, pinned to 1.0.6 — the 2.0.0 AAR requires
+compileSdk 37 / AGP 9). Glass architecture rule: a screen records its
+scrollable content into a backdrop via `Modifier.layerBackdrop(backdrop)` +
+`rememberGlassBackdrop()`, and glass elements (`Modifier.glass(...)`,
+`GlassTopAppBar`, `GlassModalBottomSheet`, …) must be siblings OUTSIDE that
+recorded layer — never inside it (self-sampling smears) and never recorded
+again (crash). Rows/cards inside the recorded layer and popup-window surfaces
+(DropdownMenu, Popup) use `Modifier.glassFrosted` instead. Effects render on
+API 31+ (lens 33+); below that `glass()` falls back to a translucent fill.
+Android
 resources are in `app/src/main/res/`, and checked-in Room migration schemas are
 in `app/schemas/`. Keep protocol, persistence, and UI changes in their
 respective layers. `tools/mock_gateway.py` provides a local Gateway fixture.

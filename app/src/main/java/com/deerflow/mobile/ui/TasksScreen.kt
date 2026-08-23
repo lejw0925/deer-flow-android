@@ -30,7 +30,6 @@ import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.Refresh
@@ -40,9 +39,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
@@ -51,16 +48,18 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -72,6 +71,15 @@ import com.deerflow.mobile.data.TaskSchedule
 import com.deerflow.mobile.data.isFutureOnceSchedule
 import com.deerflow.mobile.data.onceScheduleFor
 import com.deerflow.mobile.data.parseOnceSchedule
+import com.deerflow.mobile.ui.glass.GlassDropdownMenu
+import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
+import com.deerflow.mobile.ui.glass.GlassMenuItem
+import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
+import com.deerflow.mobile.ui.glass.GlassTopAppBar
+import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
+import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
+import com.deerflow.mobile.ui.glass.rememberGlassTints
+import com.kyant.backdrop.backdrops.layerBackdrop
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
@@ -80,52 +88,60 @@ fun TasksScreen(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit, 
     var creating by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<ScheduledTaskInfo?>(null) }
     var historyTask by remember { mutableStateOf<ScheduledTaskInfo?>(null) }
-    Column(Modifier.fillMaxSize().padding(contentPadding)) {
-        TopAppBar(
-            navigationIcon = {
-                IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
-                }
-            },
-            title = { Text(stringResource(R.string.tasks_title)) },
-            actions = {
-                IconButton(onClick = { creating = true }, enabled = !state.workspaceMutationBusy, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.create_task))
-                }
-                IconButton(onClick = viewModel::refreshTasks, enabled = !state.loadingTasks, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.refresh))
-                }
-            },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-        )
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            when {
-                state.loadingTasks && state.tasks.isEmpty() -> LoadingIndicator(Modifier.size(32.dp))
-                state.tasks.isEmpty() -> EmptyState(
-                    icon = { Icon(Icons.Outlined.Schedule, contentDescription = null, modifier = Modifier.size(46.dp), tint = MaterialTheme.colorScheme.primary) },
-                    title = stringResource(R.string.no_tasks),
-                    body = stringResource(R.string.no_tasks_body),
-                )
-                else -> LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(state.tasks, key = { it.id }) { task ->
-                        TaskRow(
-                            task = task,
-                            onPause = { viewModel.pauseTask(task) },
-                            onTrigger = { viewModel.triggerTask(task) },
-                            onEdit = if (task.scheduleType in setOf("cron", "once")) ({ editing = task }) else null,
-                            onDelete = { viewModel.deleteTask(task) },
-                            onHistory = {
-                                historyTask = task
-                                viewModel.loadTaskRuns(task)
-                            },
-                        )
+    Box(Modifier.fillMaxSize().padding(contentPadding)) {
+        val backdrop = rememberGlassBackdrop()
+        CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+            var topBarHeightPx by remember { mutableIntStateOf(0) }
+            val topBarHeight = with(LocalDensity.current) { topBarHeightPx.toDp() }
+            Box(Modifier.fillMaxSize().layerBackdrop(backdrop), contentAlignment = Alignment.Center) {
+                // Aurora inside the recorded layer so the floating glass top bar
+                // samples colorful refraction, not the dead solid background.
+                GeminiAuroraBackground(Modifier.fillMaxSize())
+                when {
+                    state.loadingTasks && state.tasks.isEmpty() -> LoadingIndicator(Modifier.size(32.dp))
+                    state.tasks.isEmpty() -> EmptyState(
+                        icon = { Icon(Icons.Outlined.Schedule, contentDescription = null, modifier = Modifier.size(46.dp), tint = MaterialTheme.colorScheme.primary) },
+                        title = stringResource(R.string.no_tasks),
+                        body = stringResource(R.string.no_tasks_body),
+                    )
+                    else -> LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp + topBarHeight, bottom = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(state.tasks, key = { it.id }) { task ->
+                            TaskRow(
+                                task = task,
+                                onPause = { viewModel.pauseTask(task) },
+                                onTrigger = { viewModel.triggerTask(task) },
+                                onEdit = if (task.scheduleType in setOf("cron", "once")) ({ editing = task }) else null,
+                                onDelete = { viewModel.deleteTask(task) },
+                                onHistory = {
+                                    historyTask = task
+                                    viewModel.loadTaskRuns(task)
+                                },
+                            )
+                        }
                     }
                 }
             }
+            GlassTopAppBar(
+                modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter).onGloballyPositioned { topBarHeightPx = it.size.height },
+                navigationIcon = {
+                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
+                    }
+                },
+                title = { Text(stringResource(R.string.tasks_title)) },
+                actions = {
+                    IconButton(onClick = { creating = true }, enabled = !state.workspaceMutationBusy, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.create_task))
+                    }
+                    IconButton(onClick = viewModel::refreshTasks, enabled = !state.loadingTasks, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.refresh))
+                    }
+                },
+            )
         }
     }
     if (creating || editing != null) {
@@ -208,32 +224,38 @@ internal fun TaskRow(
                     ) {
                         Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.more_actions))
                     }
-                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(if (task.status == "paused") R.string.resume else R.string.pause)) },
-                            leadingIcon = { Icon(if (task.status == "paused") Icons.Filled.PlayArrow else Icons.Outlined.Pause, contentDescription = null) },
-                            onClick = { menuExpanded = false; onPause() },
-                            modifier = Modifier.testTag(UiTags.TaskPauseResume),
-                        )
-                        if (onEdit != null) {
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.edit)) },
-                                leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
-                                onClick = { menuExpanded = false; onEdit() },
-                                modifier = Modifier.testTag(UiTags.TaskEdit),
+                    GlassDropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false },
+                    ) {
+                        Column {
+                            GlassMenuItem(
+                                text = { Text(stringResource(if (task.status == "paused") R.string.resume else R.string.pause)) },
+                                leadingIcon = { Icon(if (task.status == "paused") Icons.Filled.PlayArrow else Icons.Outlined.Pause, contentDescription = null) },
+                                onClick = { menuExpanded = false; onPause() },
+                                modifier = Modifier.testTag(UiTags.TaskPauseResume),
+                            )
+                            if (onEdit != null) {
+                                GlassMenuItem(
+                                    text = { Text(stringResource(R.string.edit)) },
+                                    leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                                    onClick = { menuExpanded = false; onEdit() },
+                                    modifier = Modifier.testTag(UiTags.TaskEdit),
+                                )
+                            }
+                            GlassMenuItem(
+                                text = { Text(stringResource(R.string.delete)) },
+                                leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null) },
+                                onClick = { menuExpanded = false; onDelete() },
+                                modifier = Modifier.testTag(UiTags.TaskDelete),
                             )
                         }
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.delete)) },
-                            leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null) },
-                            onClick = { menuExpanded = false; onDelete() },
-                            modifier = Modifier.testTag(UiTags.TaskDelete),
-                        )
                     }
                 }
             }
         },
         modifier = Modifier.fillMaxWidth().testTag(UiTags.TaskRowPrefix + task.id),
+        colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
     )
 }
 
@@ -247,7 +269,7 @@ internal fun TaskRunHistorySheet(
     onOpenConversation: (ScheduledTaskRunInfo) -> Unit,
 ) {
     var selectedRun by remember(task.id) { mutableStateOf<ScheduledTaskRunInfo?>(null) }
-    ModalBottomSheet(onDismissRequest = onDismiss, modifier = Modifier.testTag(UiTags.TaskRunHistorySheet)) {
+    GlassModalBottomSheet(onDismissRequest = onDismiss, modifier = Modifier.testTag(UiTags.TaskRunHistorySheet)) {
         when (val detail = selectedRun) {
             null -> TaskRunList(
                 task = task,
@@ -412,6 +434,8 @@ internal fun TaskEditorSheet(
     onSave: (String, String, TaskSchedule, String) -> Unit,
 ) {
     val context = LocalContext.current
+    val invalidTimezoneLabel = stringResource(R.string.invalid_timezone)
+    val onceMustBeFutureLabel = stringResource(R.string.once_must_be_future)
     val initialTimezone = task?.timezone?.takeIf { it.isNotBlank() } ?: java.time.ZoneId.systemDefault().id
     val initialOnce = parseOnceSchedule(task?.scheduleLabel.orEmpty(), initialTimezone)
         ?: LocalDateTime.now().plusHours(1).withSecond(0).withNano(0)
@@ -430,7 +454,7 @@ internal fun TaskEditorSheet(
         TaskScheduleKind.Cron -> cron.isNotBlank()
         TaskScheduleKind.Once -> onceSchedule?.let(::isFutureOnceSchedule) == true
     }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    GlassModalBottomSheet(onDismissRequest = onDismiss) {
         LazyColumn(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
@@ -546,9 +570,9 @@ internal fun TaskEditorSheet(
                         }
                         validationError = when {
                             timezone.isBlank() || (scheduleKind == TaskScheduleKind.Once && onceSchedule == null) ->
-                                context.getString(R.string.invalid_timezone)
+                                invalidTimezoneLabel
                             scheduleKind == TaskScheduleKind.Once && schedule is TaskSchedule.Once && !isFutureOnceSchedule(schedule) ->
-                                context.getString(R.string.once_must_be_future)
+                                onceMustBeFutureLabel
                             else -> null
                         }
                         if (schedule != null && validationError == null) onSave(title, prompt, schedule, timezone)

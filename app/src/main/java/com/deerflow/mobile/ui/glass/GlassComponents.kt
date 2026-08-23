@@ -1,0 +1,280 @@
+package com.deerflow.mobile.ui.glass
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SheetState
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarData
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarColors
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.unit.dp
+import com.kyant.backdrop.highlight.Highlight
+import com.kyant.backdrop.shadow.InnerShadow
+import com.kyant.backdrop.shadow.Shadow
+
+/**
+ * Liquid-glass replacements for the Material 3 chrome used across the app.
+ * All of them degrade to translucent frosted surfaces when backdrop sampling is
+ * unavailable (see [glass]).
+ *
+ * Interactive elements (buttons, chips) carry the full liquid treatment from
+ * the Backdrop catalog: ambient edge highlight, soft drop shadow, press-driven
+ * inner shadow, and a radial glow that follows the finger.
+ */
+
+private val transparentBarColors: TopAppBarColors
+    @Composable
+    get() = TopAppBarDefaults.topAppBarColors(
+        containerColor = Color.Transparent,
+        scrolledContainerColor = Color.Transparent,
+    )
+
+/** Soft shadow lifting floating glass off the recorded content. */
+private fun glassShadow(): Shadow = Shadow(radius = 8.dp, color = Color.Black.copy(alpha = 0.08f))
+
+/** Floating glass top bar; meant to overlay the recorded content layer. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GlassTopAppBar(
+    title: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    navigationIcon: @Composable () -> Unit = {},
+    actions: @Composable RowScope.() -> Unit = {},
+) {
+    TopAppBar(
+        title = title,
+        modifier = modifier.glass(shape = RectangleShape, tint = rememberGlassTints().veil),
+        navigationIcon = navigationIcon,
+        actions = actions,
+        colors = transparentBarColors,
+    )
+}
+
+/** Modal bottom sheet whose body is a glass panel over the underlying content. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GlassModalBottomSheet(
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    sheetState: SheetState = rememberModalBottomSheetState(),
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    ModalBottomSheet(
+        onDismissRequest = onDismissRequest,
+        modifier = modifier,
+        sheetState = sheetState,
+        shape = sheetShape,
+        containerColor = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        tonalElevation = 0.dp,
+    ) {
+        Column(
+            Modifier
+                .glass(shape = sheetShape, tint = rememberGlassTints().veil),
+        ) {
+            content()
+        }
+    }
+}
+
+/** Alert dialog with a glass panel instead of an opaque surface. */
+@Composable
+fun GlassAlertDialog(
+    onDismissRequest: () -> Unit,
+    confirmButton: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    dismissButton: (@Composable () -> Unit)? = null,
+    icon: (@Composable () -> Unit)? = null,
+    title: (@Composable () -> Unit)? = null,
+    text: (@Composable () -> Unit)? = null,
+) {
+    val shape = RoundedCornerShape(28.dp)
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        confirmButton = confirmButton,
+        modifier = modifier.glass(shape = shape, tint = rememberGlassTints().veil),
+        dismissButton = dismissButton,
+        icon = icon,
+        title = title,
+        text = text,
+        shape = shape,
+        containerColor = Color.Transparent,
+        tonalElevation = 0.dp,
+    )
+}
+
+/** Primary action button rendered as an interactive glass capsule. */
+@Composable
+fun GlassButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    tint: Color? = Color.Transparent,
+    content: @Composable RowScope.() -> Unit,
+) {
+    val progress = rememberGlassPressProgress()
+    val scope = rememberCoroutineScope()
+    val glow = remember(scope) { InteractiveHighlight(scope) }
+    Row(
+        modifier
+            .glass(
+                shape = CircleShape,
+                tint = tint,
+                useLens = true,
+                shadow = { glassShadow() },
+                innerShadow = { InnerShadow(radius = 4.dp * progress.value, alpha = progress.value) },
+                highlight = { Highlight.Default.copy(alpha = 0.6f + 0.4f * progress.value) },
+                layerBlock = glassPressLayerBlock { progress.value },
+            )
+            .glassEdge(CircleShape)
+            .then(glow.modifier)
+            .then(glow.gestureModifier)
+            .glassPressGestures(progress)
+            .clickable(enabled = enabled, onClick = onClick, role = Role.Button)
+            .padding(horizontal = 24.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        content()
+    }
+}
+
+/** Circular glass icon button with press-to-scale and finger-following glow. */
+@Composable
+fun GlassIconButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    tint: Color? = Color.Transparent,
+    content: @Composable () -> Unit,
+) {
+    val progress = rememberGlassPressProgress()
+    val scope = rememberCoroutineScope()
+    val glow = remember(scope) { InteractiveHighlight(scope) }
+    Box(
+        modifier
+            .size(44.dp)
+            .glass(
+                shape = CircleShape,
+                tint = tint,
+                useLens = true,
+                shadow = { glassShadow() },
+                innerShadow = { InnerShadow(radius = 4.dp * progress.value, alpha = progress.value) },
+                highlight = { Highlight.Default.copy(alpha = 0.6f + 0.4f * progress.value) },
+                layerBlock = glassPressLayerBlock { progress.value },
+            )
+            .glassEdge(CircleShape)
+            .then(glow.modifier)
+            .then(glow.gestureModifier)
+            .glassPressGestures(progress)
+            .clickable(enabled = enabled, onClick = onClick, role = Role.Button),
+        contentAlignment = Alignment.Center,
+    ) {
+        content()
+    }
+}
+
+/** Small glass pill for quick actions, with the interactive liquid treatment. */
+@Composable
+fun GlassChip(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color? = Color.Transparent,
+    leadingIcon: (@Composable () -> Unit)? = null,
+    label: @Composable () -> Unit,
+) {
+    val progress = rememberGlassPressProgress()
+    val scope = rememberCoroutineScope()
+    val glow = remember(scope) { InteractiveHighlight(scope) }
+    Row(
+        modifier
+            .glass(
+                shape = CircleShape,
+                tint = tint,
+                useLens = true,
+                shadow = { glassShadow() },
+                innerShadow = { InnerShadow(radius = 3.dp * progress.value, alpha = progress.value) },
+                highlight = { Highlight.Default.copy(alpha = 0.6f + 0.4f * progress.value) },
+                layerBlock = glassPressLayerBlock { progress.value },
+            )
+            .glassEdge(CircleShape)
+            .then(glow.modifier)
+            .then(glow.gestureModifier)
+            .glassPressGestures(progress)
+            .clickable(onClick = onClick, role = Role.Button)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        leadingIcon?.invoke()
+        label()
+    }
+}
+
+/** Glass container for floating cards (welcome suggestions, summaries). */
+@Composable
+fun GlassCard(
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(24.dp),
+    onClick: (() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val glassModifier = modifier.glass(
+        shape = shape,
+        shadow = { glassShadow() },
+        highlight = { Highlight.Ambient },
+    )
+    Column(
+        if (onClick != null) {
+            glassModifier.clickable(onClick = onClick, role = Role.Button)
+        } else {
+            glassModifier
+        },
+        content = content,
+    )
+}
+
+/** Snackbar host that renders notifications on glass. */
+@Composable
+fun GlassSnackbarHost(
+    hostState: SnackbarHostState,
+    modifier: Modifier = Modifier,
+) {
+    SnackbarHost(hostState = hostState, modifier = modifier) { data: SnackbarData ->
+        val shape = RoundedCornerShape(16.dp)
+        Snackbar(
+            snackbarData = data,
+            modifier = Modifier.glass(shape = shape, tint = rememberGlassTints().veil),
+            shape = shape,
+            containerColor = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}

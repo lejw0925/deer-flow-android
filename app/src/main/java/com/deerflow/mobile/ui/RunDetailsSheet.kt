@@ -26,7 +26,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -41,6 +40,7 @@ import com.deerflow.mobile.data.RunDetails
 import com.deerflow.mobile.data.RunEventRecord
 import com.deerflow.mobile.data.WorkspaceChangeFile
 import com.deerflow.mobile.data.WorkspaceChanges
+import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
 
 @Composable
 fun RunDetailsSheet(
@@ -49,7 +49,7 @@ fun RunDetailsSheet(
     onSelectRun: (String) -> Unit,
     onReload: () -> Unit,
 ) {
-    ModalBottomSheet(
+    GlassModalBottomSheet(
         onDismissRequest = onDismiss,
         modifier = Modifier.testTag(UiTags.RunDetailsSheet),
     ) {

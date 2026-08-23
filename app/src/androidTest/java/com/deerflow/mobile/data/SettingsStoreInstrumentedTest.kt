@@ -46,7 +46,7 @@ class SettingsStoreInstrumentedTest {
 
         withTestStore(dataStoreName, legacyName) { (store, _) ->
             assertEquals(
-                SettingsSnapshot(serverUrl, ThemePreference.Dark, useDynamicColor = false),
+                SettingsSnapshot(serverUrl, ThemePreference.Dark),
                 store.read(),
             )
             assertEquals(setOf("thread-1", "thread-2"), store.pinnedThreads(serverUrl))
@@ -117,7 +117,6 @@ class SettingsStoreInstrumentedTest {
 
             store.setServerUrl(firstServer)
             store.setTheme(ThemePreference.Light)
-            store.setDynamicColor(false)
             store.setNotifyOnRunCompletion(false)
             store.setCacheRetentionPolicy(CacheRetentionPolicy.ClearOnSignOut)
             store.setArtifactDownloadLimits(
@@ -131,7 +130,6 @@ class SettingsStoreInstrumentedTest {
                 SettingsSnapshot(
                     serverUrl = firstServer,
                     theme = ThemePreference.Light,
-                    useDynamicColor = false,
                     notifyOnRunCompletion = false,
                     cacheRetentionPolicy = CacheRetentionPolicy.ClearOnSignOut,
                     artifactDownloadLimits = ArtifactDownloadLimits(
@@ -157,7 +155,6 @@ class SettingsStoreInstrumentedTest {
                 SettingsSnapshot(
                     serverUrl = firstServer,
                     theme = ThemePreference.Light,
-                    useDynamicColor = false,
                     notifyOnRunCompletion = false,
                     cacheRetentionPolicy = CacheRetentionPolicy.ClearOnSignOut,
                     artifactDownloadLimits = ArtifactDownloadLimits(

@@ -2,19 +2,15 @@
 
 package com.deerflow.mobile.ui.theme
 
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -23,46 +19,66 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import com.deerflow.mobile.data.ThemePreference
 
+/**
+ * Gemini-inspired palette: a cool blue/violet/pink identity on near-neutral
+ * surfaces, so the aurora glow behind the glass layers carries the brand color.
+ * Dynamic color is intentionally not used; only light/dark variants exist.
+ */
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF276B45),
+    primary = Color(0xFF1B6EF3),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFD8ECDE),
-    onPrimaryContainer = Color(0xFF0A2A18),
-    secondary = Color(0xFF315D78),
+    primaryContainer = Color(0xFFD3E3FD),
+    onPrimaryContainer = Color(0xFF041E49),
+    secondary = Color(0xFF7B5EA7),
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFD9EAF5),
-    onSecondaryContainer = Color(0xFF112C3C),
-    tertiary = Color(0xFF8A5B18),
-    background = Color(0xFFF7F8F5),
-    onBackground = Color(0xFF19201B),
-    surface = Color(0xFFF7F8F5),
-    onSurface = Color(0xFF19201B),
-    surfaceVariant = Color(0xFFE7EAE5),
-    onSurfaceVariant = Color(0xFF424943),
-    outline = Color(0xFF737A73),
-    outlineVariant = Color(0xFFCACFC9),
+    secondaryContainer = Color(0xFFEADDFF),
+    onSecondaryContainer = Color(0xFF24104A),
+    tertiary = Color(0xFFC2497C),
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFFBD0E1),
+    onTertiaryContainer = Color(0xFF3E0024),
+    background = Color(0xFFFBFCFF),
+    onBackground = Color(0xFF1A1C1E),
+    surface = Color(0xFFFBFCFF),
+    onSurface = Color(0xFF1A1C1E),
+    surfaceVariant = Color(0xFFE1E4EC),
+    onSurfaceVariant = Color(0xFF44474E),
+    surfaceContainerHigh = Color(0xFFE9EDF5),
+    outline = Color(0xFF74777F),
+    outlineVariant = Color(0xFFC4C6D0),
     error = Color(0xFFB3261E),
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFFA8D5B5),
-    onPrimary = Color(0xFF103722),
-    primaryContainer = Color(0xFF1D5134),
-    onPrimaryContainer = Color(0xFFD8ECDE),
-    secondary = Color(0xFFA8CDE4),
-    onSecondary = Color(0xFF173749),
-    secondaryContainer = Color(0xFF294E64),
-    onSecondaryContainer = Color(0xFFD9EAF5),
-    tertiary = Color(0xFFE9C17F),
-    background = Color(0xFF111512),
-    onBackground = Color(0xFFE1E5E0),
-    surface = Color(0xFF111512),
-    onSurface = Color(0xFFE1E5E0),
-    surfaceVariant = Color(0xFF292F2A),
-    onSurfaceVariant = Color(0xFFC2C8C1),
-    outline = Color(0xFF8C938C),
-    outlineVariant = Color(0xFF3E453F),
+    primary = Color(0xFFA8C7FA),
+    onPrimary = Color(0xFF062E6F),
+    primaryContainer = Color(0xFF1B4D94),
+    onPrimaryContainer = Color(0xFFD3E3FD),
+    secondary = Color(0xFFCBB8F5),
+    onSecondary = Color(0xFF37265D),
+    secondaryContainer = Color(0xFF4A3A75),
+    onSecondaryContainer = Color(0xFFEADDFF),
+    tertiary = Color(0xFFF0A5C2),
+    onTertiary = Color(0xFF4A102E),
+    tertiaryContainer = Color(0xFF652944),
+    onTertiaryContainer = Color(0xFFFBD0E1),
+    background = Color(0xFF0E0F13),
+    onBackground = Color(0xFFE3E3E3),
+    surface = Color(0xFF0E0F13),
+    onSurface = Color(0xFFE3E3E3),
+    surfaceVariant = Color(0xFF1E1F24),
+    onSurfaceVariant = Color(0xFFC4C6D0),
+    surfaceContainerHigh = Color(0xFF22242B),
+    outline = Color(0xFF8E9199),
+    outlineVariant = Color(0xFF44474E),
 )
+
+/** Gemini gradient stops (sparkle gradient): blue -> violet -> pink. */
+object GeminiColors {
+    val Blue = Color(0xFF4796E3)
+    val Violet = Color(0xFF9177C7)
+    val Pink = Color(0xFFD96570)
+}
 
 private val DeerFlowTypography = Typography(
     headlineMedium = TextStyle(
@@ -120,7 +136,6 @@ private val DeerFlowShapes = Shapes(
 @Composable
 fun DeerFlowTheme(
     preference: ThemePreference = ThemePreference.System,
-    useDynamicColor: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val dark = when (preference) {
@@ -128,15 +143,8 @@ fun DeerFlowTheme(
         ThemePreference.Light -> false
         ThemePreference.Dark -> true
     }
-    val context = LocalContext.current
-    val colors = when {
-        useDynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && dark -> dynamicDarkColorScheme(context)
-        useDynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> dynamicLightColorScheme(context)
-        dark -> DarkColors
-        else -> LightColors
-    }
     MaterialExpressiveTheme(
-        colorScheme = colors,
+        colorScheme = if (dark) DarkColors else LightColors,
         motionScheme = MotionScheme.expressive(),
         typography = DeerFlowTypography,
         shapes = DeerFlowShapes,

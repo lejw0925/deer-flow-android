@@ -9,6 +9,7 @@ import android.provider.Settings
 import android.text.format.Formatter
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -30,26 +31,22 @@ import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.CleaningServices
 import androidx.compose.material.icons.outlined.Code
-import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Link
-import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Notifications
-import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.Policy
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Storage
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -60,18 +57,20 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -86,6 +85,13 @@ import com.deerflow.mobile.data.MIN_ARTIFACT_AUTO_DOWNLOAD_BYTES
 import com.deerflow.mobile.data.MIN_ARTIFACT_MANUAL_DOWNLOAD_BYTES
 import com.deerflow.mobile.data.ThemePreference
 import com.deerflow.mobile.data.parseThirdPartyLicenseNotices
+import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
+import com.deerflow.mobile.ui.glass.GlassAlertDialog
+import com.deerflow.mobile.ui.glass.GlassTopAppBar
+import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
+import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
+import com.deerflow.mobile.ui.glass.rememberGlassTints
+import com.kyant.backdrop.backdrops.layerBackdrop
 
 @Composable
 fun ProfileScreen(
@@ -103,7 +109,6 @@ fun ProfileScreen(
         onBack = onBack,
         onSaveServerUrl = viewModel::saveServerUrl,
         onThemeSelected = viewModel::setTheme,
-        onDynamicColorChanged = viewModel::setDynamicColor,
         onLanguageSelected = viewModel::setLanguage,
         onNotifyOnRunCompletionChanged = viewModel::setNotifyOnRunCompletion,
         onCacheRetentionPolicySelected = viewModel::setCacheRetentionPolicy,
@@ -139,7 +144,6 @@ internal fun ProfileContent(
     onBack: () -> Unit,
     onSaveServerUrl: (String) -> Unit,
     onThemeSelected: (ThemePreference) -> Unit,
-    onDynamicColorChanged: (Boolean) -> Unit,
     onLanguageSelected: (LanguagePreference) -> Unit,
     onNotifyOnRunCompletionChanged: (Boolean) -> Unit,
     onCacheRetentionPolicySelected: (CacheRetentionPolicy) -> Unit,
@@ -179,240 +183,254 @@ internal fun ProfileContent(
             contentPadding = contentPadding,
         )
     } else {
-        Column(Modifier.fillMaxSize().padding(contentPadding).testTag(UiTags.ProfileScreen)) {
-            TopAppBar(
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
-                    }
-                },
-                title = { Text(stringResource(R.string.profile_title)) },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-            )
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().navigationBarsPadding().testTag(UiTags.ProfileList),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                item {
-                    ProfileSection {
-                        SettingsSectionTitle(R.string.account)
-                        ListItem(
-                            headlineContent = { Text(state.user?.email.orEmpty()) },
-                            supportingContent = { Text(state.user?.role.orEmpty()) },
-                            leadingContent = { Icon(Icons.Outlined.PersonOutline, contentDescription = null) },
-                        )
-                    }
-                }
-                item {
-                    ProfileSection {
-                        SettingsDivider()
-                        SettingsSectionTitle(R.string.connection)
-                        ListItem(
-                            headlineContent = { Text(stringResource(R.string.server_address)) },
-                            supportingContent = { Text(serverUrl) },
-                            leadingContent = { Icon(Icons.Outlined.Link, contentDescription = null) },
-                            trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                            modifier = Modifier.fillMaxWidth().clickable { showServerDialog = true }.testTag(UiTags.ProfileServer),
-                        )
-                        ListItem(
-                            headlineContent = { Text(stringResource(R.string.channels)) },
-                            leadingContent = { Icon(Icons.Outlined.Link, contentDescription = null) },
-                            trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(onClick = onOpenChannels)
-                                .testTag(UiTags.ProfileChannels),
-                        )
-                        ListItem(
-                            headlineContent = { Text(stringResource(R.string.lark_integration)) },
-                            supportingContent = { Text(stringResource(R.string.lark_integration_subtitle)) },
-                            leadingContent = { Icon(Icons.Outlined.Extension, contentDescription = null) },
-                            trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(onClick = onOpenLarkIntegration)
-                                .testTag(UiTags.ProfileLarkIntegration),
-                        )
-                    }
-                }
-                item {
-                    ProfileSection {
-                        SettingsDivider()
-                        SettingsSectionTitle(R.string.preferences)
-                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                            ThemePreference.entries.forEachIndexed { index, preference ->
-                                SegmentedButton(
-                                    selected = state.theme == preference,
-                                    onClick = { onThemeSelected(preference) },
-                                    shape = SegmentedButtonDefaults.itemShape(index, ThemePreference.entries.size),
-                                    label = { Text(preference.label()) },
-                                    modifier = Modifier.testTag(UiTags.ProfileThemePrefix + preference.name),
+        // Liquid glass layout: the settings list is recorded into a backdrop and the
+        // glass top bar floats above it as a sibling overlay sampling that recording.
+        Box(Modifier.fillMaxSize().padding(contentPadding).testTag(UiTags.ProfileScreen)) {
+            val backdrop = rememberGlassBackdrop()
+            CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+                var topBarHeightPx by remember { mutableIntStateOf(0) }
+                val topBarHeight = with(LocalDensity.current) { topBarHeightPx.toDp() }
+                Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+                    // Aurora inside the recorded layer so the floating glass top bar
+                    // samples colorful refraction, not the dead solid background.
+                    GeminiAuroraBackground(Modifier.fillMaxSize())
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize().navigationBarsPadding().testTag(UiTags.ProfileList),
+                        contentPadding = PaddingValues(start = 20.dp, top = topBarHeight + 16.dp, end = 20.dp, bottom = 16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        item {
+                            ProfileSection {
+                                SettingsSectionTitle(R.string.account)
+                                ListItem(
+                                    headlineContent = { Text(state.user?.email.orEmpty()) },
+                                    supportingContent = { Text(state.user?.role.orEmpty()) },
+                                    leadingContent = { Icon(Icons.Outlined.PersonOutline, contentDescription = null) },
+                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
                                 )
                             }
                         }
-                        ListItem(
-                            headlineContent = { Text(stringResource(R.string.dynamic_color)) },
-                            supportingContent = { Text(stringResource(R.string.dynamic_color_subtitle)) },
-                            leadingContent = { Icon(Icons.Outlined.Palette, contentDescription = null) },
-                            trailingContent = {
-                                Switch(
-                                    checked = state.useDynamicColor,
-                                    onCheckedChange = onDynamicColorChanged,
+                        item {
+                            ProfileSection {
+                                SettingsDivider()
+                                SettingsSectionTitle(R.string.connection)
+                                ListItem(
+                                    headlineContent = { Text(stringResource(R.string.server_address)) },
+                                    supportingContent = { Text(serverUrl) },
+                                    leadingContent = { Icon(Icons.Outlined.Link, contentDescription = null) },
+                                    trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                    modifier = Modifier.fillMaxWidth().clickable { showServerDialog = true }.testTag(UiTags.ProfileServer),
+                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
                                 )
-                            },
-                        )
-                        ListItem(
-                            headlineContent = { Text(stringResource(R.string.language)) },
-                            supportingContent = { Text(state.language.label()) },
-                            leadingContent = { Icon(Icons.Outlined.Language, contentDescription = null) },
-                            trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showLanguageDialog = true }
-                                .testTag(UiTags.ProfileLanguage),
-                        )
-                    }
-                }
-                item {
-                    ProfileSection {
-                        SettingsDivider()
-                        SettingsSectionTitle(R.string.notifications)
-                        ListItem(
-                            headlineContent = { Text(stringResource(R.string.run_completion_notifications)) },
-                            supportingContent = { Text(stringResource(R.string.run_completion_notifications_subtitle)) },
-                            leadingContent = { Icon(Icons.Outlined.Notifications, contentDescription = null) },
-                            trailingContent = {
-                                Switch(
-                                    checked = state.notifyOnRunCompletion,
-                                    onCheckedChange = onNotifyOnRunCompletionChanged,
-                                    modifier = Modifier.testTag(UiTags.ProfileNotifications),
+                                ListItem(
+                                    headlineContent = { Text(stringResource(R.string.channels)) },
+                                    leadingContent = { Icon(Icons.Outlined.Link, contentDescription = null) },
+                                    trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable(onClick = onOpenChannels)
+                                        .testTag(UiTags.ProfileChannels),
+                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
                                 )
-                            },
-                        )
-                        LiveUpdateSettingsItem()
-                    }
-                }
-                item {
-                    ProfileSection {
-                        SettingsDivider()
-                        SettingsSectionTitle(R.string.storage)
-                        ArtifactDownloadLimitSlider(
-                            title = stringResource(R.string.artifact_auto_download_limit),
-                            summary = stringResource(
-                                R.string.artifact_auto_download_limit_summary,
-                                Formatter.formatFileSize(
-                                    LocalContext.current,
-                                    state.artifactDownloadLimits.autoDownloadBytes,
-                                ),
-                            ),
-                            valueBytes = state.artifactDownloadLimits.autoDownloadBytes,
-                            valueRange = MIN_ARTIFACT_AUTO_DOWNLOAD_BYTES.toFloat()..MAX_ARTIFACT_AUTO_DOWNLOAD_BYTES.toFloat(),
-                            steps = 0,
-                            tag = UiTags.ProfileArtifactAutoDownloadLimit,
-                            onValueChangeFinished = { value ->
-                                onArtifactDownloadLimitsSelected(
-                                    ArtifactDownloadLimits(
-                                        autoDownloadBytes = value,
-                                        manualDownloadBytes = state.artifactDownloadLimits.manualDownloadBytes,
-                                    ),
+                                ListItem(
+                                    headlineContent = { Text(stringResource(R.string.lark_integration)) },
+                                    supportingContent = { Text(stringResource(R.string.lark_integration_subtitle)) },
+                                    leadingContent = { Icon(Icons.Outlined.Extension, contentDescription = null) },
+                                    trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable(onClick = onOpenLarkIntegration)
+                                        .testTag(UiTags.ProfileLarkIntegration),
+                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
                                 )
-                            },
-                        )
-                        ArtifactDownloadLimitSlider(
-                            title = stringResource(R.string.artifact_manual_download_limit),
-                            summary = stringResource(
-                                R.string.artifact_manual_download_limit_summary,
-                                Formatter.formatFileSize(
-                                    LocalContext.current,
-                                    state.artifactDownloadLimits.manualDownloadBytes,
-                                ),
-                            ),
-                            valueBytes = state.artifactDownloadLimits.manualDownloadBytes,
-                            valueRange = MIN_ARTIFACT_MANUAL_DOWNLOAD_BYTES.toFloat()..MAX_ARTIFACT_DOWNLOAD_BYTES.toFloat(),
-                            steps = 0,
-                            tag = UiTags.ProfileArtifactManualDownloadLimit,
-                            onValueChangeFinished = { value ->
-                                onArtifactDownloadLimitsSelected(
-                                    ArtifactDownloadLimits(
-                                        autoDownloadBytes = state.artifactDownloadLimits.autoDownloadBytes,
-                                        manualDownloadBytes = value,
-                                    ),
-                                )
-                            },
-                        )
-                        ListItem(
-                            headlineContent = { Text(stringResource(R.string.cached_data)) },
-                            supportingContent = {
-                                val size = Formatter.formatShortFileSize(LocalContext.current, state.cacheStats.bytesOnDisk)
-                                Text(
-                                    if (state.loadingCacheStats) {
-                                        stringResource(R.string.loading)
-                                    } else {
-                                        stringResource(R.string.cache_summary, state.cacheStats.itemCount, size)
-                                    },
-                                )
-                            },
-                            leadingContent = { Icon(Icons.Outlined.Storage, contentDescription = null) },
-                            trailingContent = {
-                                IconButton(
-                                    onClick = onRefreshCacheStats,
-                                    enabled = !state.loadingCacheStats && !state.clearingCache,
-                                    modifier = Modifier.size(48.dp).testTag(UiTags.ProfileCacheRefresh),
-                                ) {
-                                    if (state.loadingCacheStats) {
-                                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                                    } else {
-                                        Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.refresh))
+                            }
+                        }
+                        item {
+                            ProfileSection {
+                                SettingsDivider()
+                                SettingsSectionTitle(R.string.preferences)
+                                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                                    ThemePreference.entries.forEachIndexed { index, preference ->
+                                        SegmentedButton(
+                                            selected = state.theme == preference,
+                                            onClick = { onThemeSelected(preference) },
+                                            shape = SegmentedButtonDefaults.itemShape(index, ThemePreference.entries.size),
+                                            label = { Text(preference.label()) },
+                                            modifier = Modifier.testTag(UiTags.ProfileThemePrefix + preference.name),
+                                        )
                                     }
                                 }
-                            },
-                        )
-                        ListItem(
-                            headlineContent = { Text(stringResource(R.string.cache_retention)) },
-                            supportingContent = { Text(state.cacheRetentionPolicy.label()) },
-                            leadingContent = { Icon(Icons.Outlined.Policy, contentDescription = null) },
-                            trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showCachePolicyDialog = true }
-                                .testTag(UiTags.ProfileCachePolicy),
-                        )
-                        ListItem(
-                            headlineContent = { Text(stringResource(R.string.clear_cached_data)) },
-                            supportingContent = {
-                                if (state.run.active) Text(stringResource(R.string.clear_cache_run_active))
-                            },
-                            leadingContent = { Icon(Icons.Outlined.CleaningServices, contentDescription = null) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(enabled = !state.run.active && !state.clearingCache) {
-                                    showClearCacheDialog = true
+                                ListItem(
+                                    headlineContent = { Text(stringResource(R.string.language)) },
+                                    supportingContent = { Text(state.language.label()) },
+                                    leadingContent = { Icon(Icons.Outlined.Language, contentDescription = null) },
+                                    trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { showLanguageDialog = true }
+                                        .testTag(UiTags.ProfileLanguage),
+                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
+                                )
+                            }
+                        }
+                        item {
+                            ProfileSection {
+                                SettingsDivider()
+                                SettingsSectionTitle(R.string.notifications)
+                                ListItem(
+                                    headlineContent = { Text(stringResource(R.string.run_completion_notifications)) },
+                                    supportingContent = { Text(stringResource(R.string.run_completion_notifications_subtitle)) },
+                                    leadingContent = { Icon(Icons.Outlined.Notifications, contentDescription = null) },
+                                    trailingContent = {
+                                        Switch(
+                                            checked = state.notifyOnRunCompletion,
+                                            onCheckedChange = onNotifyOnRunCompletionChanged,
+                                            modifier = Modifier.testTag(UiTags.ProfileNotifications),
+                                        )
+                                    },
+                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
+                                )
+                                LiveUpdateSettingsItem()
+                            }
+                        }
+                        item {
+                            ProfileSection {
+                                SettingsDivider()
+                                SettingsSectionTitle(R.string.storage)
+                                ArtifactDownloadLimitSlider(
+                                    title = stringResource(R.string.artifact_auto_download_limit),
+                                    summary = stringResource(
+                                        R.string.artifact_auto_download_limit_summary,
+                                        Formatter.formatFileSize(
+                                            LocalContext.current,
+                                            state.artifactDownloadLimits.autoDownloadBytes,
+                                        ),
+                                    ),
+                                    valueBytes = state.artifactDownloadLimits.autoDownloadBytes,
+                                    valueRange = MIN_ARTIFACT_AUTO_DOWNLOAD_BYTES.toFloat()..MAX_ARTIFACT_AUTO_DOWNLOAD_BYTES.toFloat(),
+                                    steps = 0,
+                                    tag = UiTags.ProfileArtifactAutoDownloadLimit,
+                                    onValueChangeFinished = { value ->
+                                        onArtifactDownloadLimitsSelected(
+                                            ArtifactDownloadLimits(
+                                                autoDownloadBytes = value,
+                                                manualDownloadBytes = state.artifactDownloadLimits.manualDownloadBytes,
+                                            ),
+                                        )
+                                    },
+                                )
+                                ArtifactDownloadLimitSlider(
+                                    title = stringResource(R.string.artifact_manual_download_limit),
+                                    summary = stringResource(
+                                        R.string.artifact_manual_download_limit_summary,
+                                        Formatter.formatFileSize(
+                                            LocalContext.current,
+                                            state.artifactDownloadLimits.manualDownloadBytes,
+                                        ),
+                                    ),
+                                    valueBytes = state.artifactDownloadLimits.manualDownloadBytes,
+                                    valueRange = MIN_ARTIFACT_MANUAL_DOWNLOAD_BYTES.toFloat()..MAX_ARTIFACT_DOWNLOAD_BYTES.toFloat(),
+                                    steps = 0,
+                                    tag = UiTags.ProfileArtifactManualDownloadLimit,
+                                    onValueChangeFinished = { value ->
+                                        onArtifactDownloadLimitsSelected(
+                                            ArtifactDownloadLimits(
+                                                autoDownloadBytes = state.artifactDownloadLimits.autoDownloadBytes,
+                                                manualDownloadBytes = value,
+                                            ),
+                                        )
+                                    },
+                                )
+                                ListItem(
+                                    headlineContent = { Text(stringResource(R.string.cached_data)) },
+                                    supportingContent = {
+                                        val size = Formatter.formatShortFileSize(LocalContext.current, state.cacheStats.bytesOnDisk)
+                                        Text(
+                                            if (state.loadingCacheStats) {
+                                                stringResource(R.string.loading)
+                                            } else {
+                                                stringResource(R.string.cache_summary, state.cacheStats.itemCount, size)
+                                            },
+                                        )
+                                    },
+                                    leadingContent = { Icon(Icons.Outlined.Storage, contentDescription = null) },
+                                    trailingContent = {
+                                        IconButton(
+                                            onClick = onRefreshCacheStats,
+                                            enabled = !state.loadingCacheStats && !state.clearingCache,
+                                            modifier = Modifier.size(48.dp).testTag(UiTags.ProfileCacheRefresh),
+                                        ) {
+                                            if (state.loadingCacheStats) {
+                                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                            } else {
+                                                Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.refresh))
+                                            }
+                                        }
+                                    },
+                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
+                                )
+                                ListItem(
+                                    headlineContent = { Text(stringResource(R.string.cache_retention)) },
+                                    supportingContent = { Text(state.cacheRetentionPolicy.label()) },
+                                    leadingContent = { Icon(Icons.Outlined.Policy, contentDescription = null) },
+                                    trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { showCachePolicyDialog = true }
+                                        .testTag(UiTags.ProfileCachePolicy),
+                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
+                                )
+                                ListItem(
+                                    headlineContent = { Text(stringResource(R.string.clear_cached_data)) },
+                                    supportingContent = {
+                                        if (state.run.active) Text(stringResource(R.string.clear_cache_run_active))
+                                    },
+                                    leadingContent = { Icon(Icons.Outlined.CleaningServices, contentDescription = null) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable(enabled = !state.run.active && !state.clearingCache) {
+                                            showClearCacheDialog = true
+                                        }
+                                        .testTag(UiTags.ProfileCacheClear),
+                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
+                                )
+                            }
+                        }
+                        item {
+                            ProfileSection {
+                                SettingsDivider()
+                                SettingsSectionTitle(R.string.about_title)
+                                ListItem(
+                                    headlineContent = { Text(stringResource(R.string.about_deerflow)) },
+                                    supportingContent = { Text(stringResource(R.string.version, BuildConfig.VERSION_NAME)) },
+                                    leadingContent = { Icon(Icons.Outlined.Info, contentDescription = null) },
+                                    trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { showAbout = true }
+                                        .testTag(UiTags.ProfileAbout),
+                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
+                                )
+                                SettingsDivider()
+                                OutlinedButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) {
+                                    Text(stringResource(R.string.sign_out))
                                 }
-                                .testTag(UiTags.ProfileCacheClear),
-                        )
-                    }
-                }
-                item {
-                    ProfileSection {
-                        SettingsDivider()
-                        SettingsSectionTitle(R.string.about_title)
-                        ListItem(
-                            headlineContent = { Text(stringResource(R.string.about_deerflow)) },
-                            supportingContent = { Text(stringResource(R.string.version, BuildConfig.VERSION_NAME)) },
-                            leadingContent = { Icon(Icons.Outlined.Info, contentDescription = null) },
-                            trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { showAbout = true }
-                                .testTag(UiTags.ProfileAbout),
-                        )
-                        SettingsDivider()
-                        OutlinedButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) {
-                            Text(stringResource(R.string.sign_out))
+                            }
                         }
                     }
                 }
+                GlassTopAppBar(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.TopCenter)
+                        .onGloballyPositioned { topBarHeightPx = it.size.height },
+                    navigationIcon = {
+                        IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                            Icon(Icons.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
+                        }
+                    },
+                    title = { Text(stringResource(R.string.profile_title)) },
+                )
             }
         }
     }
@@ -432,7 +450,7 @@ internal fun ProfileContent(
         )
     }
     if (showServerDialog) {
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { showServerDialog = false },
             title = { Text(stringResource(R.string.server_address)) },
             text = {
@@ -468,7 +486,7 @@ internal fun ProfileContent(
         )
     }
     if (showClearCacheDialog) {
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { showClearCacheDialog = false },
             title = { Text(stringResource(R.string.clear_cache_title)) },
             text = { Text(stringResource(R.string.clear_cache_body)) },
@@ -501,72 +519,90 @@ private fun AboutScreen(
     onOpenSourceCode: () -> Unit,
     contentPadding: PaddingValues,
 ) {
-    Column(Modifier.fillMaxSize().padding(contentPadding).testTag(UiTags.AboutScreen)) {
-        TopAppBar(
-            navigationIcon = {
-                IconButton(onClick = onBack, modifier = Modifier.size(48.dp).testTag(UiTags.AboutBack)) {
-                    Icon(Icons.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
-                }
-            },
-            title = { Text(stringResource(R.string.about_title)) },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-        )
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().navigationBarsPadding(),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            item {
-                Column(Modifier.widthIn(max = 680.dp).fillMaxWidth()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        BrandMark()
-                        Spacer(Modifier.weight(1f))
+    // Liquid glass layout: the about content is recorded into a backdrop and the
+    // glass top bar floats above it as a sibling overlay sampling that recording.
+    Box(Modifier.fillMaxSize().padding(contentPadding).testTag(UiTags.AboutScreen)) {
+        val backdrop = rememberGlassBackdrop()
+        CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+            var topBarHeightPx by remember { mutableIntStateOf(0) }
+            val topBarHeight = with(LocalDensity.current) { topBarHeightPx.toDp() }
+            Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+                // Aurora inside the recorded layer so the floating glass top bar
+                // samples colorful refraction, not the dead solid background.
+                GeminiAuroraBackground(Modifier.fillMaxSize())
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().navigationBarsPadding(),
+                    contentPadding = PaddingValues(start = 20.dp, top = topBarHeight + 20.dp, end = 20.dp, bottom = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    item {
+                        Column(Modifier.widthIn(max = 680.dp).fillMaxWidth()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                BrandMark()
+                                Spacer(Modifier.weight(1f))
+                            }
+                            Spacer(Modifier.height(24.dp))
+                            Text(stringResource(R.string.version, BuildConfig.VERSION_NAME), style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                stringResource(R.string.build_number, BuildConfig.VERSION_CODE),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                stringResource(R.string.package_name, BuildConfig.APPLICATION_ID),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            SettingsDivider()
+                            ListItem(
+                                headlineContent = { Text(stringResource(R.string.deerflow_license)) },
+                                supportingContent = { Text(stringResource(R.string.mit_license)) },
+                                leadingContent = { Icon(Icons.Outlined.Policy, contentDescription = null) },
+                                trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(onClick = onOpenDeerFlowLicense)
+                                    .testTag(UiTags.AboutDeerFlowLicense),
+                                colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
+                            )
+                            ListItem(
+                                headlineContent = { Text(stringResource(R.string.open_source_licenses)) },
+                                supportingContent = { Text(stringResource(R.string.open_source_licenses_subtitle)) },
+                                leadingContent = { Icon(Icons.Outlined.Info, contentDescription = null) },
+                                trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(onClick = onOpenSourceLicenses)
+                                    .testTag(UiTags.AboutOpenSourceLicenses),
+                                colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
+                            )
+                            ListItem(
+                                headlineContent = { Text(stringResource(R.string.source_code)) },
+                                supportingContent = { Text(SOURCE_CODE_URL) },
+                                leadingContent = { Icon(Icons.Outlined.Code, contentDescription = null) },
+                                trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(onClick = onOpenSourceCode)
+                                    .testTag(UiTags.AboutSourceCode),
+                                colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
+                            )
+                        }
                     }
-                    Spacer(Modifier.height(24.dp))
-                    Text(stringResource(R.string.version, BuildConfig.VERSION_NAME), style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        stringResource(R.string.build_number, BuildConfig.VERSION_CODE),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        stringResource(R.string.package_name, BuildConfig.APPLICATION_ID),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    SettingsDivider()
-                    ListItem(
-                        headlineContent = { Text(stringResource(R.string.deerflow_license)) },
-                        supportingContent = { Text(stringResource(R.string.mit_license)) },
-                        leadingContent = { Icon(Icons.Outlined.Policy, contentDescription = null) },
-                        trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(onClick = onOpenDeerFlowLicense)
-                            .testTag(UiTags.AboutDeerFlowLicense),
-                    )
-                    ListItem(
-                        headlineContent = { Text(stringResource(R.string.open_source_licenses)) },
-                        supportingContent = { Text(stringResource(R.string.open_source_licenses_subtitle)) },
-                        leadingContent = { Icon(Icons.Outlined.Info, contentDescription = null) },
-                        trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(onClick = onOpenSourceLicenses)
-                            .testTag(UiTags.AboutOpenSourceLicenses),
-                    )
-                    ListItem(
-                        headlineContent = { Text(stringResource(R.string.source_code)) },
-                        supportingContent = { Text(SOURCE_CODE_URL) },
-                        leadingContent = { Icon(Icons.Outlined.Code, contentDescription = null) },
-                        trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(onClick = onOpenSourceCode)
-                            .testTag(UiTags.AboutSourceCode),
-                    )
                 }
             }
+            GlassTopAppBar(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .onGloballyPositioned { topBarHeightPx = it.size.height },
+                navigationIcon = {
+                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp).testTag(UiTags.AboutBack)) {
+                        Icon(Icons.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
+                    }
+                },
+                title = { Text(stringResource(R.string.about_title)) },
+            )
         }
     }
 }
@@ -577,7 +613,7 @@ private fun DeerFlowLicenseDialog(onDismiss: () -> Unit) {
     val license = remember {
         context.resources.openRawResource(R.raw.deerflow_license).bufferedReader().use { it.readText() }
     }
-    AlertDialog(
+    GlassAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.deerflow_license)) },
         text = {
@@ -604,30 +640,45 @@ private fun ThirdPartyLicensesScreen(onBack: () -> Unit, contentPadding: Padding
             parseThirdPartyLicenseNotices(metadata, text)
         }.getOrDefault(emptyList())
     }
-    Column(Modifier.fillMaxSize().padding(contentPadding).testTag(UiTags.ThirdPartyLicensesScreen)) {
-        TopAppBar(
-            navigationIcon = {
-                IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
-                }
-            },
-            title = { Text(stringResource(R.string.open_source_licenses)) },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-        )
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().navigationBarsPadding(),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-        ) {
-            notices.forEach { notice ->
-                item(key = notice.name) {
-                    Text(notice.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp))
-                    Text(notice.text, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
-                    HorizontalDivider(Modifier.padding(top = 12.dp))
+    // Liquid glass layout: the license list is recorded into a backdrop and the
+    // glass top bar floats above it as a sibling overlay sampling that recording.
+    Box(Modifier.fillMaxSize().padding(contentPadding).testTag(UiTags.ThirdPartyLicensesScreen)) {
+        val backdrop = rememberGlassBackdrop()
+        CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+            var topBarHeightPx by remember { mutableIntStateOf(0) }
+            val topBarHeight = with(LocalDensity.current) { topBarHeightPx.toDp() }
+            Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+                // Aurora inside the recorded layer so the floating glass top bar
+                // samples colorful refraction, not the dead solid background.
+                GeminiAuroraBackground(Modifier.fillMaxSize())
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().navigationBarsPadding(),
+                    contentPadding = PaddingValues(start = 20.dp, top = topBarHeight + 12.dp, end = 20.dp, bottom = 12.dp),
+                ) {
+                    notices.forEach { notice ->
+                        item(key = notice.name) {
+                            Text(notice.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp))
+                            Text(notice.text, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+                            HorizontalDivider(Modifier.padding(top = 12.dp))
+                        }
+                    }
+                    if (notices.isEmpty()) {
+                        item { Text(stringResource(R.string.licenses_unavailable)) }
+                    }
                 }
             }
-            if (notices.isEmpty()) {
-                item { Text(stringResource(R.string.licenses_unavailable)) }
-            }
+            GlassTopAppBar(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .onGloballyPositioned { topBarHeightPx = it.size.height },
+                navigationIcon = {
+                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
+                    }
+                },
+                title = { Text(stringResource(R.string.open_source_licenses)) },
+            )
         }
     }
 }
@@ -653,6 +704,7 @@ private fun LiveUpdateSettingsItem() {
                     .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
             )
         },
+        colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
     )
 }
 
@@ -666,7 +718,7 @@ private fun <T> SingleChoiceDialog(
     onSelect: (T) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    GlassAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {

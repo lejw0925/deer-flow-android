@@ -6,7 +6,6 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -101,6 +100,7 @@ import com.deerflow.mobile.data.drawableResId
 import com.deerflow.mobile.data.isInlineDisplayableImageUrl
 import com.deerflow.mobile.data.resolveMessageImageURL
 import com.deerflow.mobile.data.toolIconKind
+import com.deerflow.mobile.ui.glass.glassFrosted
 import com.deerflow.mobile.ui.theme.ExpressiveMotion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -167,15 +167,21 @@ private fun MessageItem(
     val user = message.role == MessageRole.User
     val clipboard = LocalClipboardManager.current
     val reasoning = message.blocks.filterIsInstance<MessageBlock.Reasoning>().lastOrNull()?.takeIf { showReasoning }
+    val bubbleShape = MaterialTheme.shapes.medium
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
         Surface(
-            color = when (message.role) {
-                MessageRole.User -> MaterialTheme.colorScheme.primaryContainer
-                MessageRole.Assistant -> Color.Transparent
-                MessageRole.Tool, MessageRole.System -> MaterialTheme.colorScheme.surfaceVariant
-            },
-            shape = MaterialTheme.shapes.medium,
-            modifier = Modifier.widthIn(max = 720.dp).animateContentSize(ExpressiveMotion.spatial()),
+            color = Color.Transparent,
+            shape = bubbleShape,
+            modifier = Modifier
+                .widthIn(max = 720.dp)
+                .animateContentSize(ExpressiveMotion.spatial())
+                .then(
+                    when (message.role) {
+                        MessageRole.User -> Modifier.glassFrosted(bubbleShape)
+                        MessageRole.Assistant -> Modifier
+                        MessageRole.Tool, MessageRole.System -> Modifier.glassFrosted(bubbleShape)
+                    },
+                ),
         ) {
             Column(Modifier.padding(if (user) 14.dp else 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!user) {
@@ -201,7 +207,7 @@ private fun MessageItem(
                                         it is MessageBlock.ToolCall ||
                                         it is MessageBlock.ToolResult
                                 }
-                                .forEach { MessageBlockView(it, onArtifact) }
+                                .forEach { MessageBlockView(it, onArtifact, streaming = message.isStreaming) }
                         }
                     }
                     PresentedArtifactRow(trailingArtifacts, onArtifact)
@@ -309,11 +315,12 @@ private fun ProcessingMessageGroup(
     val showPreviousSteps = expanded ?: savedShowPreviousSteps
 
     Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        color = Color.Transparent,
         shape = RoundedCornerShape(8.dp),
         modifier = Modifier
             .fillMaxWidth()
             .widthIn(max = 760.dp)
+            .glassFrosted(RoundedCornerShape(8.dp))
             .testTag(UiTags.ProcessingCard)
     ) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -341,7 +348,13 @@ private fun ProcessingMessageGroup(
             steps.drop(lastToolIndex + 1)
                 .filterNot { it == stepReasoning }
                 .forEach {
-                    ProcessingStepView(step = it, runActive = false, onArtifact = onArtifact, onBrowser = onBrowser)
+                    ProcessingStepView(
+                        step = it,
+                        runActive = false,
+                        onArtifact = onArtifact,
+                        onBrowser = onBrowser,
+                        streaming = runActive,
+                    )
                 }
             finalReasoning?.let { FinalReasoningDisclosure(it) }
             if (runActive && (steps.isEmpty() || lastTool?.result != null)) {
@@ -438,13 +451,15 @@ private fun ProcessingStepView(
     runActive: Boolean,
     onArtifact: (String) -> Unit,
     onBrowser: (BrowserViewSnapshot) -> Unit,
+    streaming: Boolean = false,
 ) {
     when (step) {
-        is ProcessingStep.AssistantText -> MessageBlockView(step.block, onArtifact)
+        is ProcessingStep.AssistantText -> MessageBlockView(step.block, onArtifact, streaming = streaming)
         is ProcessingStep.Reasoning -> MarkdownContent(
             step.text,
             Modifier.padding(start = 28.dp),
             onArtifact,
+            streaming = streaming,
         )
         is ProcessingStep.Tool -> ToolCallSummary(step.call, step.result, active = runActive, onBrowser = onBrowser)
         is ProcessingStep.Subtask -> SubtaskStep(step.value)
@@ -691,10 +706,10 @@ private fun HumanInputCard(
     }
 
     Surface(
-        color = MaterialTheme.colorScheme.surfaceContainer,
+        color = Color.Transparent,
         shape = RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
+            .glassFrosted(RoundedCornerShape(8.dp)),
     ) {
         Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
             Icon(
@@ -758,13 +773,17 @@ private fun HumanInputCard(
 }
 
 @Composable
-private fun MessageBlockView(block: MessageBlock, onArtifact: (String) -> Unit = {}) {
+private fun MessageBlockView(
+    block: MessageBlock,
+    onArtifact: (String) -> Unit = {},
+    streaming: Boolean = false,
+) {
     when (block) {
-        is MessageBlock.Markdown -> MarkdownContent(block.text, onArtifact = onArtifact)
-        is MessageBlock.Code -> CodeDetail(block.code, block.language)
+        is MessageBlock.Markdown -> MarkdownContent(block.text, onArtifact = onArtifact, streaming = streaming)
+        is MessageBlock.Code -> StreamingReveal(animate = streaming) { CodeDetail(block.code, block.language) }
         is MessageBlock.Quote -> Row {
             Box(Modifier.width(3.dp).height(48.dp).background(MaterialTheme.colorScheme.primary))
-            MarkdownContent(block.text, Modifier.padding(start = 12.dp), onArtifact)
+            MarkdownContent(block.text, Modifier.padding(start = 12.dp), onArtifact, streaming)
         }
         is MessageBlock.Reasoning -> FinalReasoningDisclosure(block.text)
         is MessageBlock.ToolCall -> Unit
@@ -773,7 +792,7 @@ private fun MessageBlockView(block: MessageBlock, onArtifact: (String) -> Unit =
         is MessageBlock.HumanInput -> Unit
         is MessageBlock.Approval -> Unit
         is MessageBlock.HumanInputResponseBlock -> Unit
-        is MessageBlock.Todo -> {
+        is MessageBlock.Todo -> StreamingReveal(animate = streaming) {
             val completed = block.status == "completed"
             val inProgress = block.status == "in_progress"
             Text(

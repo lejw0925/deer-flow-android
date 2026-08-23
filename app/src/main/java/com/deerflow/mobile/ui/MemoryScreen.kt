@@ -17,27 +17,24 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
@@ -47,16 +44,18 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -65,6 +64,16 @@ import androidx.compose.ui.unit.dp
 import com.deerflow.mobile.R
 import com.deerflow.mobile.data.MemoryFact
 import com.deerflow.mobile.data.MemorySection
+import com.deerflow.mobile.ui.glass.GlassAlertDialog
+import com.deerflow.mobile.ui.glass.GlassDropdownMenu
+import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
+import com.deerflow.mobile.ui.glass.GlassMenuItem
+import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
+import com.deerflow.mobile.ui.glass.GlassTopAppBar
+import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
+import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
+import com.deerflow.mobile.ui.glass.rememberGlassTints
+import com.kyant.backdrop.backdrops.layerBackdrop
 import java.text.NumberFormat
 
 @Composable
@@ -87,73 +96,96 @@ fun MemoryScreen(
     var menuExpanded by remember { mutableStateOf(false) }
     val filter = MemoryFilter.valueOf(filterName)
 
-    Column(Modifier.fillMaxSize().padding(contentPadding).testTag(UiTags.MemoryScreen)) {
-        TopAppBar(
-            navigationIcon = {
-                IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
-                }
-            },
-            title = { Text(stringResource(R.string.memory_title)) },
-            actions = {
-                IconButton(
-                    onClick = { editingFact = null; showEditor = true },
-                    enabled = !state.memoryMutationBusy,
-                    modifier = Modifier.size(48.dp).testTag(UiTags.MemoryAddFact),
-                ) {
-                    Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.memory_add_fact))
-                }
-                IconButton(onClick = onRefresh, enabled = !state.loadingMemory, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.refresh))
-                }
-                Box {
-                    IconButton(
-                        onClick = { menuExpanded = true },
-                        modifier = Modifier.size(48.dp).testTag(UiTags.MemoryMoreActions),
-                    ) {
-                        Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.more_actions))
+    // Liquid glass layout: the content is recorded into a backdrop; the top bar is a
+    // sibling glass overlay that samples it. Glass stays OUTSIDE the layerBackdrop content.
+    Box(Modifier.fillMaxSize().padding(contentPadding).testTag(UiTags.MemoryScreen)) {
+        val backdrop = rememberGlassBackdrop()
+        CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+            var topBarHeightPx by remember { mutableIntStateOf(0) }
+            val topBarHeight = with(LocalDensity.current) { topBarHeightPx.toDp() }
+            Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+                // Aurora inside the recorded layer so the floating glass top bar
+                // samples colorful refraction, not the dead solid background.
+                GeminiAuroraBackground(Modifier.fillMaxSize())
+                Column(Modifier.fillMaxSize().padding(top = topBarHeight)) {
+                    if (state.offline && state.memory != null) {
+                        Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
+                            Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) { OfflineBanner() }
+                        }
                     }
-                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.memory_clear_all), color = MaterialTheme.colorScheme.error) },
-                            leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-                            enabled = state.memory?.isEmpty == false && !state.memoryMutationBusy,
-                            onClick = {
-                                menuExpanded = false
-                                showClearConfirmation = true
-                            },
-                            modifier = Modifier.testTag(UiTags.MemoryClearAction),
+
+                    val memory = state.memory
+                    when {
+                        state.loadingMemory && memory == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            LoadingIndicator(Modifier.size(32.dp))
+                        }
+                        memory == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            EmptyState(
+                                icon = { Icon(Icons.Outlined.Psychology, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary) },
+                                title = stringResource(R.string.memory_unavailable),
+                                body = stringResource(R.string.memory_unavailable_body),
+                            )
+                        }
+                        else -> MemoryContent(
+                            memory = memory,
+                            query = query,
+                            onQueryChange = { query = it },
+                            filter = filter,
+                            onFilterChange = { filterName = it.name },
+                            onSelectFact = { selectedFact = it },
                         )
                     }
                 }
-            },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-        )
-        if (state.offline && state.memory != null) {
-            Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
-                Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) { OfflineBanner() }
             }
-        }
-
-        val memory = state.memory
-        when {
-            state.loadingMemory && memory == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                LoadingIndicator(Modifier.size(32.dp))
-            }
-            memory == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                EmptyState(
-                    icon = { Icon(Icons.Outlined.Psychology, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary) },
-                    title = stringResource(R.string.memory_unavailable),
-                    body = stringResource(R.string.memory_unavailable_body),
-                )
-            }
-            else -> MemoryContent(
-                memory = memory,
-                query = query,
-                onQueryChange = { query = it },
-                filter = filter,
-                onFilterChange = { filterName = it.name },
-                onSelectFact = { selectedFact = it },
+            GlassTopAppBar(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .onGloballyPositioned { topBarHeightPx = it.size.height },
+                navigationIcon = {
+                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
+                    }
+                },
+                title = { Text(stringResource(R.string.memory_title)) },
+                actions = {
+                    IconButton(
+                        onClick = { editingFact = null; showEditor = true },
+                        enabled = !state.memoryMutationBusy,
+                        modifier = Modifier.size(48.dp).testTag(UiTags.MemoryAddFact),
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.memory_add_fact))
+                    }
+                    IconButton(onClick = onRefresh, enabled = !state.loadingMemory, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.refresh))
+                    }
+                    Box {
+                        IconButton(
+                            onClick = { menuExpanded = true },
+                            modifier = Modifier.size(48.dp).testTag(UiTags.MemoryMoreActions),
+                        ) {
+                            Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.more_actions))
+                        }
+                        GlassDropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false },
+                            shape = RoundedCornerShape(20.dp),
+                        ) {
+                            Column {
+                                GlassMenuItem(
+                                    text = { Text(stringResource(R.string.memory_clear_all), color = MaterialTheme.colorScheme.error) },
+                                    leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                    enabled = state.memory?.isEmpty == false && !state.memoryMutationBusy,
+                                    onClick = {
+                                        menuExpanded = false
+                                        showClearConfirmation = true
+                                    },
+                                    modifier = Modifier.testTag(UiTags.MemoryClearAction),
+                                )
+                            }
+                        }
+                    }
+                },
             )
         }
     }
@@ -189,7 +221,7 @@ fun MemoryScreen(
     }
 
     deleteTarget?.let { fact ->
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { deleteTarget = null },
             title = { Text(stringResource(R.string.memory_delete_fact_title)) },
             text = { Text(fact.content, maxLines = 5, overflow = TextOverflow.Ellipsis) },
@@ -205,7 +237,7 @@ fun MemoryScreen(
     }
 
     if (showClearConfirmation) {
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { showClearConfirmation = false },
             title = { Text(stringResource(R.string.memory_clear_title)) },
             text = { Text(stringResource(R.string.memory_clear_body)) },
@@ -342,6 +374,7 @@ private fun MemorySummaryRow(item: MemorySummaryItem) {
             }
         },
         modifier = Modifier.fillMaxWidth(),
+        colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
     )
     HorizontalDivider(Modifier.padding(horizontal = 20.dp))
 }
@@ -361,6 +394,7 @@ private fun MemoryFactRow(fact: MemoryFact, onClick: () -> Unit) {
             .fillMaxWidth()
             .testTag("${UiTags.MemoryFactPrefix}${fact.id}")
             .clickable(onClick = onClick),
+        colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
     )
     HorizontalDivider(Modifier.padding(horizontal = 20.dp))
 }
@@ -372,7 +406,7 @@ private fun MemoryFactDetailSheet(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    GlassModalBottomSheet(onDismissRequest = onDismiss) {
         LazyColumn(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
@@ -426,7 +460,7 @@ private fun MemoryFactEditorSheet(
     var content by remember(fact?.id) { mutableStateOf(fact?.content.orEmpty()) }
     var category by remember(fact?.id) { mutableStateOf(fact?.category ?: "context") }
     var confidence by remember(fact?.id) { mutableStateOf((fact?.confidence ?: 0.8).toFloat()) }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    GlassModalBottomSheet(onDismissRequest = onDismiss) {
         LazyColumn(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),

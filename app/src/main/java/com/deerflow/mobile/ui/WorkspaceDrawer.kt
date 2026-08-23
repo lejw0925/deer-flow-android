@@ -41,18 +41,13 @@ import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -88,6 +83,13 @@ import com.deerflow.mobile.data.ChannelProviders
 import com.deerflow.mobile.data.McpConfig
 import com.deerflow.mobile.data.SkillInfo
 import com.deerflow.mobile.data.ThreadSummary
+import com.deerflow.mobile.ui.glass.GlassAlertDialog
+import com.deerflow.mobile.ui.glass.GlassDropdownMenu
+import com.deerflow.mobile.ui.glass.GlassIconButton
+import com.deerflow.mobile.ui.glass.GlassMenuItem
+import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
+import com.deerflow.mobile.ui.glass.glass
+import com.deerflow.mobile.ui.glass.rememberGlassTints
 import org.json.JSONObject
 import kotlinx.coroutines.delay
 
@@ -147,9 +149,9 @@ fun WorkspaceDrawer(
             ) {
                 Surface(
                     onClick = onOpenProfile,
-                    modifier = Modifier.size(36.dp),
+                    modifier = Modifier.size(36.dp).glass(CircleShape, useLens = true),
                     shape = CircleShape,
-                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    color = Color.Transparent,
                     contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                 ) {
                     Box(contentAlignment = Alignment.Center) {
@@ -250,11 +252,12 @@ fun WorkspaceDrawer(
                 .navigationBarsPadding()
                 .imePadding()
                 .padding(horizontal = 12.dp, vertical = 10.dp)
-                .testTag(UiTags.ConversationActionsBar),
+                .testTag(UiTags.ConversationActionsBar)
+                .glass(RoundedCornerShape(28.dp), tint = rememberGlassTints().veil, useLens = true),
             shape = DRAWER_BOTTOM_BAR_SHAPE,
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 4.dp,
-            shadowElevation = 8.dp,
+            color = Color.Transparent,
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp,
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
@@ -276,10 +279,8 @@ fun WorkspaceDrawer(
                     shape = DRAWER_ACTION_SHAPE,
                     modifier = Modifier.weight(1f).testTag(UiTags.ConversationSearch),
                 )
-                FloatingActionButton(
+                GlassIconButton(
                     onClick = onNewChat,
-                    shape = DRAWER_ACTION_SHAPE,
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
                     modifier = Modifier.size(56.dp).testTag(UiTags.NewChatButton),
                 ) {
                     Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.new_chat))
@@ -299,7 +300,7 @@ fun WorkspaceDrawer(
         )
     }
     deleteTarget?.let { target ->
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { deleteTarget = null },
             title = { Text(stringResource(R.string.delete_conversation_title)) },
             text = { Text(stringResource(R.string.delete_conversation_body)) },
@@ -368,25 +369,30 @@ private fun ThreadDrawerRow(
                 .testTag(UiTags.ThreadRowPrefix + thread.id)
                 .combinedClickable(onClick = onClick, onLongClick = { menu = true }),
         )
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            DropdownMenuItem(
-                text = { Text(stringResource(if (thread.isPinned) R.string.unpin else R.string.pin)) },
-                leadingIcon = { Icon(Icons.Outlined.PushPin, contentDescription = null) },
-                onClick = { menu = false; onPin() },
-                modifier = Modifier.testTag(UiTags.ThreadPinAction),
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.rename)) },
-                leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
-                onClick = { menu = false; onRename() },
-                modifier = Modifier.testTag(UiTags.ThreadRenameAction),
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.delete)) },
-                leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null) },
-                onClick = { menu = false; onDelete() },
-                modifier = Modifier.testTag(UiTags.ThreadDeleteAction),
-            )
+        GlassDropdownMenu(
+            expanded = menu,
+            onDismissRequest = { menu = false },
+        ) {
+            Column {
+                GlassMenuItem(
+                    text = { Text(stringResource(if (thread.isPinned) R.string.unpin else R.string.pin)) },
+                    leadingIcon = { Icon(Icons.Outlined.PushPin, contentDescription = null) },
+                    onClick = { menu = false; onPin() },
+                    modifier = Modifier.testTag(UiTags.ThreadPinAction),
+                )
+                GlassMenuItem(
+                    text = { Text(stringResource(R.string.rename)) },
+                    leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                    onClick = { menu = false; onRename() },
+                    modifier = Modifier.testTag(UiTags.ThreadRenameAction),
+                )
+                GlassMenuItem(
+                    text = { Text(stringResource(R.string.delete)) },
+                    leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null) },
+                    onClick = { menu = false; onDelete() },
+                    modifier = Modifier.testTag(UiTags.ThreadDeleteAction),
+                )
+            }
         }
     }
 }
@@ -394,7 +400,7 @@ private fun ThreadDrawerRow(
 @Composable
 private fun RenameThreadDialog(thread: ThreadSummary, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     var value by remember(thread.id) { mutableStateOf(thread.title) }
-    AlertDialog(
+    GlassAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.rename_conversation)) },
         text = {
@@ -429,7 +435,7 @@ fun SkillsSheet(
     var detail by remember { mutableStateOf<SkillInfo?>(null) }
     var tab by remember { mutableStateOf(SkillCatalogTab.Public) }
     var editingConfiguration by remember { mutableStateOf(false) }
-    ModalBottomSheet(
+    GlassModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         modifier = Modifier.testTag(UiTags.SkillsSheet),
@@ -512,7 +518,7 @@ fun McpSheet(
     onDismiss: () -> Unit,
 ) {
     var editingConfiguration by remember { mutableStateOf(false) }
-    ModalBottomSheet(onDismissRequest = onDismiss, modifier = Modifier.testTag(UiTags.McpSheet)) {
+    GlassModalBottomSheet(onDismissRequest = onDismiss, modifier = Modifier.testTag(UiTags.McpSheet)) {
         if (editingConfiguration) {
             McpConfigEditorContent(
                 config = state.mcpConfig,
@@ -628,7 +634,7 @@ fun ChannelsSheet(
     onDismiss: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
-    ModalBottomSheet(
+    GlassModalBottomSheet(
         onDismissRequest = {
             viewModel.clearChannelConnect()
             onDismiss()
@@ -879,7 +885,7 @@ private fun ChannelRuntimeConfigDialog(
 ) {
     var values by remember(provider.provider) { mutableStateOf(provider.credentialValues) }
     val valid = provider.credentialFields.all { field -> !field.required || !values[field.name].isNullOrBlank() }
-    AlertDialog(
+    GlassAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(

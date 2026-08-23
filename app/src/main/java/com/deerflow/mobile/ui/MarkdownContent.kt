@@ -48,6 +48,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.deerflow.mobile.R
+import com.mikepenz.markdown.compose.components.CurrentComponentsBridge
+import com.mikepenz.markdown.compose.components.MarkdownComponent
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.highlightedCodeBlock
 import com.mikepenz.markdown.compose.elements.highlightedCodeFence
@@ -93,17 +95,22 @@ private const val CITATION_ANNOTATION = "CITATION"
 private val LocalCitationNavigator = staticCompositionLocalOf<(String) -> Unit> { {} }
 
 @Composable
-fun MarkdownContent(markdown: String, modifier: Modifier = Modifier, onArtifact: (String) -> Unit = {}) {
+fun MarkdownContent(
+    markdown: String,
+    modifier: Modifier = Modifier,
+    onArtifact: (String) -> Unit = {},
+    streaming: Boolean = false,
+) {
     val presentation = remember(markdown) { citationPresentation(markdown) }
     if (!requiresCustomMarkdownRenderer(markdown, presentation)) {
-        EnhancedMarkdownContent(markdown, modifier)
+        EnhancedMarkdownContent(markdown, modifier, streaming)
         return
     }
-    LegacyMarkdownContent(markdown, modifier, onArtifact, presentation)
+    LegacyMarkdownContent(markdown, modifier, onArtifact, presentation, streaming)
 }
 
 @Composable
-private fun EnhancedMarkdownContent(markdown: String, modifier: Modifier) {
+private fun EnhancedMarkdownContent(markdown: String, modifier: Modifier, streaming: Boolean) {
     EnhancedMarkdown(
         content = markdown,
         modifier = modifier
@@ -119,12 +126,34 @@ private fun EnhancedMarkdownContent(markdown: String, modifier: Modifier) {
             tableText = MaterialTheme.colorScheme.onSurface,
             tableBackground = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
-        components = markdownComponents(
-            codeBlock = highlightedCodeBlock,
-            codeFence = highlightedCodeFence,
-        ),
+        components = if (streaming) streamingMarkdownComponents else defaultMarkdownComponents,
     )
 }
+
+private val defaultMarkdownComponents = markdownComponents(
+    codeBlock = highlightedCodeBlock,
+    codeFence = highlightedCodeFence,
+)
+
+/** Wraps a markdown component so elements that appear mid-stream blur-fade in once. */
+private fun revealOnAppear(component: MarkdownComponent): MarkdownComponent = { model ->
+    StreamingReveal(animate = true) { component(model) }
+}
+
+private val streamingMarkdownComponents = markdownComponents(
+    codeBlock = highlightedCodeBlock,
+    codeFence = highlightedCodeFence,
+    paragraph = revealOnAppear(CurrentComponentsBridge.paragraph),
+    heading1 = revealOnAppear(CurrentComponentsBridge.heading1),
+    heading2 = revealOnAppear(CurrentComponentsBridge.heading2),
+    heading3 = revealOnAppear(CurrentComponentsBridge.heading3),
+    heading4 = revealOnAppear(CurrentComponentsBridge.heading4),
+    heading5 = revealOnAppear(CurrentComponentsBridge.heading5),
+    heading6 = revealOnAppear(CurrentComponentsBridge.heading6),
+    orderedList = revealOnAppear(CurrentComponentsBridge.orderedList),
+    unorderedList = revealOnAppear(CurrentComponentsBridge.unorderedList),
+    blockQuote = revealOnAppear(CurrentComponentsBridge.blockQuote),
+)
 
 @Composable
 private fun LegacyMarkdownContent(
@@ -132,6 +161,7 @@ private fun LegacyMarkdownContent(
     modifier: Modifier,
     onArtifact: (String) -> Unit,
     presentation: MarkdownCitationPresentation,
+    streaming: Boolean,
 ) {
     val sourceRequesters = remember(presentation.sources) {
         presentation.sources.associate { source -> source.url to BringIntoViewRequester() }
@@ -147,7 +177,9 @@ private fun LegacyMarkdownContent(
     }
     CompositionLocalProvider(LocalCitationNavigator provides onCitationClick) {
         Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            presentation.bodyNodes.forEach { MarkdownBlock(it, markdown, onArtifact) }
+            presentation.bodyNodes.forEach { node ->
+                StreamingReveal(animate = streaming) { MarkdownBlock(node, markdown, onArtifact) }
+            }
             CitationSources(presentation.sources, sourceRequesters)
         }
     }

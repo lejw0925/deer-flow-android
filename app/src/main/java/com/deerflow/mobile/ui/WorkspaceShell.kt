@@ -15,15 +15,16 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -33,10 +34,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
+import com.deerflow.mobile.ui.glass.GlassSnackbarHost
+import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
+import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
+import com.deerflow.mobile.ui.glass.rememberGlassTints
+import com.deerflow.mobile.ui.glass.glass
+import com.kyant.backdrop.backdrops.layerBackdrop
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -44,12 +53,15 @@ private const val DRAWER_NAVIGATION_LEAD_MILLIS = 72L
 
 @Composable
 fun WorkspaceShell(state: AppUiState, viewModel: AppViewModel, snackbar: SnackbarHostState) {
-    BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        val expanded = maxWidth >= 840.dp
-        if (expanded) {
-            ExpandedWorkspace(state, viewModel, snackbar)
-        } else {
-            CompactWorkspace(state, viewModel, snackbar, drawerWidth = maxWidth * 0.8f)
+    val backdrop = rememberGlassBackdrop()
+    CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+        BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+            val expanded = maxWidth >= 840.dp
+            if (expanded) {
+                ExpandedWorkspace(state, viewModel, snackbar, backdrop)
+            } else {
+                CompactWorkspace(state, viewModel, snackbar, drawerWidth = maxWidth * 0.8f, backdrop = backdrop)
+            }
         }
     }
 }
@@ -60,6 +72,7 @@ private fun CompactWorkspace(
     viewModel: AppViewModel,
     snackbar: SnackbarHostState,
     drawerWidth: Dp,
+    backdrop: com.kyant.backdrop.backdrops.LayerBackdrop,
 ) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -100,7 +113,15 @@ private fun CompactWorkspace(
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet(modifier = Modifier.width(drawerWidth)) {
+            ModalDrawerSheet(
+                modifier = Modifier
+                    .width(drawerWidth)
+                    .glass(
+                        shape = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp),
+                        tint = rememberGlassTints().veil,
+                    ),
+                drawerContainerColor = Color.Transparent,
+            ) {
                 WorkspaceDrawer(
                     state = state,
                     onNewChat = {
@@ -147,31 +168,42 @@ private fun CompactWorkspace(
     ) {
         Scaffold(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            containerColor = MaterialTheme.colorScheme.background,
-            snackbarHost = { SnackbarHost(snackbar) },
+            containerColor = Color.Transparent,
+            snackbarHost = { GlassSnackbarHost(snackbar) },
         ) { padding ->
-            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                WorkspacePage(
-                    state,
-                    viewModel,
-                    onOpenDrawer = {
-                        focusManager.clearFocus(force = true)
-                        keyboardController?.hide()
-                        scope.launch { drawerState.open() }
-                    },
-                    contentPadding = padding,
-                )
+            // Record ONLY the aurora into the backdrop. Glass elements must be
+            // siblings of this box, never children: self-sampling smears.
+            Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+                GeminiAuroraBackground(Modifier.fillMaxSize())
             }
+            WorkspacePage(
+                state,
+                viewModel,
+                onOpenDrawer = {
+                    focusManager.clearFocus(force = true)
+                    keyboardController?.hide()
+                    scope.launch { drawerState.open() }
+                },
+                contentPadding = padding,
+            )
         }
     }
     if (showSkills) SkillsSheet(state, viewModel, onDismiss = { showSkills = false })
 }
 
 @Composable
-private fun ExpandedWorkspace(state: AppUiState, viewModel: AppViewModel, snackbar: SnackbarHostState) {
+private fun ExpandedWorkspace(
+    state: AppUiState,
+    viewModel: AppViewModel,
+    snackbar: SnackbarHostState,
+    backdrop: com.kyant.backdrop.backdrops.LayerBackdrop,
+) {
     var showSkills by remember { mutableStateOf(false) }
     androidx.compose.foundation.layout.Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        Box(Modifier.width(320.dp)) {
+        // The side panel sits beside the recorded layer, so there is nothing to
+        // refract behind it; a frosted fill keeps the glass language without
+        // self-sampling artifacts.
+        Box(Modifier.width(320.dp).background(rememberGlassTints().frosted)) {
             WorkspaceDrawer(
                 state = state,
                 onNewChat = viewModel::createThread,
@@ -198,9 +230,13 @@ private fun ExpandedWorkspace(state: AppUiState, viewModel: AppViewModel, snackb
         }
         Scaffold(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            containerColor = MaterialTheme.colorScheme.background,
-            snackbarHost = { SnackbarHost(snackbar) },
+            containerColor = Color.Transparent,
+            snackbarHost = { GlassSnackbarHost(snackbar) },
         ) { padding ->
+            // Aurora-only recording; the page (with glass chrome) is a sibling.
+            Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+                GeminiAuroraBackground(Modifier.fillMaxSize())
+            }
             WorkspacePage(state, viewModel, onOpenDrawer = {}, contentPadding = padding)
         }
     }
@@ -221,7 +257,6 @@ private fun WorkspacePage(
     }
     AnimatedContent(
         targetState = targetRoute,
-        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
         transitionSpec = {
             when {
                 initialState == AppRoute.Workspace && targetState == AppRoute.Conversation -> {
@@ -275,7 +310,7 @@ private fun WorkspacePage(
         contentKey = { it },
         label = "workspace-child-hero",
     ) { route ->
-        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        Box(Modifier.fillMaxSize()) {
             when (route) {
                 AppRoute.Workspace, AppRoute.Conversation -> {
                     val routeState = if (route == targetRoute) state else routeSnapshots[route] ?: state

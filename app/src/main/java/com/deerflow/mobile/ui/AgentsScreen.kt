@@ -33,7 +33,6 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.SmartToy
@@ -45,7 +44,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
-import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.FilterChip
@@ -53,10 +52,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -64,6 +63,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
@@ -71,6 +72,14 @@ import androidx.compose.ui.unit.dp
 import com.deerflow.mobile.R
 import com.deerflow.mobile.data.AgentInfo
 import com.deerflow.mobile.data.AgentRunInfo
+import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
+import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
+import com.deerflow.mobile.ui.glass.GlassTopAppBar
+import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
+import com.deerflow.mobile.ui.glass.glassFrosted
+import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
+import com.deerflow.mobile.ui.glass.rememberGlassTints
+import com.kyant.backdrop.backdrops.layerBackdrop
 import kotlinx.coroutines.launch
 
 @Composable
@@ -171,66 +180,76 @@ private fun AgentListScreen(
     onEdit: (AgentInfo) -> Unit,
     contentPadding: PaddingValues,
 ) {
-    Column(Modifier.fillMaxSize().padding(contentPadding)) {
-        TopAppBar(
-            navigationIcon = {
-                IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
-                }
-            },
-            title = { Text(stringResource(R.string.agents_title)) },
-            actions = {
-                if (state.capabilities.agentsEnabled) {
-                    IconButton(onClick = onCreate, enabled = !state.workspaceMutationBusy, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.create_agent))
+    Box(Modifier.fillMaxSize().padding(contentPadding)) {
+        val backdrop = rememberGlassBackdrop()
+        CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+            var topBarHeightPx by remember { mutableIntStateOf(0) }
+            val topBarHeight = with(LocalDensity.current) { topBarHeightPx.toDp() }
+            Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+                // Aurora inside the recorded layer so the floating glass top bar
+                // samples colorful refraction, not the dead solid background.
+                GeminiAuroraBackground(Modifier.fillMaxSize())
+                when {
+                    state.loadingCapabilities && state.capabilities.agents.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        LoadingIndicator(Modifier.size(32.dp))
                     }
-                }
-                IconButton(onClick = onRefresh, enabled = !state.loadingCapabilities, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.refresh))
-                }
-            },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-        )
-        when {
-            state.loadingCapabilities && state.capabilities.agents.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                LoadingIndicator(Modifier.size(32.dp))
-            }
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                item {
-                    AgentRow(
-                        leadAgent,
-                        isDefault = state.defaultAgentId == "lead_agent",
-                        onOpen = { onOpen(leadAgent) },
-                        onSetDefault = { onSetDefault("lead_agent") },
-                        onChat = { onChat("lead_agent") },
-                        onEdit = null,
-                    )
-                }
-                items(state.capabilities.agents.customAgentsOnly(), key = { it.name }) { agent ->
-                    AgentRow(
-                        agent = agent,
-                        isDefault = state.defaultAgentId == agent.name,
-                        onOpen = { onOpen(agent) },
-                        onSetDefault = { onSetDefault(agent.name) },
-                        onChat = { onChat(agent.name) },
-                        onEdit = { onEdit(agent) },
-                    )
-                }
-                if (!state.capabilities.agentsEnabled) {
-                    item {
-                        Text(
-                            stringResource(R.string.custom_agents_disabled),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(16.dp),
-                        )
+                    else -> LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp + topBarHeight, bottom = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        item {
+                            AgentRow(
+                                leadAgent,
+                                isDefault = state.defaultAgentId == "lead_agent",
+                                onOpen = { onOpen(leadAgent) },
+                                onSetDefault = { onSetDefault("lead_agent") },
+                                onChat = { onChat("lead_agent") },
+                                onEdit = null,
+                            )
+                        }
+                        items(state.capabilities.agents.customAgentsOnly(), key = { it.name }) { agent ->
+                            AgentRow(
+                                agent = agent,
+                                isDefault = state.defaultAgentId == agent.name,
+                                onOpen = { onOpen(agent) },
+                                onSetDefault = { onSetDefault(agent.name) },
+                                onChat = { onChat(agent.name) },
+                                onEdit = { onEdit(agent) },
+                            )
+                        }
+                        if (!state.capabilities.agentsEnabled) {
+                            item {
+                                Text(
+                                    stringResource(R.string.custom_agents_disabled),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(16.dp),
+                                )
+                            }
+                        }
                     }
                 }
             }
+            GlassTopAppBar(
+                modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter).onGloballyPositioned { topBarHeightPx = it.size.height },
+                navigationIcon = {
+                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
+                    }
+                },
+                title = { Text(stringResource(R.string.agents_title)) },
+                actions = {
+                    if (state.capabilities.agentsEnabled) {
+                        IconButton(onClick = onCreate, enabled = !state.workspaceMutationBusy, modifier = Modifier.size(48.dp)) {
+                            Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.create_agent))
+                        }
+                    }
+                    IconButton(onClick = onRefresh, enabled = !state.loadingCapabilities, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.refresh))
+                    }
+                },
+            )
         }
     }
 }
@@ -255,9 +274,8 @@ internal fun AgentRow(
         enableDismissFromStartToEnd = false,
         enableDismissFromEndToStart = true,
         backgroundContent = {
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier.fillMaxSize(),
+            Box(
+                modifier = Modifier.fillMaxSize().glassFrosted(MaterialTheme.shapes.medium),
             ) {
                 Row(
                     modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
@@ -327,6 +345,7 @@ internal fun AgentRow(
                 .fillMaxWidth()
                 .clickable(onClick = onOpen)
                 .testTag(UiTags.AgentRowPrefix + agent.name),
+            colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
         )
     }
 }
@@ -343,144 +362,154 @@ internal fun AgentDetailScreen(
     onEdit: (() -> Unit)?,
     contentPadding: PaddingValues = PaddingValues(),
 ) {
-    Column(
+    Box(
         Modifier
             .fillMaxSize()
             .padding(contentPadding)
             .testTag(UiTags.AgentDetailScreen),
     ) {
-        TopAppBar(
-            navigationIcon = {
-                IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                    Icon(
-                        Icons.AutoMirrored.Outlined.ArrowBack,
-                        contentDescription = stringResource(R.string.back),
-                    )
-                }
-            },
-            title = { Text(agent.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            actions = {
-                if (onEdit != null) {
-                    IconButton(
-                        onClick = onEdit,
-                        enabled = !mutationBusy,
-                        modifier = Modifier.size(48.dp).testTag(UiTags.AgentDetailEdit),
-                    ) {
-                        Icon(Icons.Outlined.Edit, contentDescription = stringResource(R.string.edit))
-                    }
-                }
-            },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-        )
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
-        ) {
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Outlined.SmartToy,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(56.dp),
-                    )
-                    Column(Modifier.padding(start = 18.dp)) {
-                        Text(agent.name, style = MaterialTheme.typography.headlineSmall)
-                        if (isDefault) {
-                            Row(
-                                modifier = Modifier.padding(top = 6.dp).testTag(UiTags.AgentDetailDefault),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(
-                                    Icons.Filled.Star,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Text(
-                                    stringResource(R.string.default_agent),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(start = 6.dp),
-                                )
+        val backdrop = rememberGlassBackdrop()
+        CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+            var topBarHeightPx by remember { mutableIntStateOf(0) }
+            val topBarHeight = with(LocalDensity.current) { topBarHeightPx.toDp() }
+            Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+                // Aurora inside the recorded layer so the floating glass top bar
+                // samples colorful refraction, not the dead solid background.
+                GeminiAuroraBackground(Modifier.fillMaxSize())
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 20.dp + topBarHeight, bottom = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(24.dp),
+                ) {
+                    item {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Outlined.SmartToy,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(56.dp),
+                            )
+                            Column(Modifier.padding(start = 18.dp)) {
+                                Text(agent.name, style = MaterialTheme.typography.headlineSmall)
+                                if (isDefault) {
+                                    Row(
+                                        modifier = Modifier.padding(top = 6.dp).testTag(UiTags.AgentDetailDefault),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Star,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                        Text(
+                                            stringResource(R.string.default_agent),
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(start = 6.dp),
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
-                }
-            }
-            item { HorizontalDivider() }
-            item {
-                AgentDetailSection(
-                    stringResource(R.string.description),
-                    agent.description.ifBlank { stringResource(R.string.no_agent_description) },
-                )
-            }
-            item {
-                AgentDetailSection(
-                    stringResource(R.string.model),
-                    agent.model ?: stringResource(R.string.server_default),
-                )
-            }
-            if (agent.skills.isNotEmpty()) {
-                item {
-                    Text(stringResource(R.string.skills), style = MaterialTheme.typography.titleMedium)
-                    LazyRow(
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        items(agent.skills, key = { it }) { skill ->
-                            Surface(
-                                color = MaterialTheme.colorScheme.secondaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                                shape = MaterialTheme.shapes.small,
+                    item { HorizontalDivider() }
+                    item {
+                        AgentDetailSection(
+                            stringResource(R.string.description),
+                            agent.description.ifBlank { stringResource(R.string.no_agent_description) },
+                        )
+                    }
+                    item {
+                        AgentDetailSection(
+                            stringResource(R.string.model),
+                            agent.model ?: stringResource(R.string.server_default),
+                        )
+                    }
+                    if (agent.skills.isNotEmpty()) {
+                        item {
+                            Text(stringResource(R.string.skills), style = MaterialTheme.typography.titleMedium)
+                            LazyRow(
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                Text(
-                                    skill,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                )
+                                items(agent.skills, key = { it }) { skill ->
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.secondaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        shape = MaterialTheme.shapes.small,
+                                    ) {
+                                        Text(
+                                            skill,
+                                            style = MaterialTheme.typography.labelLarge,
+                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
-                }
-            }
-            if (agent.soul.isNotBlank()) {
-                item {
-                    AgentDetailSection(stringResource(R.string.agent_instructions), agent.soul)
-                }
-            }
-            item {
-                Button(
-                    onClick = onChat,
-                    enabled = !mutationBusy,
-                    modifier = Modifier.fillMaxWidth().height(48.dp).testTag(UiTags.AgentDetailChat),
-                ) {
-                    Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null)
-                    Text(stringResource(R.string.chat), modifier = Modifier.padding(start = 8.dp))
-                }
-                Spacer(Modifier.height(10.dp))
-                OutlinedButton(
-                    onClick = onHistory,
-                    enabled = !mutationBusy,
-                    modifier = Modifier.fillMaxWidth().height(48.dp).testTag(UiTags.AgentDetailHistory),
-                ) {
-                    Icon(Icons.Outlined.History, contentDescription = null)
-                    Text(stringResource(R.string.execution_history), modifier = Modifier.padding(start = 8.dp))
-                }
-                if (!isDefault) {
-                    Spacer(Modifier.height(10.dp))
-                    FilledTonalButton(
-                        onClick = onSetDefault,
-                        enabled = !mutationBusy,
-                        modifier = Modifier.fillMaxWidth().height(48.dp).testTag(UiTags.AgentDetailSetDefault),
-                    ) {
-                        Icon(Icons.Outlined.StarOutline, contentDescription = null)
-                        Text(stringResource(R.string.set_default_agent), modifier = Modifier.padding(start = 8.dp))
+                    if (agent.soul.isNotBlank()) {
+                        item {
+                            AgentDetailSection(stringResource(R.string.agent_instructions), agent.soul)
+                        }
+                    }
+                    item {
+                        Button(
+                            onClick = onChat,
+                            enabled = !mutationBusy,
+                            modifier = Modifier.fillMaxWidth().height(48.dp).testTag(UiTags.AgentDetailChat),
+                        ) {
+                            Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null)
+                            Text(stringResource(R.string.chat), modifier = Modifier.padding(start = 8.dp))
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedButton(
+                            onClick = onHistory,
+                            enabled = !mutationBusy,
+                            modifier = Modifier.fillMaxWidth().height(48.dp).testTag(UiTags.AgentDetailHistory),
+                        ) {
+                            Icon(Icons.Outlined.History, contentDescription = null)
+                            Text(stringResource(R.string.execution_history), modifier = Modifier.padding(start = 8.dp))
+                        }
+                        if (!isDefault) {
+                            Spacer(Modifier.height(10.dp))
+                            FilledTonalButton(
+                                onClick = onSetDefault,
+                                enabled = !mutationBusy,
+                                modifier = Modifier.fillMaxWidth().height(48.dp).testTag(UiTags.AgentDetailSetDefault),
+                            ) {
+                                Icon(Icons.Outlined.StarOutline, contentDescription = null)
+                                Text(stringResource(R.string.set_default_agent), modifier = Modifier.padding(start = 8.dp))
+                            }
+                        }
+                        Spacer(Modifier.height(24.dp))
                     }
                 }
-                Spacer(Modifier.height(24.dp))
             }
+            GlassTopAppBar(
+                modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter).onGloballyPositioned { topBarHeightPx = it.size.height },
+                navigationIcon = {
+                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                        Icon(
+                            Icons.AutoMirrored.Outlined.ArrowBack,
+                            contentDescription = stringResource(R.string.back),
+                        )
+                    }
+                },
+                title = { Text(agent.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                actions = {
+                    if (onEdit != null) {
+                        IconButton(
+                            onClick = onEdit,
+                            enabled = !mutationBusy,
+                            modifier = Modifier.size(48.dp).testTag(UiTags.AgentDetailEdit),
+                        ) {
+                            Icon(Icons.Outlined.Edit, contentDescription = stringResource(R.string.edit))
+                        }
+                    }
+                },
+            )
         }
     }
 }
@@ -496,7 +525,7 @@ internal fun AgentRunHistorySheet(
     onOpenConversation: (AgentRunInfo) -> Unit,
 ) {
     var selectedRun by remember(agent.name) { mutableStateOf<AgentRunInfo?>(null) }
-    ModalBottomSheet(
+    GlassModalBottomSheet(
         onDismissRequest = onDismiss,
         modifier = Modifier.testTag(UiTags.AgentRunHistorySheet),
     ) {
@@ -716,7 +745,7 @@ internal fun AgentEditorSheet(
     var name by remember(agent?.name) { mutableStateOf(agent?.name.orEmpty()) }
     var description by remember(agent?.name) { mutableStateOf(agent?.description.orEmpty()) }
     var model by remember(agent?.name) { mutableStateOf(agent?.model) }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    GlassModalBottomSheet(onDismissRequest = onDismiss) {
         LazyColumn(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),

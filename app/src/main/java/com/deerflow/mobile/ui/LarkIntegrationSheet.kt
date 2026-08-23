@@ -23,7 +23,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -44,6 +43,7 @@ import com.deerflow.mobile.R
 import com.deerflow.mobile.data.LarkIntegrationStatus
 import com.deerflow.mobile.data.LarkVerification
 import com.deerflow.mobile.data.LarkVerificationKind
+import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
 
 @Composable
 fun LarkIntegrationSheet(
@@ -52,7 +52,7 @@ fun LarkIntegrationSheet(
     onDismiss: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
-    ModalBottomSheet(
+    GlassModalBottomSheet(
         onDismissRequest = {
             viewModel.clearLarkVerification()
             onDismiss()

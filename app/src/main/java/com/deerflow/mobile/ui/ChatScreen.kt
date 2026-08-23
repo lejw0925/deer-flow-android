@@ -26,12 +26,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -43,6 +42,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.horizontalScroll
@@ -91,27 +91,24 @@ import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingToolbarDefaults
-import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.HorizontalFloatingToolbar
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -143,6 +140,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -164,7 +162,28 @@ import com.deerflow.mobile.data.SkillInfo
 import com.deerflow.mobile.data.TodoItem
 import com.deerflow.mobile.data.groupChatMessages
 import com.deerflow.mobile.data.conversationExportFileName
+import com.deerflow.mobile.ui.glass.GlassAlertDialog
+import androidx.compose.material3.LocalContentColor
+import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
+import com.deerflow.mobile.ui.glass.GeminiBrush
+import com.deerflow.mobile.ui.glass.GlassChip
+import com.deerflow.mobile.ui.glass.GlassDropdownMenu
+import com.deerflow.mobile.ui.glass.GlassIconButton
+import com.deerflow.mobile.ui.glass.GlassMenuHeader
+import com.deerflow.mobile.ui.glass.GlassMenuItem
+import com.deerflow.mobile.ui.glass.GlassMenuScope
+import com.deerflow.mobile.ui.glass.GlassMenuSurface
+import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
+import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
+import com.deerflow.mobile.ui.glass.glass
+import com.deerflow.mobile.ui.glass.glassEdge
+import com.deerflow.mobile.ui.glass.glassFrosted
+import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
+import com.deerflow.mobile.ui.glass.rememberGlassTints
+import com.deerflow.mobile.ui.glass.brushTint
 import com.deerflow.mobile.ui.theme.ExpressiveMotion
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.shadow.Shadow
 import java.io.File
 import kotlinx.coroutines.delay
 
@@ -192,6 +211,7 @@ fun ChatScreen(
         )
     }
     val context = LocalContext.current
+    val copiedToClipboardLabel = stringResource(R.string.copied_to_clipboard)
 
     LaunchedEffect(state.composer.text) {
         if (editorValue.text != state.composer.text) {
@@ -221,87 +241,135 @@ fun ChatScreen(
         if (uri != null) viewModel.saveArtifact(uri)
     }
 
-    Column(Modifier.fillMaxSize().testTag(UiTags.ChatScreen).padding(contentPadding)) {
-        ChatTopBar(
-            state = state,
-            onOpenDrawer = onOpenDrawer,
-            onBack = viewModel::closeConversation,
-            onModelSelected = viewModel::selectModel,
-            onModeSelected = viewModel::selectMode,
-            onExport = { format ->
-                pendingExportFormat = format
-                val title = state.selectedThread?.title ?: "deerflow-conversation"
-                exportLauncher.launch(conversationExportFileName(title, format))
-            },
-            onOpenRunDetails = {
-                showRunDetails = true
-                viewModel.openRunDetails()
-            },
-            onOpenBrowser = viewModel::openBrowser,
-            expandedSelector = expandedTopSelector,
-            onExpandedSelectorChange = { expandedTopSelector = it },
-        )
-        if (state.offline) {
-            Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
-                Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) { OfflineBanner() }
-            }
-        }
-        TodoProgressHost(
-            conversationKey = state.selectedThread?.id,
-            todos = state.todos,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-        ) {
-            when {
-                state.loadingChat -> LoadingIndicator(Modifier.size(32.dp))
-                state.messages.isEmpty() -> ChatWelcome(onSuggestion = viewModel::updateDraft)
-                else -> ProvideMarkdownImageContext(
-                    MarkdownImageContext(
-                        serverUrl = state.serverUrl,
-                        threadId = state.selectedThread?.id.orEmpty(),
-                        artifactPaths = state.artifacts,
-                        onOpenArtifact = viewModel::openArtifact,
-                    ),
+    Box(Modifier.fillMaxSize().testTag(UiTags.ChatScreen).padding(contentPadding)) {
+        // Liquid glass layout: the conversation area is recorded into a backdrop;
+        // the top bar and composer are sibling glass overlays that sample it.
+        // Glass elements must stay OUTSIDE the layerBackdrop content they sample.
+        val backdrop = rememberGlassBackdrop()
+        CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+            var topOverlayHeightPx by remember { mutableIntStateOf(0) }
+            var bottomOverlayHeightPx by remember { mutableIntStateOf(0) }
+            val density = LocalDensity.current
+            val topOverlayHeight = with(density) { topOverlayHeightPx.toDp() }
+            val bottomOverlayHeight = with(density) { bottomOverlayHeightPx.toDp() }
+
+            Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+                // Aurora is drawn inside the recorded layer so it is visible on
+                // screen AND picked up by sampling glass (top bar, composer).
+                // Without it the composer samples only the solid background color
+                // (messages are padded above it) and reads as dead-black.
+                GeminiAuroraBackground(Modifier.fillMaxSize())
+                TodoProgressHost(
+                    conversationKey = state.selectedThread?.id,
+                    todos = state.todos,
+                    topInset = topOverlayHeight,
+                    modifier = Modifier.fillMaxSize(),
                 ) {
-                    ConversationMessageList(
-                        conversationKey = state.selectedThread?.id,
-                        messages = state.messages,
-                        runActive = state.run.active,
-                        actionBusy = state.messageActionBusy,
-                        onHumanInput = viewModel::submitHumanInput,
-                        onCopy = { viewModel.showNotice(context.getString(R.string.copied_to_clipboard)) },
-                        onBranch = viewModel::branchConversation,
-                        onArtifact = viewModel::openArtifact,
-                        onBrowser = viewModel::openBrowser,
-                        modifier = Modifier.fillMaxSize().widthIn(max = 900.dp),
-                    )
+                    when {
+                        state.loadingChat -> LoadingIndicator(Modifier.size(32.dp))
+                        state.messages.isEmpty() -> ChatWelcome(onSuggestion = viewModel::updateDraft)
+                        else -> ProvideMarkdownImageContext(
+                            MarkdownImageContext(
+                                serverUrl = state.serverUrl,
+                                threadId = state.selectedThread?.id.orEmpty(),
+                                artifactPaths = state.artifacts,
+                                onOpenArtifact = viewModel::openArtifact,
+                            ),
+                        ) {
+                            ConversationMessageList(
+                                conversationKey = state.selectedThread?.id,
+                                messages = state.messages,
+                                runActive = state.run.active,
+                                actionBusy = state.messageActionBusy,
+                                onHumanInput = viewModel::submitHumanInput,
+                                onCopy = { viewModel.showNotice(copiedToClipboardLabel) },
+                                onBranch = viewModel::branchConversation,
+                                onArtifact = viewModel::openArtifact,
+                                onBrowser = viewModel::openBrowser,
+                                topPadding = topOverlayHeight + if (state.todos.isNotEmpty()) TODO_SUMMARY_SLOT_HEIGHT else 0.dp,
+                                bottomPadding = bottomOverlayHeight,
+                                modifier = Modifier.fillMaxSize().widthIn(max = 900.dp),
+                            )
+                        }
+                    }
                 }
             }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .onGloballyPositioned { topOverlayHeightPx = it.size.height },
+            ) {
+                ChatTopBar(
+                    state = state,
+                    onOpenDrawer = onOpenDrawer,
+                    onBack = viewModel::closeConversation,
+                    onModelSelected = viewModel::selectModel,
+                    onModeSelected = viewModel::selectMode,
+                    onExport = { format ->
+                        pendingExportFormat = format
+                        val title = state.selectedThread?.title ?: "deerflow-conversation"
+                        exportLauncher.launch(conversationExportFileName(title, format))
+                    },
+                    onOpenRunDetails = {
+                        showRunDetails = true
+                        viewModel.openRunDetails()
+                    },
+                    onOpenBrowser = viewModel::openBrowser,
+                    expandedSelector = expandedTopSelector,
+                    onExpandedSelectorChange = { expandedTopSelector = it },
+                )
+                if (state.offline) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                            .glassFrosted(RoundedCornerShape(12.dp)),
+                    ) {
+                        Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) { OfflineBanner() }
+                    }
+                }
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .onGloballyPositioned { bottomOverlayHeightPx = it.size.height },
+            ) {
+                if (state.run.active && state.selectedThread != null) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .glass(shape = RoundedCornerShape(20.dp), tint = rememberGlassTints().surface),
+                    ) {
+                        RunActivityRow(
+                            startedAtEpochMs = state.run.startedAtEpochMs,
+                            status = state.run.status,
+                            notice = state.runNotice,
+                        )
+                    }
+                }
+                MessageComposer(
+                    state = state,
+                    editorValue = editorValue,
+                    onDraftChange = { value ->
+                        editorValue = value
+                        viewModel.updateDraft(value.text)
+                    },
+                    onAttachment = { showAttachments = true },
+                    onAgentSelected = viewModel::selectAgent,
+                    onQuickAction = viewModel::applyQuickAction,
+                    onRemoveAttachment = viewModel::removeAttachment,
+                    onRetryAttachment = viewModel::retryAttachment,
+                    onPolishInput = viewModel::polishInput,
+                    onCancelPolish = viewModel::cancelInputPolish,
+                    onUndoPolish = viewModel::undoInputPolish,
+                    onSend = viewModel::sendMessage,
+                    onStop = viewModel::stopRun,
+                )
+            }
         }
-        if (state.run.active && state.selectedThread != null) {
-            RunActivityRow(
-                startedAtEpochMs = state.run.startedAtEpochMs,
-                status = state.run.status,
-                notice = state.runNotice,
-            )
-        }
-        MessageComposer(
-            state = state,
-            editorValue = editorValue,
-            onDraftChange = { value ->
-                editorValue = value
-                viewModel.updateDraft(value.text)
-            },
-            onAttachment = { showAttachments = true },
-            onAgentSelected = viewModel::selectAgent,
-            onQuickAction = viewModel::applyQuickAction,
-            onRemoveAttachment = viewModel::removeAttachment,
-            onRetryAttachment = viewModel::retryAttachment,
-            onPolishInput = viewModel::polishInput,
-            onCancelPolish = viewModel::cancelInputPolish,
-            onUndoPolish = viewModel::undoInputPolish,
-            onSend = viewModel::sendMessage,
-            onStop = viewModel::stopRun,
-        )
     }
 
     if (showAttachments) {
@@ -384,7 +452,7 @@ internal fun ModelUnavailableDialog(
     onDismiss: () -> Unit,
     onChooseModel: () -> Unit,
 ) {
-    AlertDialog(
+    GlassAlertDialog(
         onDismissRequest = onDismiss,
         icon = {
             Icon(
@@ -431,6 +499,8 @@ internal fun ConversationMessageList(
     onBrowser: (com.deerflow.mobile.data.BrowserViewSnapshot) -> Unit = {},
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
+    topPadding: Dp = 0.dp,
+    bottomPadding: Dp = 0.dp,
 ) {
     val messageGroups = remember(messages) { groupChatMessages(messages) }
     var expandedProcessingGroups by remember(conversationKey) { mutableStateOf(emptySet<String>()) }
@@ -519,7 +589,7 @@ internal fun ConversationMessageList(
         modifier = modifier
             .testTag(UiTags.ConversationList)
             .alpha(if (initialPositionRestored || messageGroups.isEmpty()) 1f else 0f),
-        contentPadding = PaddingValues(start = 16.dp, top = 20.dp, end = 16.dp, bottom = 72.dp),
+        contentPadding = PaddingValues(start = 16.dp, top = topPadding + 12.dp, end = 16.dp, bottom = bottomPadding + 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         userScrollEnabled = initialPositionRestored,
     ) {
@@ -648,54 +718,64 @@ internal fun ChatTopBar(
     val showRunDetails = isConversation && state.selectedThread != null
     val showBrowser = showRunDetails && state.capabilities.browserControlEnabled
     val showExportActions = isConversation && state.messages.isNotEmpty()
-    TopAppBar(
+    Row(
         modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 8.dp)
             .testTag(UiTags.ChatTopBar)
             .semantics { isTraversalGroup = true },
-        navigationIcon = {
-            IconButton(
-                onClick = if (state.route == AppRoute.Conversation) onBack else onOpenDrawer,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        GlassIconButton(
+            onClick = if (state.route == AppRoute.Conversation) onBack else onOpenDrawer,
+            modifier = Modifier
+                .testTag(UiTags.ChatNavigationButton)
+                .semantics { traversalIndex = 0f },
+        ) {
+            Icon(
+                if (state.route == AppRoute.Conversation) Icons.AutoMirrored.Outlined.ArrowBack else Icons.Outlined.Menu,
+                contentDescription = stringResource(if (state.route == AppRoute.Conversation) R.string.back else R.string.open_navigation),
+            )
+        }
+        ChatTopSelectors(
+            state = state,
+            expandedSelector = expandedSelector,
+            onExpandedSelectorChange = onExpandedSelectorChange,
+            onModelSelected = onModelSelected,
+            onModeSelected = onModeSelected,
+        )
+        Spacer(Modifier.weight(1f))
+        if (showBrowser) {
+            GlassIconButton(
+                onClick = onOpenBrowser,
                 modifier = Modifier
-                    .size(48.dp)
-                    .testTag(UiTags.ChatNavigationButton)
-                    .semantics { traversalIndex = 0f },
+                    .testTag(UiTags.BrowserOpenButton)
+                    .semantics { traversalIndex = 3f },
             ) {
-                Icon(
-                    if (state.route == AppRoute.Conversation) Icons.AutoMirrored.Outlined.ArrowBack else Icons.Outlined.Menu,
-                    contentDescription = stringResource(if (state.route == AppRoute.Conversation) R.string.back else R.string.open_navigation),
-                )
+                Icon(Icons.Outlined.DesktopWindows, contentDescription = stringResource(R.string.browser_live_open))
             }
-        },
-        actions = {
-            if (showBrowser) {
-                IconButton(
-                    onClick = onOpenBrowser,
+        }
+        if (showRunDetails || showExportActions) {
+            Box {
+                GlassIconButton(
+                    onClick = { overflowMenuExpanded = true },
+                    enabled = !state.exportBusy,
                     modifier = Modifier
-                        .size(48.dp)
-                        .testTag(UiTags.BrowserOpenButton)
-                        .semantics { traversalIndex = 3f },
+                        .testTag(UiTags.ConversationOverflowButton)
+                        .semantics { traversalIndex = if (showBrowser) 4f else 3f },
                 ) {
-                    Icon(Icons.Outlined.DesktopWindows, contentDescription = stringResource(R.string.browser_live_open))
+                    Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.more_actions))
                 }
-            }
-            if (showRunDetails || showExportActions) {
-                Box {
-                    IconButton(
-                        onClick = { overflowMenuExpanded = true },
-                        enabled = !state.exportBusy,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .testTag(UiTags.ConversationOverflowButton)
-                            .semantics { traversalIndex = if (showBrowser) 4f else 3f },
-                    ) {
-                        Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.more_actions))
-                    }
-                    DropdownMenu(
-                        expanded = overflowMenuExpanded,
-                        onDismissRequest = { overflowMenuExpanded = false },
-                    ) {
+                GlassDropdownMenu(
+                    expanded = overflowMenuExpanded,
+                    onDismissRequest = { overflowMenuExpanded = false },
+                    shape = RoundedCornerShape(20.dp),
+                ) {
+                    Column {
                         if (showRunDetails) {
-                            DropdownMenuItem(
+                            GlassMenuItem(
                                 text = { Text(stringResource(R.string.run_details_open)) },
                                 leadingIcon = { Icon(Icons.Outlined.History, contentDescription = null) },
                                 onClick = {
@@ -707,7 +787,7 @@ internal fun ChatTopBar(
                         }
                         if (showRunDetails && showExportActions) HorizontalDivider()
                         if (showExportActions) {
-                            DropdownMenuItem(
+                            GlassMenuItem(
                                 text = { Text(stringResource(R.string.export_markdown)) },
                                 leadingIcon = { Icon(Icons.Outlined.Description, contentDescription = null) },
                                 onClick = {
@@ -716,7 +796,7 @@ internal fun ChatTopBar(
                                 },
                                 enabled = !state.exportBusy,
                             )
-                            DropdownMenuItem(
+                            GlassMenuItem(
                                 text = { Text(stringResource(R.string.export_plain_text)) },
                                 leadingIcon = { Icon(Icons.Outlined.Code, contentDescription = null) },
                                 onClick = {
@@ -729,18 +809,8 @@ internal fun ChatTopBar(
                     }
                 }
             }
-        },
-        title = {
-            ChatTopSelectors(
-                state = state,
-                expandedSelector = expandedSelector,
-                onExpandedSelectorChange = onExpandedSelectorChange,
-                onModelSelected = onModelSelected,
-                onModeSelected = onModeSelected,
-            )
-        },
-        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-    )
+        }
+    }
 }
 
 @Composable
@@ -778,21 +848,16 @@ internal fun ChatTopSelectors(
                     .verticalScroll(rememberScrollState())
                     .testTag(UiTags.ModelSelectorMenu),
             ) {
-                Text(
-                    stringResource(R.string.model),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                )
+                GlassMenuHeader(stringResource(R.string.model))
                 if (state.capabilities.models.isEmpty()) {
-                    DropdownMenuItem(
+                    GlassMenuItem(
                         text = { Text(stringResource(R.string.no_models_available)) },
                         onClick = { onExpandedSelectorChange(null) },
                         enabled = false,
                     )
                 } else {
                     state.capabilities.models.forEach { option ->
-                        DropdownMenuItem(
+                        GlassMenuItem(
                             text = {
                                 Text(option.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             },
@@ -822,45 +887,42 @@ internal fun ChatTopSelectors(
             },
             onDismiss = { onExpandedSelectorChange(null) },
         ) {
-            Text(
-                stringResource(R.string.run_mode),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-            )
-            availableModes.forEach { option ->
-                DropdownMenuItem(
-                    text = {
-                        Column(
-                            modifier = Modifier.padding(vertical = 4.dp),
-                            verticalArrangement = Arrangement.spacedBy(2.dp),
-                        ) {
-                            Text(option.label(), style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                option.description(),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            if (state.capabilities.supportsReasoningEffort(state.composer.options.modelName)) {
+            Column {
+                GlassMenuHeader(stringResource(R.string.run_mode))
+                availableModes.forEach { option ->
+                    GlassMenuItem(
+                        text = {
+                            Column(
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Text(option.label(), style = MaterialTheme.typography.titleSmall)
                                 Text(
-                                    "${stringResource(R.string.reasoning_effort)}: ${option.reasoningLabel()} · ${option.reasoningDescription()}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
+                                    option.description(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                if (state.capabilities.supportsReasoningEffort(state.composer.options.modelName)) {
+                                    Text(
+                                        "${stringResource(R.string.reasoning_effort)}: ${option.reasoningLabel()} · ${option.reasoningDescription()}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
                             }
-                        }
-                    },
-                    trailingIcon = {
-                        if (state.composer.options.mode == option) {
-                            Icon(Icons.Outlined.Check, contentDescription = stringResource(R.string.option_selected))
-                        }
-                    },
-                    onClick = {
-                        onModeSelected(option)
-                        onExpandedSelectorChange(null)
-                    },
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                )
+                        },
+                        trailingIcon = {
+                            if (state.composer.options.mode == option) {
+                                Icon(Icons.Outlined.Check, contentDescription = stringResource(R.string.option_selected))
+                            }
+                        },
+                        onClick = {
+                            onModeSelected(option)
+                            onExpandedSelectorChange(null)
+                        },
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                    )
+                }
             }
         }
     }
@@ -873,16 +935,23 @@ private fun TopSelector(
     expanded: Boolean,
     onClick: () -> Unit,
     onDismiss: () -> Unit,
-    menuContent: @Composable ColumnScope.() -> Unit,
+    menuContent: @Composable GlassMenuScope.() -> Unit,
 ) {
     val selectorShape = RoundedCornerShape(20.dp)
     Box {
         Surface(
             onClick = onClick,
-            modifier = modifier.height(48.dp),
+            modifier = modifier
+                .height(48.dp)
+                .glass(
+                    shape = selectorShape,
+                    tint = Color.Transparent,
+                    useLens = true,
+                )
+                .glassEdge(selectorShape),
             shape = selectorShape,
-            color = if (expanded) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer,
-            contentColor = if (expanded) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+            color = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onSurface,
         ) {
             Row(
                 modifier = Modifier.padding(start = 12.dp, end = 8.dp),
@@ -892,14 +961,13 @@ private fun TopSelector(
                 Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(18.dp))
             }
         }
-        DropdownMenu(
+        GlassDropdownMenu(
             expanded = expanded,
             onDismissRequest = onDismiss,
-            modifier = Modifier.widthIn(min = 240.dp, max = 340.dp).animateContentSize(ExpressiveMotion.spatial()),
+            modifier = Modifier
+                .widthIn(min = 240.dp, max = 340.dp)
+                .animateContentSize(ExpressiveMotion.spatial()),
             shape = selectorShape,
-            containerColor = MaterialTheme.colorScheme.surfaceContainer,
-            tonalElevation = 3.dp,
-            shadowElevation = 6.dp,
             content = menuContent,
         )
     }
@@ -917,7 +985,6 @@ private fun ChatWelcome(onSuggestion: (String) -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Icon(Icons.Outlined.SmartToy, contentDescription = null, modifier = Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.height(10.dp))
         Text(stringResource(R.string.chat_welcome), style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(14.dp))
@@ -931,8 +998,10 @@ private fun ChatWelcome(onSuggestion: (String) -> Unit) {
                 Surface(
                     onClick = { onSuggestion(suggestion) },
                     shape = MaterialTheme.shapes.medium,
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier.fillMaxWidth(),
+                    color = Color.Transparent,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .glassFrosted(MaterialTheme.shapes.medium),
                 ) {
                     Text(
                         suggestion,
@@ -952,6 +1021,7 @@ internal fun TodoProgressHost(
     conversationKey: String?,
     todos: List<TodoItem>,
     modifier: Modifier = Modifier,
+    topInset: Dp = 0.dp,
     content: @Composable () -> Unit,
 ) {
     var expanded by rememberSaveable(conversationKey) { mutableStateOf(false) }
@@ -963,40 +1033,41 @@ internal fun TodoProgressHost(
     SharedTransitionLayout(modifier = modifier.testTag(UiTags.TodoProgressHost)) {
         val progressBounds = rememberSharedContentState(key = "todo-progress-${conversationKey.orEmpty()}")
         Box(Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxSize()) {
-                if (todos.isNotEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(TODO_SUMMARY_SLOT_HEIGHT),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        androidx.compose.animation.AnimatedVisibility(
-                            visible = !expanded,
-                            enter = fadeIn(ExpressiveMotion.fastSpatial()),
-                            exit = fadeOut(ExpressiveMotion.fastSpatial()),
-                        ) {
-                            TodoSummary(
-                                todos = todos,
-                                onClick = { expanded = true },
-                                modifier = Modifier.sharedBounds(
-                                    sharedContentState = progressBounds,
-                                    animatedVisibilityScope = this@AnimatedVisibility,
-                                    enter = fadeIn(ExpressiveMotion.fastSpatial()),
-                                    exit = fadeOut(ExpressiveMotion.fastSpatial()),
-                                ),
-                            )
-                        }
-                    }
-                }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag(UiTags.TodoConversationArea),
+                contentAlignment = Alignment.Center,
+            ) {
+                content()
+            }
+            // The summary floats over the conversation (below the glass top bar),
+            // so messages can scroll underneath it.
+            if (todos.isNotEmpty()) {
                 Box(
                     modifier = Modifier
-                        .weight(1f)
                         .fillMaxWidth()
-                        .testTag(UiTags.TodoConversationArea),
+                        .align(Alignment.TopCenter)
+                        .padding(top = topInset)
+                        .height(TODO_SUMMARY_SLOT_HEIGHT),
                     contentAlignment = Alignment.Center,
                 ) {
-                    content()
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = !expanded,
+                        enter = fadeIn(ExpressiveMotion.fastSpatial()),
+                        exit = fadeOut(ExpressiveMotion.fastSpatial()),
+                    ) {
+                        TodoSummary(
+                            todos = todos,
+                            onClick = { expanded = true },
+                            modifier = Modifier.sharedBounds(
+                                sharedContentState = progressBounds,
+                                animatedVisibilityScope = this@AnimatedVisibility,
+                                enter = fadeIn(ExpressiveMotion.fastSpatial()),
+                                exit = fadeOut(ExpressiveMotion.fastSpatial()),
+                            ),
+                        )
+                    }
                 }
             }
             androidx.compose.animation.AnimatedVisibility(
@@ -1018,7 +1089,7 @@ internal fun TodoProgressHost(
                         modifier = Modifier
                             .align(Alignment.TopCenter)
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                            .padding(start = 16.dp, top = topInset + 12.dp, end = 16.dp, bottom = 12.dp)
                             .sharedBounds(
                                 sharedContentState = progressBounds,
                                 animatedVisibilityScope = this@AnimatedVisibility,
@@ -1048,13 +1119,13 @@ internal fun TodoSummary(
     ) {
         Surface(
             onClick = onClick,
-            color = MaterialTheme.colorScheme.secondaryContainer,
+            color = Color.Transparent,
             contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
             shape = shape,
-            tonalElevation = 1.dp,
+            tonalElevation = 0.dp,
             modifier = Modifier
                 .fillMaxSize()
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+                .glassFrosted(shape)
                 .clip(shape)
                 .testTag(UiTags.TodoProgressSummary),
         ) {
@@ -1098,15 +1169,15 @@ private fun TodoProgressDetails(
     val completed = todos.count { it.status == "completed" }
     val shape = RoundedCornerShape(8.dp)
     Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        color = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,
         shape = shape,
-        tonalElevation = 4.dp,
+        tonalElevation = 0.dp,
         shadowElevation = 10.dp,
         modifier = modifier
             .widthIn(max = 900.dp)
             .heightIn(max = TODO_PROGRESS_DETAILS_MAX_HEIGHT)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+            .glassFrosted(shape)
             .clip(shape)
             .testTag(UiTags.TodoProgressDetails),
     ) {
@@ -1260,7 +1331,7 @@ internal fun ArtifactSessionDialog(
     val markdown = session.filename.endsWith(".md", ignoreCase = true) ||
         session.filename.endsWith(".markdown", ignoreCase = true)
     val language = artifactLanguage(session.filename, session.mimeType)
-    AlertDialog(
+    GlassAlertDialog(
         onDismissRequest = {
             if (downloading) onCancel() else onDismiss()
         },
@@ -1455,17 +1526,36 @@ internal fun MessageComposer(
         SlashSkillSuggestionPositionProvider(with(density) { 8.dp.roundToPx() })
     }
     var composerAnchorWidthPx by remember { mutableStateOf(0) }
-    Surface(tonalElevation = 2.dp) {
-        Column(
-                modifier = Modifier
+    val composerTints = rememberGlassTints()
+    // Mostly-clear glass: a light veil just enough for text readability, with the
+    // blur + vibrancy from [glass] supplying the frosted backdrop.
+    val composerTint = if (isSystemInDarkTheme()) {
+        Color.Black.copy(alpha = 0.24f)
+    } else {
+        Color.White.copy(alpha = 0.40f)
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(UiTags.Composer)
+            .navigationBarsPadding()
+            .imePadding()
+            .padding(start = 12.dp, top = composerTopPadding, end = 12.dp, bottom = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+            Column(
+                Modifier
+                    .widthIn(max = 820.dp)
                     .fillMaxWidth()
-                    .testTag(UiTags.Composer)
-                    .navigationBarsPadding()
-                    .imePadding()
-                    .padding(start = 12.dp, top = composerTopPadding, end = 12.dp, bottom = 14.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+                    .glass(
+                        shape = RoundedCornerShape(28.dp),
+                        tint = composerTint,
+                        useLens = true,
+                        shadow = { Shadow(radius = 12.dp, color = Color.Black.copy(alpha = 0.10f)) },
+                    )
+                    .glassEdge(RoundedCornerShape(28.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
             ) {
-            Column(Modifier.widthIn(max = 820.dp).fillMaxWidth()) {
                 AnimatedVisibility(
                     visible = quickCapabilitiesVisible,
                     enter = expandVertically(
@@ -1500,7 +1590,7 @@ internal fun MessageComposer(
                             .weight(1f)
                             .onGloballyPositioned { composerAnchorWidthPx = it.size.width },
                     ) {
-                        OutlinedTextField(
+                        TextField(
                             value = composerDisplayValue,
                             onValueChange = { value ->
                                 dismissedSkillSuggestionValue = null
@@ -1564,11 +1654,22 @@ internal fun MessageComposer(
                                                         R.string.input_polish
                                                     },
                                                 ),
+                                                tint = if (state.canUndoInputPolish || !polishEnabled) LocalContentColor.current else Color.White,
+                                                modifier = if (!state.canUndoInputPolish && polishEnabled) Modifier.brushTint(GeminiBrush) else Modifier,
                                             )
                                         }
                                     }
                                 }
                             },
+                            shape = RoundedCornerShape(20.dp),
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = composerTints.frosted.copy(alpha = 0.5f),
+                                unfocusedContainerColor = composerTints.frosted.copy(alpha = 0.5f),
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                                disabledIndicatorColor = Color.Transparent,
+                                cursorColor = MaterialTheme.colorScheme.primary,
+                            ),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .focusRequester(inputFocusRequester)
@@ -1581,19 +1682,16 @@ internal fun MessageComposer(
                                 onDismissRequest = { dismissedSkillSuggestionValue = composerDisplayValue.text },
                                 properties = PopupProperties(focusable = false),
                             ) {
-                                Surface(
+                                GlassMenuSurface(
                                     modifier = Modifier
                                         .width(with(density) { composerAnchorWidthPx.toDp() })
                                         .heightIn(max = 320.dp)
                                         .testTag(UiTags.SlashSkillSuggestions),
                                     shape = MaterialTheme.shapes.extraLarge,
-                                    color = MaterialTheme.colorScheme.surfaceContainer,
-                                    tonalElevation = 3.dp,
-                                    shadowElevation = 6.dp,
                                 ) {
                                     Column(Modifier.verticalScroll(rememberScrollState())) {
                                         slashSkillSuggestions.forEach { skill ->
-                                            DropdownMenuItem(
+                                            GlassMenuItem(
                                                 text = {
                                                     Column(Modifier.fillMaxWidth()) {
                                                         Text(
@@ -1630,17 +1728,23 @@ internal fun MessageComposer(
                         }
                     }
                     Spacer(Modifier.width(8.dp))
-                    FilledIconButton(
+                    val sendEnabled = (state.run.active && !stopInFlight) || (
+                        !composerLocked &&
+                            !state.composer.uploading &&
+                            (state.composer.text.isNotBlank() || state.composer.attachments.isNotEmpty())
+                        )
+                    val sendIconTint = if (sendEnabled) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                    }
+                    GlassIconButton(
                         onClick = if (state.run.active && !stopInFlight) onStop else onSend,
-                        enabled = (state.run.active && !stopInFlight) || (
-                            !composerLocked &&
-                                !state.composer.uploading &&
-                                (state.composer.text.isNotBlank() || state.composer.attachments.isNotEmpty())
-                            ),
+                        enabled = sendEnabled,
                         modifier = Modifier
                             .size(52.dp)
                             .testTag(UiTags.SendStopButton),
-                        ) {
+                    ) {
                         when {
                             stopInFlight -> LoadingIndicator(
                                 Modifier
@@ -1649,13 +1753,21 @@ internal fun MessageComposer(
                                     .semantics { contentDescription = stoppingDescription },
                             )
                             state.composer.uploading -> LoadingIndicator(Modifier.size(24.dp))
-                            state.run.active -> Icon(Icons.Filled.Stop, contentDescription = stringResource(R.string.stop_run))
-                            else -> Icon(Icons.AutoMirrored.Filled.Send, contentDescription = stringResource(R.string.send_message))
+                            state.run.active -> Icon(
+                                Icons.Filled.Stop,
+                                contentDescription = stringResource(R.string.stop_run),
+                                tint = sendIconTint,
+                            )
+                            else -> Icon(
+                                Icons.AutoMirrored.Filled.Send,
+                                contentDescription = stringResource(R.string.send_message),
+                                tint = if (sendEnabled) Color.White else sendIconTint,
+                                modifier = if (sendEnabled) Modifier.brushTint(GeminiBrush) else Modifier,
+                            )
                         }
                     }
                 }
             }
-        }
     }
 }
 
@@ -1769,7 +1881,7 @@ internal fun CapabilityRow(
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                AssistChip(
+                GlassChip(
                     onClick = { agentSelectorExpanded = !agentSelectorExpanded },
                     label = { Text(state.composer.options.agentLabel()) },
                     leadingIcon = {
@@ -1782,7 +1894,7 @@ internal fun CapabilityRow(
                     modifier = Modifier.testTag(UiTags.AgentSelector),
                 )
                 actions.forEach { action ->
-                    AssistChip(
+                    GlassChip(
                         onClick = {
                             agentSelectorExpanded = false
                             onQuickAction(action.prompt, action.keywords)
@@ -1806,11 +1918,12 @@ private fun AgentSelectorMenu(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = maxHeight)
+            .glassFrosted(MaterialTheme.shapes.extraLarge)
             .testTag(UiTags.AgentSelectorMenu),
         shape = MaterialTheme.shapes.extraLarge,
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        tonalElevation = 3.dp,
-        shadowElevation = 6.dp,
+        color = Color.Transparent,
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
     ) {
         LazyColumn(
             modifier = Modifier
@@ -1957,7 +2070,7 @@ internal fun AttachmentSheet(
     onPhotos: () -> Unit,
     onFiles: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, modifier = Modifier.testTag(UiTags.AttachmentSheet)) {
+    GlassModalBottomSheet(onDismissRequest = onDismiss, modifier = Modifier.testTag(UiTags.AttachmentSheet)) {
         Text(stringResource(R.string.add_to_conversation), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             AttachmentAction(Icons.Outlined.CameraAlt, stringResource(R.string.camera), Modifier.weight(1f), onCamera)
@@ -1970,7 +2083,14 @@ internal fun AttachmentSheet(
 
 @Composable
 private fun AttachmentAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, modifier: Modifier, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceVariant, modifier = modifier.height(88.dp)) {
+    Surface(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.medium,
+        color = Color.Transparent,
+        modifier = modifier
+            .height(88.dp)
+            .glassFrosted(MaterialTheme.shapes.medium),
+    ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Icon(icon, contentDescription = null)
             Spacer(Modifier.height(8.dp))

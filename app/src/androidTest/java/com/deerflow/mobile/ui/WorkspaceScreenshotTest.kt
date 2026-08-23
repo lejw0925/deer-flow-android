@@ -83,9 +83,6 @@ class WorkspaceScreenshotTest {
     fun tabletLightEnglishMatchesBaseline() = captureScenario(Scenario.TabletLightEnglish)
 
     @Test
-    fun phone412DynamicEnglishMatchesBaseline() = captureScenario(Scenario.Phone412DynamicEnglish)
-
-    @Test
     fun phone360LightChineseMatchesBaseline() = captureScenario(Scenario.Phone360LightChinese)
 
     @Test
@@ -103,7 +100,6 @@ class WorkspaceScreenshotTest {
             ) {
                 DeerFlowTheme(
                     preference = scenario.theme,
-                    useDynamicColor = scenario.dynamicColor,
                 ) {
                     Box(
                         modifier = Modifier
@@ -300,17 +296,15 @@ class WorkspaceScreenshotTest {
         val widthDp: Int,
         val heightDp: Int,
         val theme: ThemePreference,
-        val dynamicColor: Boolean,
         val locale: Locale,
         val fontScale: Float = 1f,
     ) {
-        Phone360LightEnglish(360, 800, ThemePreference.Light, false, Locale.US),
-        Phone412DarkEnglish(412, 915, ThemePreference.Dark, false, Locale.US),
-        FoldableLightEnglish(673, 841, ThemePreference.Light, false, Locale.US),
-        TabletLightEnglish(840, 800, ThemePreference.Light, false, Locale.US),
-        Phone412DynamicEnglish(412, 915, ThemePreference.Light, true, Locale.US),
-        Phone360LightChinese(360, 800, ThemePreference.Light, false, Locale.SIMPLIFIED_CHINESE),
-        Phone360LightLargeText(360, 800, ThemePreference.Light, false, Locale.US, fontScale = 1.3f),
+        Phone360LightEnglish(360, 800, ThemePreference.Light, Locale.US),
+        Phone412DarkEnglish(412, 915, ThemePreference.Dark, Locale.US),
+        FoldableLightEnglish(673, 841, ThemePreference.Light, Locale.US),
+        TabletLightEnglish(840, 800, ThemePreference.Light, Locale.US),
+        Phone360LightChinese(360, 800, ThemePreference.Light, Locale.SIMPLIFIED_CHINESE),
+        Phone360LightLargeText(360, 800, ThemePreference.Light, Locale.US, fontScale = 1.3f),
         ;
 
         val id: String get() = name.replace(Regex("([a-z])([A-Z])"), "$1_$2").lowercase()

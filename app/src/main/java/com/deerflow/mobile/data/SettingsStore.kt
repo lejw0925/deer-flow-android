@@ -27,7 +27,6 @@ private val Context.settingsDataStore: DataStore<Preferences> by preferencesData
 data class SettingsSnapshot(
     val serverUrl: String = SettingsStore.DEFAULT_SERVER_URL,
     val theme: ThemePreference = ThemePreference.System,
-    val useDynamicColor: Boolean = true,
     val notifyOnRunCompletion: Boolean = true,
     val cacheRetentionPolicy: CacheRetentionPolicy = CacheRetentionPolicy.KeepUntilCleared,
     val artifactDownloadLimits: ArtifactDownloadLimits = ArtifactDownloadLimits(),
@@ -79,10 +78,6 @@ class SettingsStore internal constructor(
 
     suspend fun setTheme(value: ThemePreference) {
         dataStore.edit { it[THEME] = value.name }
-    }
-
-    suspend fun setDynamicColor(enabled: Boolean) {
-        dataStore.edit { it[DYNAMIC_COLOR] = enabled }
     }
 
     suspend fun setNotifyOnRunCompletion(enabled: Boolean) {
@@ -156,7 +151,6 @@ class SettingsStore internal constructor(
             .orEmpty(),
         theme = runCatching { ThemePreference.valueOf(this[THEME].orEmpty()) }
             .getOrDefault(ThemePreference.System),
-        useDynamicColor = this[DYNAMIC_COLOR] ?: true,
         notifyOnRunCompletion = this[NOTIFY_ON_RUN_COMPLETION] ?: true,
         cacheRetentionPolicy = runCatching {
             CacheRetentionPolicy.valueOf(this[CACHE_RETENTION_POLICY].orEmpty())
@@ -181,7 +175,6 @@ class SettingsStore internal constructor(
 
         private val SERVER_URL = stringPreferencesKey("server_url")
         private val THEME = stringPreferencesKey("theme")
-        private val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         private val NOTIFY_ON_RUN_COMPLETION = booleanPreferencesKey("notify_on_run_completion")
         private val CACHE_RETENTION_POLICY = stringPreferencesKey("cache_retention_policy")
         private val ARTIFACT_AUTO_DOWNLOAD_BYTES = longPreferencesKey("artifact_auto_download_bytes")

@@ -177,7 +177,6 @@ data class AppUiState(
     val agentRunsError: String? = null,
     val memory: MemoryData? = null,
     val theme: ThemePreference = ThemePreference.System,
-    val useDynamicColor: Boolean = true,
     val language: LanguagePreference = LanguagePreference.System,
     val notifyOnRunCompletion: Boolean = true,
     val cacheRetentionPolicy: CacheRetentionPolicy = CacheRetentionPolicy.KeepUntilCleared,
@@ -426,7 +425,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(
                     serverUrl = configuredServerUrl?.let { api.serverUrl }.orEmpty(),
                     theme = saved.theme,
-                    useDynamicColor = saved.useDynamicColor,
                     language = currentLanguagePreference(),
                     notifyOnRunCompletion = saved.notifyOnRunCompletion,
                     cacheRetentionPolicy = saved.cacheRetentionPolicy,
@@ -664,7 +662,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             serverUrl = normalized,
             checkingSession = true,
             theme = current.theme,
-            useDynamicColor = current.useDynamicColor,
             language = current.language,
             notifyOnRunCompletion = current.notifyOnRunCompletion,
             cacheRetentionPolicy = current.cacheRetentionPolicy,
@@ -751,7 +748,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 serverUrl = api.serverUrl,
                 checkingSession = false,
                 theme = current.theme,
-                useDynamicColor = current.useDynamicColor,
                 language = current.language,
                 notifyOnRunCompletion = current.notifyOnRunCompletion,
                 cacheRetentionPolicy = current.cacheRetentionPolicy,
@@ -2859,11 +2855,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun setTheme(value: ThemePreference) {
         persistSetting { setTheme(value) }
         mutableState.update { it.copy(theme = value) }
-    }
-
-    fun setDynamicColor(enabled: Boolean) {
-        persistSetting { setDynamicColor(enabled) }
-        mutableState.update { it.copy(useDynamicColor = enabled) }
     }
 
     fun setLanguage(value: LanguagePreference) {

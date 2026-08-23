@@ -40,18 +40,17 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -61,6 +60,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
@@ -76,8 +76,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.content.ContextCompat
 import com.deerflow.mobile.R
 import com.deerflow.mobile.data.SsoProvider
+import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
+import com.deerflow.mobile.ui.glass.GlassButton
+import com.deerflow.mobile.ui.glass.GlassCard
+import com.deerflow.mobile.ui.glass.GlassSnackbarHost
+import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
+import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
 import com.deerflow.mobile.ui.theme.DeerFlowTheme
 import com.deerflow.mobile.ui.theme.ExpressiveMotion
+import com.kyant.backdrop.backdrops.layerBackdrop
 
 @Composable
 fun DeerFlowApp(viewModel: AppViewModel) {
@@ -98,7 +105,7 @@ fun DeerFlowApp(viewModel: AppViewModel) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
-    DeerFlowTheme(state.theme, state.useDynamicColor) {
+    DeerFlowTheme(state.theme) {
         val snackbar = remember { SnackbarHostState() }
         LaunchedEffect(state.error) {
             state.error?.let {
@@ -150,7 +157,7 @@ fun DeerFlowApp(viewModel: AppViewModel) {
 
 @Composable
 internal fun LoginSnackbarHost(snackbar: SnackbarHostState, modifier: Modifier = Modifier) {
-    SnackbarHost(hostState = snackbar, modifier = modifier)
+    GlassSnackbarHost(hostState = snackbar, modifier = modifier)
 }
 
 @Composable
@@ -205,88 +212,105 @@ private fun LoginScreen(state: AppUiState, viewModel: AppViewModel) {
         else viewModel.login(email, password)
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().testTag(UiTags.LoginScreen).imePadding(),
-        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 48.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        item {
-            Column(Modifier.widthIn(max = 480.dp).fillMaxWidth()) {
-                BrandMark()
-                Spacer(Modifier.height(32.dp))
-                Text(stringResource(R.string.sign_in), style = MaterialTheme.typography.headlineMedium)
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    stringResource(R.string.login_subtitle),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(28.dp))
-                OutlinedTextField(
-                    value = serverUrl,
-                    onValueChange = { serverUrl = it },
-                    label = { Text(stringResource(R.string.server_address)) },
-                    supportingText = { Text(stringResource(R.string.server_example)) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = email,
-                    onValueChange = { email = it },
-                    label = { Text(stringResource(R.string.email)) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text(stringResource(R.string.password)) },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { submit() }),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(20.dp))
-                Button(
-                    onClick = submit,
-                    enabled = !state.loginBusy,
-                    modifier = Modifier.fillMaxWidth().height(50.dp),
-                ) {
-                    if (state.loginBusy) {
-                        LoadingIndicator(Modifier.size(22.dp), color = MaterialTheme.colorScheme.onPrimary)
-                    } else {
-                        Text(if (serverUrl != state.serverUrl) stringResource(R.string.connect) else stringResource(R.string.sign_in))
+    val backdrop = rememberGlassBackdrop()
+    CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+        Box(Modifier.fillMaxSize()) {
+            // Recorded art layer; the glass form card samples it.
+            Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) { LoginBackdropArt() }
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().testTag(UiTags.LoginScreen).imePadding(),
+                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 48.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                item {
+                    Column(Modifier.widthIn(max = 480.dp).fillMaxWidth()) {
+                        BrandMark()
+                        Spacer(Modifier.height(32.dp))
+                        Text(stringResource(R.string.sign_in), style = MaterialTheme.typography.headlineMedium)
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            stringResource(R.string.login_subtitle),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(28.dp))
+                        GlassCard(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(20.dp)) {
+                                OutlinedTextField(
+                                    value = serverUrl,
+                                    onValueChange = { serverUrl = it },
+                                    label = { Text(stringResource(R.string.server_address)) },
+                                    supportingText = { Text(stringResource(R.string.server_example)) },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Spacer(Modifier.height(12.dp))
+                                OutlinedTextField(
+                                    value = email,
+                                    onValueChange = { email = it },
+                                    label = { Text(stringResource(R.string.email)) },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Spacer(Modifier.height(12.dp))
+                                OutlinedTextField(
+                                    value = password,
+                                    onValueChange = { password = it },
+                                    label = { Text(stringResource(R.string.password)) },
+                                    visualTransformation = PasswordVisualTransformation(),
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                                    keyboardActions = KeyboardActions(onDone = { submit() }),
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Spacer(Modifier.height(20.dp))
+                                GlassButton(
+                                    onClick = submit,
+                                    enabled = !state.loginBusy,
+                                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                                ) {
+                                    if (state.loginBusy) {
+                                        LoadingIndicator(Modifier.size(22.dp), color = MaterialTheme.colorScheme.primary)
+                                    } else {
+                                        Text(if (serverUrl != state.serverUrl) stringResource(R.string.connect) else stringResource(R.string.sign_in))
+                                    }
+                                }
+                                Spacer(Modifier.height(12.dp))
+                                OutlinedButton(
+                                    onClick = { viewModel.saveServerUrl(serverUrl) },
+                                    enabled = !state.loginBusy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Icon(Icons.Outlined.Refresh, contentDescription = null)
+                                    Spacer(Modifier.height(0.dp))
+                                    Text(stringResource(R.string.check_server), modifier = Modifier.padding(start = 8.dp))
+                                }
+                            }
+                        }
+                        if (serverUrl == state.serverUrl) {
+                            SsoProviderButtons(
+                                providers = state.ssoProviders,
+                                loading = state.loadingSsoProviders,
+                                enabled = !state.loginBusy,
+                                onProviderSelected = {
+                                    focusManager.clearFocus()
+                                    viewModel.beginSsoLogin(it)
+                                },
+                            )
+                        }
                     }
-                }
-                Spacer(Modifier.height(12.dp))
-                OutlinedButton(
-                    onClick = { viewModel.saveServerUrl(serverUrl) },
-                    enabled = !state.loginBusy,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = null)
-                    Spacer(Modifier.height(0.dp))
-                    Text(stringResource(R.string.check_server), modifier = Modifier.padding(start = 8.dp))
-                }
-                if (serverUrl == state.serverUrl) {
-                    SsoProviderButtons(
-                        providers = state.ssoProviders,
-                        loading = state.loadingSsoProviders,
-                        enabled = !state.loginBusy,
-                        onProviderSelected = {
-                            focusManager.clearFocus()
-                            viewModel.beginSsoLogin(it)
-                        },
-                    )
                 }
             }
         }
     }
+}
+
+/** Gemini aurora behind the login form, giving the glass card content to refract. */
+@Composable
+private fun LoginBackdropArt() {
+    GeminiAuroraBackground(Modifier.fillMaxSize())
 }
 
 @Composable
