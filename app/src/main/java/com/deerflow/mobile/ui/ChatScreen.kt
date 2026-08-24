@@ -186,6 +186,7 @@ import com.deerflow.mobile.ui.glass.rememberGlassTints
 import com.deerflow.mobile.ui.glass.brushTint
 import com.deerflow.mobile.ui.theme.ExpressiveMotion
 import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.Shadow
 import java.io.File
 import kotlinx.coroutines.delay
@@ -271,7 +272,7 @@ fun ChatScreen(
                 ) {
                     when {
                         state.loadingChat -> LoadingIndicator(Modifier.size(32.dp))
-                        state.messages.isEmpty() -> ChatWelcome(onSuggestion = viewModel::updateDraft)
+                        state.messages.isEmpty() -> ChatWelcome()
                         else -> ProvideMarkdownImageContext(
                             MarkdownImageContext(
                                 serverUrl = state.serverUrl,
@@ -328,7 +329,8 @@ fun ChatScreen(
                         Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 6.dp)
-                            .glassFrosted(RoundedCornerShape(12.dp)),
+                            .glass(RoundedCornerShape(12.dp), useLens = true)
+                            .glassEdge(RoundedCornerShape(12.dp)),
                     ) {
                         Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) { OfflineBanner() }
                     }
@@ -345,7 +347,12 @@ fun ChatScreen(
                         Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 4.dp)
-                            .glass(shape = RoundedCornerShape(20.dp), tint = rememberGlassTints().surface),
+                            .glass(
+                                shape = RoundedCornerShape(20.dp),
+                                tint = rememberGlassTints().surface,
+                                useLens = true,
+                            )
+                            .glassEdge(RoundedCornerShape(20.dp)),
                     ) {
                         RunActivityRow(
                             startedAtEpochMs = state.run.startedAtEpochMs,
@@ -966,6 +973,11 @@ private fun TopSelector(
                     shape = selectorShape,
                     tint = Color.Transparent,
                     useLens = true,
+                    // Same light-model treatment as GlassIconButton so the
+                    // selectors carry the identical outline glow as the
+                    // neighboring circular nav buttons.
+                    shadow = { Shadow(radius = 8.dp, color = Color.Black.copy(alpha = 0.08f)) },
+                    highlight = { Highlight.Default.copy(alpha = 0.6f) },
                 )
                 .glassEdge(selectorShape),
             shape = selectorShape,
@@ -998,7 +1010,7 @@ internal enum class TopSelectorKind {
 }
 
 @Composable
-private fun ChatWelcome(onSuggestion: (String) -> Unit) {
+private fun ChatWelcome() {
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1006,31 +1018,6 @@ private fun ChatWelcome(onSuggestion: (String) -> Unit) {
     ) {
         Spacer(Modifier.height(10.dp))
         Text(stringResource(R.string.chat_welcome), style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(14.dp))
-        Column(Modifier.widthIn(max = 560.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(
-                R.string.suggestion_research,
-                R.string.suggestion_plan,
-                R.string.suggestion_summary,
-            ).forEach { textId ->
-                val suggestion = stringResource(textId)
-                Surface(
-                    onClick = { onSuggestion(suggestion) },
-                    shape = MaterialTheme.shapes.medium,
-                    color = Color.Transparent,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .glassFrosted(MaterialTheme.shapes.medium),
-                ) {
-                    Text(
-                        suggestion,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
     }
 }
 

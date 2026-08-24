@@ -56,7 +56,7 @@ private val transparentBarColors: TopAppBarColors
     )
 
 /** Soft shadow lifting floating glass off the recorded content. */
-private fun glassShadow(): Shadow = Shadow(radius = 8.dp, color = Color.Black.copy(alpha = 0.08f))
+internal fun glassShadow(): Shadow = Shadow(radius = 8.dp, color = Color.Black.copy(alpha = 0.08f))
 
 /** Floating glass top bar; meant to overlay the recorded content layer. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -69,7 +69,9 @@ fun GlassTopAppBar(
 ) {
     TopAppBar(
         title = title,
-        modifier = modifier.glass(shape = RectangleShape, tint = rememberGlassTints().veil),
+        modifier = modifier
+            .glass(shape = RectangleShape, tint = rememberGlassTints().veil)
+            .glassEdge(RectangleShape),
         navigationIcon = navigationIcon,
         actions = actions,
         colors = transparentBarColors,
@@ -95,9 +97,13 @@ fun GlassModalBottomSheet(
         contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 0.dp,
     ) {
+        // ModalBottomSheet renders in its own dialog window, where the recorded
+        // backdrop is unreachable (same constraint as popup menus): the frosted
+        // fill + glass edge reads as glass instead of an empty sample.
         Column(
             Modifier
-                .glass(shape = sheetShape, tint = rememberGlassTints().veil),
+                .glassFrosted(shape = sheetShape, borderColor = Color.Transparent)
+                .glassEdge(sheetShape),
         ) {
             content()
         }
@@ -119,7 +125,10 @@ fun GlassAlertDialog(
     AlertDialog(
         onDismissRequest = onDismissRequest,
         confirmButton = confirmButton,
-        modifier = modifier.glass(shape = shape, tint = rememberGlassTints().veil),
+        // Dialogs live in their own window; frosted + edge like popup menus.
+        modifier = modifier
+            .glassFrosted(shape = shape, borderColor = Color.Transparent)
+            .glassEdge(shape),
         dismissButton = dismissButton,
         icon = icon,
         title = title,
@@ -246,11 +255,14 @@ fun GlassCard(
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val glassModifier = modifier.glass(
-        shape = shape,
-        shadow = { glassShadow() },
-        highlight = { Highlight.Ambient },
-    )
+    val glassModifier = modifier
+        .glass(
+            shape = shape,
+            useLens = true,
+            shadow = { glassShadow() },
+            highlight = { Highlight.Ambient },
+        )
+        .glassEdge(shape)
     Column(
         if (onClick != null) {
             glassModifier.clickable(onClick = onClick, role = Role.Button)
@@ -271,7 +283,9 @@ fun GlassSnackbarHost(
         val shape = RoundedCornerShape(16.dp)
         Snackbar(
             snackbarData = data,
-            modifier = Modifier.glass(shape = shape, tint = rememberGlassTints().veil),
+            modifier = Modifier
+                .glass(shape = shape, tint = rememberGlassTints().veil, useLens = true)
+                .glassEdge(shape),
             shape = shape,
             containerColor = Color.Transparent,
             contentColor = MaterialTheme.colorScheme.onSurface,

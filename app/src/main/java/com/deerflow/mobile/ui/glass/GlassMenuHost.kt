@@ -191,6 +191,8 @@ private fun menuPanelOffset(
         }
     }
     y = y.coerceAtLeast(marginPx)
+    // Final clamp: whatever the placement, the panel bottom must stay on screen.
+    y = y.coerceAtMost((overlay.height - panelHeight - marginPx).coerceAtLeast(marginPx))
     onPlacedAbove(placedAbove)
     return IntOffset(x.roundToInt(), y.roundToInt())
 }

@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -155,7 +156,8 @@ fun GlassMenuSurface(
         modifier
             .then(
                 if (inComposition) {
-                    Modifier.glass(shape, tint = tints.veil)
+                    // Lens gives the panel its refractive glass edge.
+                    Modifier.glass(shape, tint = tints.veil, useLens = true)
                 } else {
                     Modifier.glassFrosted(shape, tint = tints.veil, borderColor = Color.Transparent)
                 },
@@ -181,7 +183,7 @@ fun GlassMenuSurface(
 }
 
 @Composable
-private fun GlassSelectionPill(scope: GlassMenuScope) {
+private fun BoxScope.GlassSelectionPill(scope: GlassMenuScope) {
     val itemCount = scope.itemBounds.size
     if (itemCount == 0) return
     val coroutineScope = rememberCoroutineScope()
@@ -202,8 +204,12 @@ private fun GlassSelectionPill(scope: GlassMenuScope) {
     }
     var dragged by remember { mutableStateOf(false) }
     Box(
+        // matchParentSize, NOT fillMaxSize: this Box lives inside the wrapping
+        // surface Box, where fillMaxSize would grab the incoming max height
+        // (the whole screen in the overlay host) and blow the panel up to
+        // full-screen height — the "menu taller than the screen" bug.
         Modifier
-            .fillMaxSize()
+            .matchParentSize()
             .pointerInput(scope, itemCount) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -253,6 +259,11 @@ private fun GlassSelectionPill(scope: GlassMenuScope) {
         } - 6.dp
         // Capsule like the Backdrop catalog's LiquidSlider thumb.
         val pillShape = RoundedCornerShape(percent = 50)
+        val pillTint = if (dark) {
+            Color.White.copy(alpha = lerp(0.10f, 0.22f, press))
+        } else {
+            Color.White.copy(alpha = lerp(0.55f, 0.88f, press))
+        }
         Box(
             Modifier
                 .padding(horizontal = 6.dp)
@@ -264,14 +275,20 @@ private fun GlassSelectionPill(scope: GlassMenuScope) {
                     scaleY = drag.scaleY
                     alpha = press
                 }
-                .glassFrosted(
-                    pillShape,
-                    tint = if (dark) {
-                        Color.White.copy(alpha = lerp(0.10f, 0.22f, press))
+                .then(
+                    if (LocalGlassMenuInComposition.current) {
+                        // Liquid ball: lens refraction along the edge with an
+                        // unblurred (clear) center — real backdrop glass, not paint.
+                        Modifier.glass(
+                            pillShape,
+                            tint = pillTint,
+                            useLens = true,
+                            blurRadius = 0.dp,
+                        )
                     } else {
-                        Color.White.copy(alpha = lerp(0.55f, 0.88f, press))
+                        // Popup windows cannot sample the backdrop; keep the paint.
+                        Modifier.glassFrosted(pillShape, tint = pillTint, borderColor = Color.Transparent)
                     },
-                    borderColor = Color.Transparent,
                 )
                 .glassEdge(
                     pillShape,

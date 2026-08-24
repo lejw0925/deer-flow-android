@@ -4,6 +4,7 @@ package com.deerflow.mobile.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.width
@@ -35,6 +36,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.Dp
@@ -48,11 +50,34 @@ import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
 import com.deerflow.mobile.ui.glass.rememberGlassMenuHostState
 import com.deerflow.mobile.ui.glass.rememberGlassTints
 import com.deerflow.mobile.ui.glass.glass
+import com.deerflow.mobile.ui.glass.glassEdge
 import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.highlight.Highlight
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val DRAWER_NAVIGATION_LEAD_MILLIS = 72L
+
+/**
+ * Blur + edge tuning shared by the drawer panel and its bottom bar. Kept local to the
+ * drawer so the global [com.deerflow.mobile.ui.glass.GlassTunables] (2.dp) keeps tuning the
+ * small interactive glass elements; the drawer is a large see-through surface that wants a
+ * heavier frost + a stronger directional edge for the "glass edge refraction" gleam.
+ */
+internal val DrawerGlassBlurRadius: Dp = 6.dp
+internal val DrawerGlassEdgePeakAlpha: Float = 0.40f
+
+/**
+ * See-through tint for the drawer panel: a low-alpha frosted veil resolved per theme from
+ * the glass tint tokens, so the live content recorded behind the drawer reads through —
+ * clearly but frosted. Well below [com.deerflow.mobile.ui.glass.GlassTints.veil] (0.68/0.44),
+ * which is too opaque to see content through.
+ */
+@Composable
+private fun rememberDrawerGlassTint(): Color {
+    val veil = rememberGlassTints().veil
+    return if (veil.luminance() < 0.5f) veil.copy(alpha = 0.28f) else veil.copy(alpha = 0.20f)
+}
 
 @Composable
 fun WorkspaceShell(state: AppUiState, viewModel: AppViewModel, snackbar: SnackbarHostState) {
@@ -120,14 +145,21 @@ private fun CompactWorkspace(
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
+            val drawerShape = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp)
             ModalDrawerSheet(
                 modifier = Modifier
                     .width(drawerWidth)
                     .glass(
-                        shape = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp),
-                        tint = rememberGlassTints().veil,
-                    ),
+                        shape = drawerShape,
+                        backdrop = backdrop,
+                        tint = rememberDrawerGlassTint(),
+                        useLens = true,
+                        blurRadius = DrawerGlassBlurRadius,
+                        highlight = { Highlight.Ambient },
+                    )
+                    .glassEdge(drawerShape, peakAlpha = DrawerGlassEdgePeakAlpha),
                 drawerContainerColor = Color.Transparent,
+                drawerTonalElevation = 0.dp,
             ) {
                 WorkspaceDrawer(
                     state = state,
@@ -169,6 +201,7 @@ private fun CompactWorkspace(
                             else -> Unit
                         }
                     },
+                    backdrop = backdrop,
                 )
             }
         },
@@ -178,21 +211,25 @@ private fun CompactWorkspace(
             containerColor = Color.Transparent,
             snackbarHost = { GlassSnackbarHost(snackbar) },
         ) { padding ->
-            // Record ONLY the aurora into the backdrop. Glass elements must be
-            // siblings of this box, never children: self-sampling smears.
+            // Record aurora AND the live page into the backdrop. The drawer is a sibling
+            // OUTSIDE this box (ModalDrawerSheet overlays the content), so it samples the
+            // real content behind it — not just the static gradient. Aurora stays the first
+            // child (placement invariant) so glass overlays sample color, not the dead
+            // background. Per-screen backdrops (ChatScreen etc.) remain nested inside; they
+            // are different LayerBackdrop instances, so this is not a same-chain re-record.
             Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
                 GeminiAuroraBackground(Modifier.fillMaxSize())
+                WorkspacePage(
+                    state,
+                    viewModel,
+                    onOpenDrawer = {
+                        focusManager.clearFocus(force = true)
+                        keyboardController?.hide()
+                        scope.launch { drawerState.open() }
+                    },
+                    contentPadding = padding,
+                )
             }
-            WorkspacePage(
-                state,
-                viewModel,
-                onOpenDrawer = {
-                    focusManager.clearFocus(force = true)
-                    keyboardController?.hide()
-                    scope.launch { drawerState.open() }
-                },
-                contentPadding = padding,
-            )
         }
     }
     if (showSkills) SkillsSheet(state, viewModel, onDismiss = { showSkills = false })
@@ -206,45 +243,61 @@ private fun ExpandedWorkspace(
     backdrop: com.kyant.backdrop.backdrops.LayerBackdrop,
 ) {
     var showSkills by remember { mutableStateOf(false) }
-    androidx.compose.foundation.layout.Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        // The side panel sits beside the recorded layer, so there is nothing to
-        // refract behind it; a frosted fill keeps the glass language without
-        // self-sampling artifacts.
-        Box(Modifier.width(320.dp).background(rememberGlassTints().frosted)) {
-            WorkspaceDrawer(
-                state = state,
-                onNewChat = viewModel::createThread,
-                onOpenThread = viewModel::openThread,
-                onRenameThread = viewModel::renameThread,
-                onDeleteThread = viewModel::deleteThread,
-                onPinThread = viewModel::toggleThreadPinned,
-                onRefreshThreads = viewModel::refreshThreads,
-                onOpenProfile = { viewModel.openWorkspaceChild(AppRoute.Profile) },
-                onDestination = { destination ->
-                    when (destination) {
-                        DrawerDestination.Agents -> viewModel.openWorkspaceChild(AppRoute.Agents)
-                        DrawerDestination.Tasks -> viewModel.openWorkspaceChild(AppRoute.Tasks)
-                        DrawerDestination.Skills -> {
-                            showSkills = true
-                            viewModel.refreshMcpConfig()
-                            viewModel.refreshMcpTools()
-                        }
-                        DrawerDestination.Memory -> viewModel.openWorkspaceChild(AppRoute.Memory)
-                        else -> Unit
-                    }
-                },
-            )
+    val drawerShape = RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp)
+    Box(Modifier.fillMaxSize()) {
+        // The side panel sits at the screen's left edge with the chat to its RIGHT (not
+        // behind it), so recording the page would not reveal it through the panel — it would
+        // only add per-frame cost during chat scroll. Record aurora-only; the side panel's
+        // see-through comes from the glass treatment below over the aurora.
+        Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+            GeminiAuroraBackground(Modifier.fillMaxSize())
         }
-        Scaffold(
-            contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            containerColor = Color.Transparent,
-            snackbarHost = { GlassSnackbarHost(snackbar) },
-        ) { padding ->
-            // Aurora-only recording; the page (with glass chrome) is a sibling.
-            Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
-                GeminiAuroraBackground(Modifier.fillMaxSize())
+        Row(Modifier.fillMaxSize()) {
+            Box(
+                Modifier
+                    .width(320.dp)
+                    .glass(
+                        shape = drawerShape,
+                        backdrop = backdrop,
+                        tint = rememberDrawerGlassTint(),
+                        useLens = true,
+                        blurRadius = DrawerGlassBlurRadius,
+                        highlight = { Highlight.Ambient },
+                    )
+                    .glassEdge(drawerShape, peakAlpha = DrawerGlassEdgePeakAlpha),
+            ) {
+                WorkspaceDrawer(
+                    state = state,
+                    onNewChat = viewModel::createThread,
+                    onOpenThread = viewModel::openThread,
+                    onRenameThread = viewModel::renameThread,
+                    onDeleteThread = viewModel::deleteThread,
+                    onPinThread = viewModel::toggleThreadPinned,
+                    onRefreshThreads = viewModel::refreshThreads,
+                    onOpenProfile = { viewModel.openWorkspaceChild(AppRoute.Profile) },
+                    onDestination = { destination ->
+                        when (destination) {
+                            DrawerDestination.Agents -> viewModel.openWorkspaceChild(AppRoute.Agents)
+                            DrawerDestination.Tasks -> viewModel.openWorkspaceChild(AppRoute.Tasks)
+                            DrawerDestination.Skills -> {
+                                showSkills = true
+                                viewModel.refreshMcpConfig()
+                                viewModel.refreshMcpTools()
+                            }
+                            DrawerDestination.Memory -> viewModel.openWorkspaceChild(AppRoute.Memory)
+                            else -> Unit
+                        }
+                    },
+                    backdrop = backdrop,
+                )
             }
-            WorkspacePage(state, viewModel, onOpenDrawer = {}, contentPadding = padding)
+            Scaffold(
+                contentWindowInsets = WindowInsets(0, 0, 0, 0),
+                containerColor = Color.Transparent,
+                snackbarHost = { GlassSnackbarHost(snackbar) },
+            ) { padding ->
+                WorkspacePage(state, viewModel, onOpenDrawer = {}, contentPadding = padding)
+            }
         }
     }
     if (showSkills) SkillsSheet(state, viewModel, onDismiss = { showSkills = false })

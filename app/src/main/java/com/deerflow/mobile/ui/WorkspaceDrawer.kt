@@ -67,6 +67,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -89,7 +90,11 @@ import com.deerflow.mobile.ui.glass.GlassIconButton
 import com.deerflow.mobile.ui.glass.GlassMenuItem
 import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
 import com.deerflow.mobile.ui.glass.glass
+import com.deerflow.mobile.ui.glass.glassEdge
+import com.deerflow.mobile.ui.glass.glassShadow
 import com.deerflow.mobile.ui.glass.rememberGlassTints
+import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.highlight.Highlight
 import org.json.JSONObject
 import kotlinx.coroutines.delay
 
@@ -102,6 +107,18 @@ private enum class SkillCatalogTab(val labelRes: Int) {
 private val DRAWER_ACTION_SHAPE = RoundedCornerShape(16.dp)
 private val DRAWER_BOTTOM_BAR_SHAPE = RoundedCornerShape(20.dp)
 private val DRAWER_BOTTOM_CONTENT_PADDING = 104.dp
+
+/**
+ * See-through tint for the floating bottom action bar — slightly stronger than the drawer
+ * panel tint ([rememberDrawerGlassTint] in WorkspaceShell) so the bar reads as a distinct
+ * floating element over the drawer glass, while still letting the recorded content behind
+ * show through. A soft [Shadow] lifts it off the panel (see the `.glass` call below).
+ */
+@Composable
+private fun rememberBottomBarGlassTint(): Color {
+    val veil = rememberGlassTints().veil
+    return if (veil.luminance() < 0.5f) veil.copy(alpha = 0.34f) else veil.copy(alpha = 0.30f)
+}
 
 private val SkillInfo.isCustom: Boolean
     get() = category.contains("custom", ignoreCase = true) || category.contains("user", ignoreCase = true)
@@ -118,6 +135,7 @@ fun WorkspaceDrawer(
     onRefreshThreads: () -> Unit = {},
     onOpenProfile: () -> Unit = {},
     drawerOpen: Boolean = false,
+    backdrop: Backdrop? = null,
 ) {
     var query by remember { mutableStateOf("") }
     var renameTarget by remember { mutableStateOf<ThreadSummary?>(null) }
@@ -149,7 +167,10 @@ fun WorkspaceDrawer(
             ) {
                 Surface(
                     onClick = onOpenProfile,
-                    modifier = Modifier.size(36.dp).glass(CircleShape, useLens = true),
+                    modifier = Modifier
+                        .size(36.dp)
+                        .glass(CircleShape, backdrop = backdrop, useLens = true)
+                        .glassEdge(CircleShape),
                     shape = CircleShape,
                     color = Color.Transparent,
                     contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
@@ -253,7 +274,16 @@ fun WorkspaceDrawer(
                 .imePadding()
                 .padding(horizontal = 12.dp, vertical = 10.dp)
                 .testTag(UiTags.ConversationActionsBar)
-                .glass(RoundedCornerShape(28.dp), tint = rememberGlassTints().veil, useLens = true),
+                .glass(
+                    shape = DRAWER_BOTTOM_BAR_SHAPE,
+                    backdrop = backdrop,
+                    tint = rememberBottomBarGlassTint(),
+                    useLens = true,
+                    blurRadius = DrawerGlassBlurRadius,
+                    highlight = { Highlight.Ambient },
+                    shadow = { glassShadow() },
+                )
+                .glassEdge(DRAWER_BOTTOM_BAR_SHAPE, peakAlpha = DrawerGlassEdgePeakAlpha),
             shape = DRAWER_BOTTOM_BAR_SHAPE,
             color = Color.Transparent,
             tonalElevation = 0.dp,
