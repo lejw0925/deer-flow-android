@@ -372,8 +372,13 @@ private fun ThreadDrawerRow(
         GlassDropdownMenu(
             expanded = menu,
             onDismissRequest = { menu = false },
+            modifier = Modifier.width(250.dp),
         ) {
-            Column {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 300.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
                 GlassMenuItem(
                     text = { Text(stringResource(if (thread.isPinned) R.string.unpin else R.string.pin)) },
                     leadingIcon = { Icon(Icons.Outlined.PushPin, contentDescription = null) },

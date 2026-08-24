@@ -832,7 +832,7 @@ internal fun ChatTopSelectors(
     val selectedModel = state.capabilities.selectedModel(state.composer.options.modelName)
     val model = selectedModel?.displayName ?: stringResource(R.string.model)
     val availableModes = state.capabilities.availableRunModes(state.composer.options.modelName)
-    val menuMaxHeight = 400.dp
+    val menuMaxHeight = 300.dp
     Row(
         modifier = modifier.testTag(UiTags.TopSelectors),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -962,6 +962,11 @@ private fun TopSelector(
             modifier = buttonModifier
                 .fillMaxWidth()
                 .height(48.dp)
+                .glass(
+                    shape = selectorShape,
+                    tint = Color.Transparent,
+                    useLens = true,
+                )
                 .glassEdge(selectorShape),
             shape = selectorShape,
             color = Color.Transparent,

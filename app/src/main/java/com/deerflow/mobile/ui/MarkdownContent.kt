@@ -33,6 +33,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -206,15 +208,13 @@ private fun EnhancedMarkdownTable(content: String, node: ASTNode, style: TextSty
     ) {
         Column(Modifier.horizontalScroll(rememberScrollState())) {
             rows.forEachIndexed { index, row ->
-                if (index > 0) {
-                    HorizontalDivider(thickness = enhancedTableDividerWidth, color = dividerColor)
-                }
                 EnhancedMarkdownTableRow(
                     content = content,
                     row = row,
                     style = if (row.type == HEADER) style.copy(fontWeight = FontWeight.Bold) else style,
                     alignments = alignments,
                     dividerColor = dividerColor,
+                    drawBottomDivider = index < rows.lastIndex,
                 )
             }
         }
@@ -228,8 +228,28 @@ private fun EnhancedMarkdownTableRow(
     style: TextStyle,
     alignments: List<TextAlign>,
     dividerColor: Color,
+    drawBottomDivider: Boolean,
 ) {
-    Row(Modifier.height(IntrinsicSize.Max), verticalAlignment = Alignment.CenterVertically) {
+    // Draw the horizontal divider at the bottom of the row itself: the Row has a
+    // determined width (sum of its cells), so drawLine spans the full table
+    // width. The previous HorizontalDivider used fillMaxWidth(), which resolves
+    // to 0 inside a horizontalScroll (unbounded width) and so never appeared.
+    Row(
+        Modifier
+            .height(IntrinsicSize.Max)
+            .drawBehind {
+                if (drawBottomDivider) {
+                    val sw = enhancedTableDividerWidth.toPx()
+                    drawLine(
+                        color = dividerColor,
+                        start = Offset(0f, size.height - sw / 2f),
+                        end = Offset(size.width, size.height - sw / 2f),
+                        strokeWidth = sw,
+                    )
+                }
+            },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         row.children.filter { it.type == CELL }.forEachIndexed { column, cell ->
             if (column > 0) {
                 Box(

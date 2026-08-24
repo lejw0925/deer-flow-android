@@ -113,7 +113,7 @@ fun rememberGlassTints(): GlassTints {
 
 /** Effect tuning for [glass]. Centralized so the whole UI can be dialed in one place. */
 object GlassTunables {
-    val BlurRadius: Dp = 4.dp
+    val BlurRadius: Dp = 2.dp
     val LensHeight: Dp = 12.dp
     val LensAmount: Dp = 24.dp
     val PressExpand: Dp = 14.dp
