@@ -90,7 +90,7 @@ private fun defaultGlassTints(dark: Boolean, surfaceContainerHigh: Color): Glass
             surface = Color.Black.copy(alpha = 0.32f),
             veil = Color.Black.copy(alpha = 0.44f),
             frosted = surfaceContainerHigh.copy(alpha = 0.72f),
-            frostedBorder = Color.White.copy(alpha = 0.28f),
+            frostedBorder = Color.White.copy(alpha = 0.16f),
             fallback = surfaceContainerHigh.copy(alpha = 0.96f),
         )
     } else {
@@ -98,7 +98,7 @@ private fun defaultGlassTints(dark: Boolean, surfaceContainerHigh: Color): Glass
             surface = Color.White.copy(alpha = 0.55f),
             veil = Color.White.copy(alpha = 0.68f),
             frosted = surfaceContainerHigh.copy(alpha = 0.82f),
-            frostedBorder = Color.White.copy(alpha = 0.70f),
+            frostedBorder = Color.White.copy(alpha = 0.40f),
             fallback = surfaceContainerHigh.copy(alpha = 0.94f),
         )
     }
@@ -114,7 +114,7 @@ fun rememberGlassTints(): GlassTints {
 
 /** Effect tuning for [glass]. Centralized so the whole UI can be dialed in one place. */
 object GlassTunables {
-    val BlurRadius: Dp = 8.dp
+    val BlurRadius: Dp = 6.dp
     val LensHeight: Dp = 12.dp
     val LensAmount: Dp = 24.dp
     val PressExpand: Dp = 14.dp
@@ -278,8 +278,8 @@ fun Modifier.glassFrosted(
         .border(
             1.dp,
             Brush.verticalGradient(
-                0f to borderBase.copy(alpha = (borderBase.alpha * 1.25f).coerceAtMost(1f)),
-                1f to borderBase.copy(alpha = borderBase.alpha * 0.55f),
+                0f to borderBase.copy(alpha = (borderBase.alpha * 0.95f).coerceAtMost(1f)),
+                1f to borderBase.copy(alpha = borderBase.alpha * 0.35f),
             ),
             shape,
         )
@@ -295,8 +295,8 @@ fun Modifier.glassEdge(
     shape: Shape,
     width: Dp = 1.dp,
     light: Color = Color.White,
-    peakAlpha: Float = 0.55f,
-    tailAlpha: Float = 0.06f,
+    peakAlpha: Float = 0.28f,
+    tailAlpha: Float = 0.03f,
 ): Modifier {
     val dark = isSystemInDarkTheme()
     val peak = light.copy(alpha = if (dark) peakAlpha * 0.6f else peakAlpha)
