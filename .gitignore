@@ -1,6 +1,6 @@
 /.gradle/
 /.kotlin/
-/.idea/
+.idea/
 /local.properties
 /keystore.properties
 /**/build/
@@ -9,3 +9,5 @@ captures/
 .externalNativeBuild/
 .cxx/
 tools/__pycache__/
+/.mimocode/
+/.tmp/
