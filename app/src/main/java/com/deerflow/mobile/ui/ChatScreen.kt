@@ -832,7 +832,7 @@ internal fun ChatTopSelectors(
     val selectedModel = state.capabilities.selectedModel(state.composer.options.modelName)
     val model = selectedModel?.displayName ?: stringResource(R.string.model)
     val availableModes = state.capabilities.availableRunModes(state.composer.options.modelName)
-    val modelMenuMaxHeight = LocalConfiguration.current.screenHeightDp.dp / 2
+    val menuMaxHeight = 400.dp
     Row(
         modifier = modifier.testTag(UiTags.TopSelectors),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -854,7 +854,7 @@ internal fun ChatTopSelectors(
         ) {
             Column(
                 modifier = Modifier
-                    .heightIn(max = modelMenuMaxHeight)
+                    .heightIn(max = menuMaxHeight)
                     .verticalScroll(rememberScrollState())
                     .testTag(UiTags.ModelSelectorMenu),
             ) {
@@ -887,7 +887,7 @@ internal fun ChatTopSelectors(
         }
         TopSelector(
             label = state.composer.options.mode.label(),
-            modifier = Modifier.widthIn(max = 92.dp),
+            modifier = Modifier.widthIn(max = 61.dp),
             buttonModifier = Modifier
                 .testTag(UiTags.ModeSelector)
                 .semantics { traversalIndex = 2f },
@@ -897,7 +897,11 @@ internal fun ChatTopSelectors(
             },
             onDismiss = { onExpandedSelectorChange(null) },
         ) {
-            Column {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = menuMaxHeight)
+                    .verticalScroll(rememberScrollState()),
+            ) {
                 GlassMenuHeader(stringResource(R.string.run_mode))
                 availableModes.forEach { option ->
                     GlassMenuItem(
@@ -958,11 +962,6 @@ private fun TopSelector(
             modifier = buttonModifier
                 .fillMaxWidth()
                 .height(48.dp)
-                .glass(
-                    shape = selectorShape,
-                    tint = Color.Transparent,
-                    useLens = true,
-                )
                 .glassEdge(selectorShape),
             shape = selectorShape,
             color = Color.Transparent,
@@ -980,7 +979,7 @@ private fun TopSelector(
             expanded = expanded,
             onDismissRequest = onDismiss,
             modifier = Modifier
-                .widthIn(min = 240.dp, max = 340.dp)
+                .width(250.dp)
                 .animateContentSize(ExpressiveMotion.spatial()),
             shape = selectorShape,
             content = menuContent,
