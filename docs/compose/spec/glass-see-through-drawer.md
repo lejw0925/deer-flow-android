@@ -3,7 +3,7 @@ feature: glass-see-through-drawer
 status: delivered
 updated: 2026-08-25
 branch: release/v1.2.0
-commits: e58d847 (base; implementation uncommitted in working tree — pending user commit decision)
+commits: 4e626db..5298094 (tag v1.2.0; synced to origin/main at 5298094)
 ---
 
 # See-through Liquid-Glass Drawer
