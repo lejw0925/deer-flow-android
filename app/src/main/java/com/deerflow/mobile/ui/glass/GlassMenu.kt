@@ -146,17 +146,20 @@ fun GlassMenuSurface(
     val scope = remember { GlassMenuScope() }
     scope.nextItemIndex = 0
     val tints = rememberGlassTints()
+    // Real backdrop sampling is only possible when this surface is composed by a
+    // GlassMenuOverlayHost (LocalGlassMenuInComposition): popup windows inherit a
+    // non-null LocalGlassBackdrop that cannot reach another window's pixels, and
+    // sampling there silently renders nothing — so popups keep the frosted fill.
+    val inComposition = LocalGlassMenuInComposition.current
     Box(
         modifier
-            // Popup windows live in their own window and cannot sample the
-            // activity's recorded backdrop across the window boundary (the
-            // inherited LocalGlassBackdrop is non-null but RenderEffect can't
-            // reach another window's pixels), so sampling silently yields an
-            // empty/transparent surface. Use the frosted treatment instead: a
-            // strong translucent fill + top sheen, plus a directional glassEdge
-            // highlight for the refraction look. This matches AGENTS.md, which
-            // prescribes glassFrosted for popup-window surfaces.
-            .glassFrosted(shape, tint = tints.veil, borderColor = Color.Transparent)
+            .then(
+                if (inComposition) {
+                    Modifier.glass(shape, tint = tints.veil)
+                } else {
+                    Modifier.glassFrosted(shape, tint = tints.veil, borderColor = Color.Transparent)
+                },
+            )
             .glassEdge(shape)
             .drawBehind {
                 // Faint Gemini color wash so popup menus carry the same gradient
@@ -294,8 +297,10 @@ private fun itemIndexAt(scope: GlassMenuScope, position: Offset): Int {
 }
 
 /**
- * Drop-in replacement for [DropdownMenu] with the liquid-glass treatment:
- * frosted panel without the gray elevation ring, plus the elastic selection pill.
+ * Drop-in replacement for [DropdownMenu] with the liquid-glass treatment.
+ * On screens providing [LocalGlassMenuHost] the menu renders in-composition via
+ * the screen's [GlassMenuOverlayHost] and samples the real backdrop; elsewhere it
+ * falls back to a popup window with the frosted panel (no gray elevation ring).
  */
 @Composable
 fun GlassDropdownMenu(
@@ -306,6 +311,12 @@ fun GlassDropdownMenu(
     width: Dp? = null,
     content: @Composable GlassMenuScope.() -> Unit,
 ) {
+    val host = LocalGlassMenuHost.current
+    val panelModifier = modifier.then(if (width != null) Modifier.width(width) else Modifier)
+    if (host != null) {
+        HostedGlassDropdownMenu(host, expanded, onDismissRequest, panelModifier, shape, content)
+        return
+    }
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismissRequest,
@@ -313,7 +324,7 @@ fun GlassDropdownMenu(
         containerColor = Color.Transparent,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
-        modifier = modifier.then(if (width != null) Modifier.width(width) else Modifier),
+        modifier = panelModifier,
     ) {
         GlassMenuSurface(shape = shape, content = content)
     }

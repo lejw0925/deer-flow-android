@@ -40,9 +40,12 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
+import com.deerflow.mobile.ui.glass.GlassMenuOverlayHost
 import com.deerflow.mobile.ui.glass.GlassSnackbarHost
 import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
+import com.deerflow.mobile.ui.glass.LocalGlassMenuHost
 import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
+import com.deerflow.mobile.ui.glass.rememberGlassMenuHostState
 import com.deerflow.mobile.ui.glass.rememberGlassTints
 import com.deerflow.mobile.ui.glass.glass
 import com.kyant.backdrop.backdrops.layerBackdrop
@@ -54,7 +57,8 @@ private const val DRAWER_NAVIGATION_LEAD_MILLIS = 72L
 @Composable
 fun WorkspaceShell(state: AppUiState, viewModel: AppViewModel, snackbar: SnackbarHostState) {
     val backdrop = rememberGlassBackdrop()
-    CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+    val menuHost = rememberGlassMenuHostState()
+    CompositionLocalProvider(LocalGlassBackdrop provides backdrop, LocalGlassMenuHost provides menuHost) {
         BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             val expanded = maxWidth >= 840.dp
             if (expanded) {
@@ -62,6 +66,9 @@ fun WorkspaceShell(state: AppUiState, viewModel: AppViewModel, snackbar: Snackba
             } else {
                 CompactWorkspace(state, viewModel, snackbar, drawerWidth = maxWidth * 0.8f, backdrop = backdrop)
             }
+            // Drawer context menus (and any shell-level popup) render here with
+            // real backdrop glass; screens with their own backdrop override the host.
+            GlassMenuOverlayHost(menuHost, Modifier.fillMaxSize())
         }
     }
 }

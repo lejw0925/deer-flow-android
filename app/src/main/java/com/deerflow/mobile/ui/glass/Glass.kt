@@ -43,7 +43,6 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
-import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
@@ -114,7 +113,7 @@ fun rememberGlassTints(): GlassTints {
 
 /** Effect tuning for [glass]. Centralized so the whole UI can be dialed in one place. */
 object GlassTunables {
-    val BlurRadius: Dp = 6.dp
+    val BlurRadius: Dp = 4.dp
     val LensHeight: Dp = 12.dp
     val LensAmount: Dp = 24.dp
     val PressExpand: Dp = 14.dp
@@ -223,7 +222,9 @@ fun Modifier.glass(
             backdrop = backdrop,
             shape = { shape },
             effects = {
-                vibrancy()
+                // vibrancy() removed — the backdrop library's vibrancy has no
+                // strength parameter, so to weaken the color-mixing we drop it
+                // entirely (sampled content renders at natural saturation).
                 blur(blurRadius.toPx())
                 if (useLens &&
                     shape is CornerBasedShape &&

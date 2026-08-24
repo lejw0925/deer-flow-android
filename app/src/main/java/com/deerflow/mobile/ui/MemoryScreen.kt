@@ -68,10 +68,13 @@ import com.deerflow.mobile.ui.glass.GlassAlertDialog
 import com.deerflow.mobile.ui.glass.GlassDropdownMenu
 import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
 import com.deerflow.mobile.ui.glass.GlassMenuItem
+import com.deerflow.mobile.ui.glass.GlassMenuOverlayHost
 import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
 import com.deerflow.mobile.ui.glass.GlassTopAppBar
 import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
+import com.deerflow.mobile.ui.glass.LocalGlassMenuHost
 import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
+import com.deerflow.mobile.ui.glass.rememberGlassMenuHostState
 import com.deerflow.mobile.ui.glass.rememberGlassTints
 import com.kyant.backdrop.backdrops.layerBackdrop
 import java.text.NumberFormat
@@ -100,7 +103,8 @@ fun MemoryScreen(
     // sibling glass overlay that samples it. Glass stays OUTSIDE the layerBackdrop content.
     Box(Modifier.fillMaxSize().padding(contentPadding).testTag(UiTags.MemoryScreen)) {
         val backdrop = rememberGlassBackdrop()
-        CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+        val menuHost = rememberGlassMenuHostState()
+        CompositionLocalProvider(LocalGlassBackdrop provides backdrop, LocalGlassMenuHost provides menuHost) {
             var topBarHeightPx by remember { mutableIntStateOf(0) }
             val topBarHeight = with(LocalDensity.current) { topBarHeightPx.toDp() }
             Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
@@ -187,6 +191,7 @@ fun MemoryScreen(
                     }
                 },
             )
+            GlassMenuOverlayHost(menuHost, Modifier.fillMaxSize())
         }
     }
 

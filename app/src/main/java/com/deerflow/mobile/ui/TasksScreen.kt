@@ -74,10 +74,13 @@ import com.deerflow.mobile.data.parseOnceSchedule
 import com.deerflow.mobile.ui.glass.GlassDropdownMenu
 import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
 import com.deerflow.mobile.ui.glass.GlassMenuItem
+import com.deerflow.mobile.ui.glass.GlassMenuOverlayHost
 import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
 import com.deerflow.mobile.ui.glass.GlassTopAppBar
 import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
+import com.deerflow.mobile.ui.glass.LocalGlassMenuHost
 import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
+import com.deerflow.mobile.ui.glass.rememberGlassMenuHostState
 import com.deerflow.mobile.ui.glass.rememberGlassTints
 import com.kyant.backdrop.backdrops.layerBackdrop
 import java.time.LocalDateTime
@@ -90,7 +93,8 @@ fun TasksScreen(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit, 
     var historyTask by remember { mutableStateOf<ScheduledTaskInfo?>(null) }
     Box(Modifier.fillMaxSize().padding(contentPadding)) {
         val backdrop = rememberGlassBackdrop()
-        CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+        val menuHost = rememberGlassMenuHostState()
+        CompositionLocalProvider(LocalGlassBackdrop provides backdrop, LocalGlassMenuHost provides menuHost) {
             var topBarHeightPx by remember { mutableIntStateOf(0) }
             val topBarHeight = with(LocalDensity.current) { topBarHeightPx.toDp() }
             Box(Modifier.fillMaxSize().layerBackdrop(backdrop), contentAlignment = Alignment.Center) {
@@ -142,6 +146,7 @@ fun TasksScreen(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit, 
                     }
                 },
             )
+            GlassMenuOverlayHost(menuHost, Modifier.fillMaxSize())
         }
     }
     if (creating || editing != null) {

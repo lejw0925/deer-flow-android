@@ -100,7 +100,6 @@ import com.deerflow.mobile.data.drawableResId
 import com.deerflow.mobile.data.isInlineDisplayableImageUrl
 import com.deerflow.mobile.data.resolveMessageImageURL
 import com.deerflow.mobile.data.toolIconKind
-import com.deerflow.mobile.ui.glass.glassFrosted
 import com.deerflow.mobile.ui.theme.ExpressiveMotion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -170,18 +169,15 @@ private fun MessageItem(
     val bubbleShape = MaterialTheme.shapes.medium
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
         Surface(
-            color = Color.Transparent,
+            color = when (message.role) {
+                MessageRole.User -> MaterialTheme.colorScheme.primaryContainer
+                MessageRole.Assistant -> Color.Transparent
+                MessageRole.Tool, MessageRole.System -> MaterialTheme.colorScheme.surfaceContainerHigh
+            },
             shape = bubbleShape,
             modifier = Modifier
                 .widthIn(max = 720.dp)
-                .animateContentSize(ExpressiveMotion.spatial())
-                .then(
-                    when (message.role) {
-                        MessageRole.User -> Modifier.glassFrosted(bubbleShape)
-                        MessageRole.Assistant -> Modifier
-                        MessageRole.Tool, MessageRole.System -> Modifier.glassFrosted(bubbleShape)
-                    },
-                ),
+                .animateContentSize(ExpressiveMotion.spatial()),
         ) {
             Column(Modifier.padding(if (user) 14.dp else 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!user) {
@@ -315,12 +311,11 @@ private fun ProcessingMessageGroup(
     val showPreviousSteps = expanded ?: savedShowPreviousSteps
 
     Surface(
-        color = Color.Transparent,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = RoundedCornerShape(8.dp),
         modifier = Modifier
             .fillMaxWidth()
             .widthIn(max = 760.dp)
-            .glassFrosted(RoundedCornerShape(8.dp))
             .testTag(UiTags.ProcessingCard)
     ) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -706,10 +701,9 @@ private fun HumanInputCard(
     }
 
     Surface(
-        color = Color.Transparent,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp)
-            .glassFrosted(RoundedCornerShape(8.dp)),
+        modifier = Modifier.fillMaxWidth().widthIn(max = 760.dp),
     ) {
         Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
             Icon(

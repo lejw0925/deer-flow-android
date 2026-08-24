@@ -173,12 +173,15 @@ import com.deerflow.mobile.ui.glass.GlassMenuHeader
 import com.deerflow.mobile.ui.glass.GlassMenuItem
 import com.deerflow.mobile.ui.glass.GlassMenuScope
 import com.deerflow.mobile.ui.glass.GlassMenuSurface
+import com.deerflow.mobile.ui.glass.GlassMenuOverlayHost
 import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
 import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
+import com.deerflow.mobile.ui.glass.LocalGlassMenuHost
 import com.deerflow.mobile.ui.glass.glass
 import com.deerflow.mobile.ui.glass.glassEdge
 import com.deerflow.mobile.ui.glass.glassFrosted
 import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
+import com.deerflow.mobile.ui.glass.rememberGlassMenuHostState
 import com.deerflow.mobile.ui.glass.rememberGlassTints
 import com.deerflow.mobile.ui.glass.brushTint
 import com.deerflow.mobile.ui.theme.ExpressiveMotion
@@ -246,7 +249,8 @@ fun ChatScreen(
         // the top bar and composer are sibling glass overlays that sample it.
         // Glass elements must stay OUTSIDE the layerBackdrop content they sample.
         val backdrop = rememberGlassBackdrop()
-        CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+        val menuHost = rememberGlassMenuHostState()
+        CompositionLocalProvider(LocalGlassBackdrop provides backdrop, LocalGlassMenuHost provides menuHost) {
             var topOverlayHeightPx by remember { mutableIntStateOf(0) }
             var bottomOverlayHeightPx by remember { mutableIntStateOf(0) }
             val density = LocalDensity.current
@@ -369,6 +373,9 @@ fun ChatScreen(
                     onStop = viewModel::stopRun,
                 )
             }
+            // In-composition glass menus (top selectors, overflow) render above
+            // all chat chrome and sample this screen's recorded backdrop.
+            GlassMenuOverlayHost(menuHost, Modifier.fillMaxSize())
         }
     }
 
@@ -740,13 +747,13 @@ internal fun ChatTopBar(
             )
         }
         ChatTopSelectors(
+            modifier = Modifier.weight(1f, fill = false),
             state = state,
             expandedSelector = expandedSelector,
             onExpandedSelectorChange = onExpandedSelectorChange,
             onModelSelected = onModelSelected,
             onModeSelected = onModeSelected,
         )
-        Spacer(Modifier.weight(1f))
         if (showBrowser) {
             GlassIconButton(
                 onClick = onOpenBrowser,
@@ -820,20 +827,23 @@ internal fun ChatTopSelectors(
     onExpandedSelectorChange: (TopSelectorKind?) -> Unit,
     onModelSelected: (String?) -> Unit,
     onModeSelected: (RunMode) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val selectedModel = state.capabilities.selectedModel(state.composer.options.modelName)
     val model = selectedModel?.displayName ?: stringResource(R.string.model)
     val availableModes = state.capabilities.availableRunModes(state.composer.options.modelName)
     val modelMenuMaxHeight = LocalConfiguration.current.screenHeightDp.dp / 2
     Row(
-        modifier = Modifier.testTag(UiTags.TopSelectors),
+        modifier = modifier.testTag(UiTags.TopSelectors),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TopSelector(
             label = model,
             modifier = Modifier
-                .widthIn(max = 152.dp)
+                .weight(1f, fill = false)
+                .widthIn(max = 152.dp),
+            buttonModifier = Modifier
                 .testTag(UiTags.ModelSelector)
                 .semantics { traversalIndex = 1f },
             expanded = expandedSelector == TopSelectorKind.Model,
@@ -877,8 +887,8 @@ internal fun ChatTopSelectors(
         }
         TopSelector(
             label = state.composer.options.mode.label(),
-            modifier = Modifier
-                .widthIn(max = 92.dp)
+            modifier = Modifier.widthIn(max = 92.dp),
+            buttonModifier = Modifier
                 .testTag(UiTags.ModeSelector)
                 .semantics { traversalIndex = 2f },
             expanded = expandedSelector == TopSelectorKind.Mode,
@@ -932,16 +942,21 @@ internal fun ChatTopSelectors(
 private fun TopSelector(
     label: String,
     modifier: Modifier,
+    buttonModifier: Modifier = Modifier,
     expanded: Boolean,
     onClick: () -> Unit,
     onDismiss: () -> Unit,
     menuContent: @Composable GlassMenuScope.() -> Unit,
 ) {
     val selectorShape = RoundedCornerShape(20.dp)
-    Box {
+    // Layout sizing goes on the outer Box (weight was ignored on the Surface);
+    // tag/traversalIndex stay on the Surface, whose mergeDescendants semantics
+    // expose the label text + click under the tag (assertTextContains relies on it).
+    Box(modifier = modifier) {
         Surface(
             onClick = onClick,
-            modifier = modifier
+            modifier = buttonModifier
+                .fillMaxWidth()
                 .height(48.dp)
                 .glass(
                     shape = selectorShape,
@@ -1540,7 +1555,7 @@ internal fun MessageComposer(
             .testTag(UiTags.Composer)
             .navigationBarsPadding()
             .imePadding()
-            .padding(start = 12.dp, top = composerTopPadding, end = 12.dp, bottom = 14.dp),
+            .padding(start = 6.dp, top = composerTopPadding, end = 12.dp, bottom = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
             Column(
