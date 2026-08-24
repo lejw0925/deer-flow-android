@@ -6,7 +6,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -44,17 +46,23 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.deerflow.mobile.R
+import com.mikepenz.markdown.compose.LocalMarkdownColors
+import com.mikepenz.markdown.compose.LocalMarkdownDimens
 import com.mikepenz.markdown.compose.components.CurrentComponentsBridge
 import com.mikepenz.markdown.compose.components.MarkdownComponent
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.highlightedCodeBlock
 import com.mikepenz.markdown.compose.elements.highlightedCodeFence
+import com.mikepenz.markdown.compose.elements.material.MarkdownBasicText
 import com.mikepenz.markdown.m3.Markdown as EnhancedMarkdown
 import com.mikepenz.markdown.m3.markdownColor
+import com.mikepenz.markdown.m3.markdownTypography
+import com.mikepenz.markdown.utils.buildMarkdownAnnotatedString
 import io.ratex.RaTeXView
 import java.net.URI
 import kotlinx.coroutines.launch
@@ -85,6 +93,12 @@ import org.commonmark.node.Text as MarkdownTextNode
 import org.commonmark.node.ThematicBreak
 import org.commonmark.parser.IncludeSourceSpans
 import org.commonmark.parser.Parser
+import org.intellij.markdown.ast.ASTNode
+import org.intellij.markdown.ast.findChildOfType
+import org.intellij.markdown.flavours.gfm.GFMElementTypes.HEADER
+import org.intellij.markdown.flavours.gfm.GFMElementTypes.ROW
+import org.intellij.markdown.flavours.gfm.GFMTokenTypes.CELL
+import org.intellij.markdown.flavours.gfm.GFMTokenTypes.TABLE_SEPARATOR
 
 private val markdownParser = Parser.builder()
     .extensions(listOf(StrikethroughExtension.create(), TablesExtension.create()))
@@ -126,13 +140,29 @@ private fun EnhancedMarkdownContent(markdown: String, modifier: Modifier, stream
             tableText = MaterialTheme.colorScheme.onSurface,
             tableBackground = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
+        // The m3 defaults size headings for full pages (h1 = displayLarge); chat bubbles
+        // need the same compact scale the legacy renderer uses.
+        typography = markdownTypography(
+            h1 = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+            h2 = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+            h3 = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+            h4 = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+            h5 = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+            h6 = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+        ),
         components = if (streaming) streamingMarkdownComponents else defaultMarkdownComponents,
     )
+}
+
+/** Renders GFM tables with full cell borders and separator-row column alignment. */
+private val borderedTableComponent: MarkdownComponent = { model ->
+    EnhancedMarkdownTable(model.content, model.node, model.typography.text)
 }
 
 private val defaultMarkdownComponents = markdownComponents(
     codeBlock = highlightedCodeBlock,
     codeFence = highlightedCodeFence,
+    table = borderedTableComponent,
 )
 
 /** Wraps a markdown component so elements that appear mid-stream blur-fade in once. */
@@ -143,6 +173,7 @@ private fun revealOnAppear(component: MarkdownComponent): MarkdownComponent = { 
 private val streamingMarkdownComponents = markdownComponents(
     codeBlock = highlightedCodeBlock,
     codeFence = highlightedCodeFence,
+    table = revealOnAppear(borderedTableComponent),
     paragraph = revealOnAppear(CurrentComponentsBridge.paragraph),
     heading1 = revealOnAppear(CurrentComponentsBridge.heading1),
     heading2 = revealOnAppear(CurrentComponentsBridge.heading2),
@@ -154,6 +185,98 @@ private val streamingMarkdownComponents = markdownComponents(
     unorderedList = revealOnAppear(CurrentComponentsBridge.unorderedList),
     blockQuote = revealOnAppear(CurrentComponentsBridge.blockQuote),
 )
+
+private val enhancedTableCellWidth = 160.dp
+private val enhancedTableDividerWidth = 0.5.dp
+
+@Composable
+private fun EnhancedMarkdownTable(content: String, node: ASTNode, style: TextStyle) {
+    val header = node.findChildOfType(HEADER) ?: return
+    val columns = header.children.count { it.type == CELL }
+    if (columns == 0) return
+    val alignments = remember(content, node) { tableColumnAlignments(content, node, columns) }
+    val dividerColor = LocalMarkdownColors.current.dividerColor
+    val rows = node.children.filter { it.type == HEADER || it.type == ROW }
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = LocalMarkdownColors.current.tableBackground,
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, dividerColor, MaterialTheme.shapes.small),
+    ) {
+        Column(Modifier.horizontalScroll(rememberScrollState())) {
+            rows.forEachIndexed { index, row ->
+                if (index > 0) {
+                    HorizontalDivider(thickness = enhancedTableDividerWidth, color = dividerColor)
+                }
+                EnhancedMarkdownTableRow(
+                    content = content,
+                    row = row,
+                    style = if (row.type == HEADER) style.copy(fontWeight = FontWeight.Bold) else style,
+                    alignments = alignments,
+                    dividerColor = dividerColor,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EnhancedMarkdownTableRow(
+    content: String,
+    row: ASTNode,
+    style: TextStyle,
+    alignments: List<TextAlign>,
+    dividerColor: Color,
+) {
+    Row(Modifier.height(IntrinsicSize.Max), verticalAlignment = Alignment.CenterVertically) {
+        row.children.filter { it.type == CELL }.forEachIndexed { column, cell ->
+            if (column > 0) {
+                Box(
+                    Modifier
+                        .width(enhancedTableDividerWidth)
+                        .fillMaxHeight()
+                        .background(dividerColor),
+                )
+            }
+            MarkdownBasicText(
+                text = content.buildMarkdownAnnotatedString(cell, style).trimCellText(),
+                style = style,
+                color = LocalMarkdownColors.current.tableText,
+                textAlign = alignments.getOrElse(column) { TextAlign.Start },
+                modifier = Modifier
+                    .width(enhancedTableCellWidth)
+                    .padding(LocalMarkdownDimens.current.tableCellPadding),
+            )
+        }
+    }
+}
+
+/** GFM cell source ranges include surrounding padding spaces; trim them from the rendered text. */
+private fun AnnotatedString.trimCellText(): AnnotatedString {
+    val start = text.indexOfFirst { !it.isWhitespace() }
+    if (start < 0) return AnnotatedString("")
+    val end = text.indexOfLast { !it.isWhitespace() }
+    return subSequence(start, end + 1)
+}
+
+/** Reads the GFM separator row (`:---`, `:---:`, `---:`) for per-column text alignment. */
+internal fun tableColumnAlignments(content: String, table: ASTNode, columns: Int): List<TextAlign> {
+    val separator = table.children.firstOrNull { it.type == TABLE_SEPARATOR }
+        ?: return List(columns) { TextAlign.Start }
+    val markers = content.substring(separator.startOffset, separator.endOffset)
+        .split('|')
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+    return List(columns) { index ->
+        val marker = markers.getOrNull(index).orEmpty()
+        when {
+            marker.startsWith(":") && marker.endsWith(":") -> TextAlign.Center
+            marker.endsWith(":") -> TextAlign.End
+            else -> TextAlign.Start
+        }
+    }
+}
 
 @Composable
 private fun LegacyMarkdownContent(
