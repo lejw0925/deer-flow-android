@@ -187,6 +187,7 @@ fun GlassIconButton(
                 shape = CircleShape,
                 tint = tint,
                 useLens = true,
+                chromaticAberration = progress.value > 0.01f,
                 shadow = { glassShadow() },
                 innerShadow = { InnerShadow(radius = 4.dp * progress.value, alpha = progress.value) },
                 highlight = { Highlight.Default.copy(alpha = 0.6f + 0.4f * progress.value) },

@@ -160,6 +160,20 @@ popup-glass constraint). Everything below is context for the next agent.
   the ambient LocalGlassBackdrop for glass that renders inside a recorded
   subtree. The old M3 ModalBottomSheet never hit this because its dialog
   window saw a null backdrop and fell back to frosted.
+- **Aurora cost gating (2026-08-29 perf round)**: `GeminiAuroraBackground` no
+  longer uses `rememberInfiniteTransition` — a `repeatOnLifecycle(RESUMED)`
+  frame loop writes a `mutableFloatStateOf` phase every ~33ms (30fps; motion
+  is glacial). Backgrounded/locked → loop cancelled, ZERO draw invalidations.
+  Measured on iQOO (120Hz): idle visible CPU 106-117% → 24-45%, idle frame
+  output 121fps → ~24.5fps, screen-off CPU → 0.0%. Note: aurora still lives
+  INSIDE the recorded layer, so each phase write re-records the backdrop and
+  re-renders every glass node — the 30fps cadence is what keeps that cheap.
+  Also this round: streaming Markdown skips the full citationPresentation
+  parse while streaming (string pre-filter `mayForceLegacyMarkdownRenderer`
+  is a conservative superset of the legacy triggers — re-check by string NOT
+  by parse), StreamingReveal caches 9 blur RenderEffect steps (was: one
+  native alloc per frame per block), and small glass buttons/chips enable
+  lens chromaticAberration only while pressed (`progress.value > 0.01f`).
 - **AgentRow swipe**: SwipeToDismissBox was replaced with a two-anchor
   `AnchoredDraggableState<AgentRevealValue>` (Settled=0 / Revealed=
   -actionsWidthPx). Two bytecode-verified defects forced this:

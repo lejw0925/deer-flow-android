@@ -117,13 +117,34 @@ fun MarkdownContent(
     onArtifact: (String) -> Unit = {},
     streaming: Boolean = false,
 ) {
-    val presentation = remember(markdown) { citationPresentation(markdown) }
-    if (!requiresCustomMarkdownRenderer(markdown, presentation)) {
+    // While streaming, a cheap string pre-filter skips the full
+    // citationPresentation parse per delta (the parser re-reads the ENTIRE
+    // accumulated text every refresh — O(n²) over a long reply). The
+    // pre-filter is a conservative superset of the legacy-renderer triggers,
+    // so the decision below can only be optimistic; once the stream settles
+    // the full parse runs and citations/math/images render their final form.
+    val presentation = remember(markdown, streaming) {
+        if (streaming && !markdown.mayForceLegacyMarkdownRenderer) null else citationPresentation(markdown)
+    }
+    val useLegacy = presentation != null && requiresCustomMarkdownRenderer(markdown, presentation)
+    if (!useLegacy) {
         EnhancedMarkdownContent(markdown, modifier, streaming)
         return
     }
     LegacyMarkdownContent(markdown, modifier, onArtifact, presentation, streaming)
 }
+
+/**
+ * Conservative superset of [requiresCustomMarkdownRenderer]'s triggers:
+ * citation links ("citation:" titles), artifact-path links ("/mnt/…"),
+ * markdown images, and display math ($$ … $$ / \[ … \]).
+ */
+private val String.mayForceLegacyMarkdownRenderer: Boolean
+    get() = contains("citation:", ignoreCase = true) ||
+        contains("![") ||
+        contains("/mnt/") ||
+        contains("$$") ||
+        contains("\\[")
 
 @Composable
 private fun EnhancedMarkdownContent(markdown: String, modifier: Modifier, streaming: Boolean) {

@@ -1,14 +1,16 @@
 package com.deerflow.mobile.ui.glass
 
 import android.os.Build
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.animation.core.Animatable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.animation.core.AnimationVector1D
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CornerBasedShape
@@ -27,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
@@ -52,6 +55,7 @@ import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.sin
@@ -169,6 +173,10 @@ private const val AURORA_TWO_PI = 6.2831855f
  */
 private const val AURORA_LOOP_MILLIS = 144_000
 
+/** Aurora redraw cadence: ~30fps writes (the motion is glacial; per-vsync
+ *  writes re-rendered every glass surface at the panel's full refresh rate). */
+private const val AURORA_FRAME_MILLIS = 33L
+
 /**
  * The visible Gemini-style aurora: a neutral background wash with soft
  * blue/violet/pink radial glows that slowly drift and pulse ("breathing"),
@@ -177,24 +185,39 @@ private const val AURORA_LOOP_MILLIS = 144_000
  * glass sampling see it. One master sawtooth drives everything (5/4/3 drift
  * cycles and 20/15/12 breath cycles per loop), read inside the draw block so
  * the animation invalidates drawing only, never composition.
+ *
+ * Cost gating: the phase advances only while the host lifecycle is RESUMED
+ * (backgrounded/locked the loop cancels — zero draw invalidations), and only
+ * every [AURORA_FRAME_MILLIS] (the motion is glacial; per-vsync writes kept
+ * the whole glass pipeline re-rendering at 120fps while idle).
  */
 @Composable
 fun GeminiAuroraBackground(modifier: Modifier = Modifier) {
     val background = MaterialTheme.colorScheme.background
     val dark = background.luminance() < 0.5f
-    val transition = rememberInfiniteTransition(label = "aurora")
-    val phase = transition.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(AURORA_LOOP_MILLIS, easing = LinearEasing)),
-        "phase",
-    )
+    val lifecycle = LocalLifecycleOwner.current
+    val phase = remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            val loopNanos = AURORA_LOOP_MILLIS * 1_000_000L
+            // Anchor so a background freeze resumes from the same loop position.
+            val origin = withFrameNanos { it } - (phase.floatValue * loopNanos).toLong()
+            while (true) {
+                withFrameNanos { now ->
+                    val elapsed = Math.floorMod(now - origin, loopNanos)
+                    phase.floatValue = elapsed / loopNanos.toFloat()
+                }
+                delay(AURORA_FRAME_MILLIS)
+            }
+        }
+    }
     Box(
         modifier.drawBehind {
             drawRect(background)
             val w = size.width
             val h = size.height
             val maxDim = size.maxDimension
-            val t = phase.value * AURORA_TWO_PI
+            val t = phase.floatValue * AURORA_TWO_PI
             val alphaScale = if (dark) 1f else 0.72f
 
             // Drift angles: integer cycles per master loop (cos/sin paths).

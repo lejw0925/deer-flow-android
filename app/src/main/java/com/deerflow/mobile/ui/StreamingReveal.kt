@@ -28,6 +28,8 @@ import androidx.compose.ui.unit.dp
  * renders statically with no graphics layer and no blur. Blur needs API 31+; below that the
  * reveal degrades to a fade + shift.
  */
+private const val BLUR_STEP_COUNT = 8
+
 @Composable
 internal fun StreamingReveal(
     animate: Boolean,
@@ -49,6 +51,19 @@ internal fun StreamingReveal(
     val blurRadiusPx = with(density) { 12.dp.toPx() }
     val shiftPx = with(density) { 12.dp.toPx() }
     val blurSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    // A stream can reveal several blocks at once; allocating a native
+    // RenderEffect EVERY FRAME per block piled up quickly. Nine fixed blur
+    // steps (12dp -> 1.5dp) are visually identical to the continuous sweep.
+    val blurSteps = remember(blurRadiusPx, blurSupported) {
+        if (!blurSupported) {
+            null
+        } else {
+            Array(BLUR_STEP_COUNT + 1) { step ->
+                val radius = ((1f - step / BLUR_STEP_COUNT.toFloat()) * blurRadiusPx).coerceAtLeast(0.1f)
+                RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP).asComposeRenderEffect()
+            }
+        }
+    }
     Box(
         modifier.then(
             if (running) {
@@ -57,9 +72,7 @@ internal fun StreamingReveal(
                     alpha = p
                     translationY = (1f - p) * shiftPx
                     renderEffect = if (blurSupported && p < 0.999f) {
-                        val radius = ((1f - p) * blurRadiusPx).coerceAtLeast(0.1f)
-                        RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP)
-                            .asComposeRenderEffect()
+                        blurSteps?.get((p * BLUR_STEP_COUNT).toInt().coerceIn(0, BLUR_STEP_COUNT))
                     } else {
                         null
                     }
