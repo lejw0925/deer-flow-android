@@ -363,6 +363,15 @@ fun Modifier.glassEdge(
     return this.border(width, Brush.linearGradient(listOf(peak, tail)), shape)
 }
 
+/**
+ * Mostly-clear glass veil shared by the floating input bars (chat composer,
+ * drawer search bar) so both mix sampled color identically: a light veil just
+ * enough for text readability, with blur + vibrancy supplying the frost.
+ */
+@Composable
+fun rememberFloatingBarTint(): Color =
+    if (isSystemInDarkTheme()) Color.Black.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.40f)
+
 /** Progress (0f..1f) of an ongoing press, for glass press-to-scale feedback. */
 @Composable
 fun rememberGlassPressProgress(): Animatable<Float, AnimationVector1D> = remember { Animatable(0f) }

@@ -52,6 +52,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,7 +63,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalFocusManager
@@ -89,12 +89,12 @@ import com.deerflow.mobile.ui.glass.GlassMenuItem
 import com.deerflow.mobile.ui.glass.glass
 import com.deerflow.mobile.ui.glass.glassEdge
 import com.deerflow.mobile.ui.glass.glassFrosted
-import com.deerflow.mobile.ui.glass.glassShadow
 import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
-import com.deerflow.mobile.ui.glass.rememberGlassTints
+import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
+import com.deerflow.mobile.ui.glass.rememberFloatingBarTint
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
-import com.kyant.backdrop.highlight.Highlight
+import com.kyant.backdrop.shadow.Shadow
 import org.json.JSONObject
 import kotlinx.coroutines.delay
 
@@ -102,19 +102,6 @@ private val SelectedThreadShape = RoundedCornerShape(12.dp)
 
 private val DRAWER_ACTION_SHAPE = RoundedCornerShape(16.dp)
 private val DRAWER_BOTTOM_BAR_SHAPE = RoundedCornerShape(20.dp)
-
-/**
- * See-through tint for the floating bottom action bar — slightly stronger than the drawer
- * panel tint ([rememberDrawerGlassTint] in WorkspaceShell) so the bar reads as a distinct
- * floating element over the drawer glass, while still letting the drawer's own recorded
- * list content show through ([drawerListBackdrop]). A soft [Shadow] lifts it off the
- * panel (see the `.glass` call below).
- */
-@Composable
-private fun rememberBottomBarGlassTint(): Color {
-    val veil = rememberGlassTints().veil
-    return if (veil.luminance() < 0.5f) veil.copy(alpha = 0.34f) else veil.copy(alpha = 0.30f)
-}
 
 @Composable
 fun WorkspaceDrawer(
@@ -287,16 +274,16 @@ fun WorkspaceDrawer(
                 .padding(horizontal = 12.dp, vertical = 10.dp)
                 .onGloballyPositioned { bottomBarHeightPx = it.size.height }
                 .testTag(UiTags.ConversationActionsBar)
+                // Same mixing treatment as the chat composer (shared tint, default
+                // blur, same shadow) so both floating bars read identically.
                 .glass(
                     shape = DRAWER_BOTTOM_BAR_SHAPE,
                     backdrop = drawerListBackdrop,
-                    tint = rememberBottomBarGlassTint(),
+                    tint = rememberFloatingBarTint(),
                     useLens = true,
-                    blurRadius = DrawerGlassBlurRadius,
-                    highlight = { Highlight.Ambient },
-                    shadow = { glassShadow() },
+                    shadow = { Shadow(radius = 12.dp, color = Color.Black.copy(alpha = 0.10f)) },
                 )
-                .glassEdge(DRAWER_BOTTOM_BAR_SHAPE, peakAlpha = DrawerGlassEdgePeakAlpha),
+                .glassEdge(DRAWER_BOTTOM_BAR_SHAPE),
             shape = DRAWER_BOTTOM_BAR_SHAPE,
             color = Color.Transparent,
             tonalElevation = 0.dp,
@@ -322,11 +309,13 @@ fun WorkspaceDrawer(
                     shape = DRAWER_ACTION_SHAPE,
                     modifier = Modifier.weight(1f).testTag(UiTags.ConversationSearch),
                 )
-                GlassIconButton(
-                    onClick = onNewChat,
-                    modifier = Modifier.size(56.dp).testTag(UiTags.NewChatButton),
-                ) {
-                    Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.new_chat))
+                CompositionLocalProvider(LocalGlassBackdrop provides drawerListBackdrop) {
+                    GlassIconButton(
+                        onClick = onNewChat,
+                        modifier = Modifier.size(56.dp).testTag(UiTags.NewChatButton),
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.new_chat))
+                    }
                 }
             }
         }

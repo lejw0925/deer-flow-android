@@ -187,6 +187,7 @@ import com.deerflow.mobile.ui.glass.glassFrosted
 import com.deerflow.mobile.ui.glass.glassShadow
 import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
 import com.deerflow.mobile.ui.glass.rememberGlassMenuHostState
+import com.deerflow.mobile.ui.glass.rememberFloatingBarTint
 import com.deerflow.mobile.ui.glass.rememberGlassTints
 import com.deerflow.mobile.ui.glass.brushTint
 import com.deerflow.mobile.ui.theme.ExpressiveMotion
@@ -1566,13 +1567,7 @@ internal fun MessageComposer(
         SlashSkillSuggestionPositionProvider(with(density) { 8.dp.roundToPx() })
     }
     var composerAnchorWidthPx by remember { mutableStateOf(0) }
-    // Mostly-clear glass: a light veil just enough for text readability, with the
-    // blur + vibrancy from [glass] supplying the frosted backdrop.
-    val composerTint = if (isSystemInDarkTheme()) {
-        Color.Black.copy(alpha = 0.24f)
-    } else {
-        Color.White.copy(alpha = 0.40f)
-    }
+    val composerTint = rememberFloatingBarTint()
     Column(
         modifier = Modifier
             .fillMaxWidth()
