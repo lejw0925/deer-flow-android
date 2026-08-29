@@ -85,10 +85,14 @@ import com.deerflow.mobile.data.AgentRunInfo
 import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
 import com.deerflow.mobile.ui.glass.GlassIconButton
 import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
+import com.deerflow.mobile.ui.glass.glass
+import com.deerflow.mobile.ui.glass.glassEdge
+import com.deerflow.mobile.ui.glass.glassShadow
 import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
 import com.deerflow.mobile.ui.glass.glassFrosted
 import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.highlight.Highlight
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -110,8 +114,13 @@ fun AgentsScreen(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit,
         else -> state.capabilities.agents.firstOrNull { it.name == detailName }
     }
 
+    // One hoisted backdrop shared by both sub-screens; the sheets below compose
+    // inside WorkspaceShell's recorded layer and MUST be scoped to it
+    // (inheriting the shell backdrop would self-sample = SEGV).
+    val backdrop = rememberGlassBackdrop()
     if (detailAgent == null) {
         AgentListScreen(
+            backdrop = backdrop,
             state = state,
             leadAgent = leadAgent,
             onBack = onBack,
@@ -125,6 +134,7 @@ fun AgentsScreen(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit,
         )
     } else {
         AgentDetailScreen(
+            backdrop = backdrop,
             agent = detailAgent,
             isDefault = state.defaultAgentId == detailAgent.name,
             mutationBusy = state.workspaceMutationBusy,
@@ -141,6 +151,7 @@ fun AgentsScreen(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit,
             contentPadding = contentPadding,
         )
     }
+    CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
     if (creating || editing != null) {
         AgentEditorSheet(
             state = state,
@@ -175,10 +186,12 @@ fun AgentsScreen(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit,
             },
         )
     }
+    }
 }
 
 @Composable
 private fun AgentListScreen(
+    backdrop: com.kyant.backdrop.backdrops.LayerBackdrop,
     state: AppUiState,
     leadAgent: AgentInfo,
     onBack: () -> Unit,
@@ -191,18 +204,19 @@ private fun AgentListScreen(
     contentPadding: PaddingValues,
 ) {
     Box(Modifier.fillMaxSize().padding(contentPadding)) {
-        val backdrop = rememberGlassBackdrop()
         CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
             var topBarHeightPx by remember { mutableIntStateOf(0) }
             val topBarHeight = with(LocalDensity.current) { topBarHeightPx.toDp() }
             Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
-                // Aurora inside the recorded layer so the floating glass top bar
-                // samples colorful refraction, not the dead solid background.
+                // Record only the aurora; the agent cards are REAL sampling glass
+                // (a glass node inside the recorded layer would self-sample and
+                // crash RenderThread), so the list lives as a sibling overlay.
                 GeminiAuroraBackground(Modifier.fillMaxSize())
-                when {
-                    state.loadingCapabilities && state.capabilities.agents.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        LoadingIndicator(Modifier.size(32.dp))
-                    }
+            }
+            when {
+                state.loadingCapabilities && state.capabilities.agents.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    LoadingIndicator(Modifier.size(32.dp))
+                }
                     else -> LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp + topBarHeight, bottom = 12.dp),
@@ -237,7 +251,6 @@ private fun AgentListScreen(
                                     modifier = Modifier.padding(16.dp),
                                 )
                             }
-                        }
                     }
                 }
             }
@@ -375,7 +388,13 @@ internal fun AgentRow(
                 .offset {
                     IntOffset(revealState.offset.let { if (it.isNaN()) 0 else it.roundToInt() }, 0)
                 }
-                .glassFrosted(MaterialTheme.shapes.medium)
+                .glass(
+                    MaterialTheme.shapes.medium,
+                    useLens = true,
+                    shadow = { glassShadow() },
+                    highlight = { Highlight.Ambient },
+                )
+                .glassEdge(MaterialTheme.shapes.medium)
                 .clickable {
                     if (revealState.currentValue == AgentRevealValue.Revealed) closeActions() else onOpen()
                 }
@@ -387,6 +406,7 @@ internal fun AgentRow(
 
 @Composable
 internal fun AgentDetailScreen(
+    backdrop: com.kyant.backdrop.backdrops.LayerBackdrop? = null,
     agent: AgentInfo,
     isDefault: Boolean,
     mutationBusy: Boolean,
@@ -403,19 +423,18 @@ internal fun AgentDetailScreen(
             .padding(contentPadding)
             .testTag(UiTags.AgentDetailScreen),
     ) {
-        val backdrop = rememberGlassBackdrop()
         CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
             var topBarHeightPx by remember { mutableIntStateOf(0) }
             val topBarHeight = with(LocalDensity.current) { topBarHeightPx.toDp() }
-            Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
-                // Aurora inside the recorded layer so the floating glass top bar
-                // samples colorful refraction, not the dead solid background.
+            Box(Modifier.fillMaxSize().then(backdrop?.let { Modifier.layerBackdrop(it) } ?: Modifier)) {
+                // Record only the aurora; detail content is a sibling overlay.
                 GeminiAuroraBackground(Modifier.fillMaxSize())
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 20.dp + topBarHeight, bottom = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(24.dp),
-                ) {
+            }
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 20.dp + topBarHeight, bottom = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp),
+            ) {
                     item {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
@@ -473,7 +492,9 @@ internal fun AgentDetailScreen(
                                         color = Color.Transparent,
                                         contentColor = MaterialTheme.colorScheme.onSurface,
                                         shape = MaterialTheme.shapes.small,
-                                        modifier = Modifier.glassFrosted(MaterialTheme.shapes.small),
+                                        modifier = Modifier
+                                            .glass(MaterialTheme.shapes.small, useLens = true)
+                                            .glassEdge(MaterialTheme.shapes.small),
                                     ) {
                                         Text(
                                             skill,
@@ -519,8 +540,7 @@ internal fun AgentDetailScreen(
                                 Text(stringResource(R.string.set_default_agent), modifier = Modifier.padding(start = 8.dp))
                             }
                         }
-                        Spacer(Modifier.height(24.dp))
-                    }
+                    Spacer(Modifier.height(24.dp))
                 }
             }
             FloatingScreenTopBar(

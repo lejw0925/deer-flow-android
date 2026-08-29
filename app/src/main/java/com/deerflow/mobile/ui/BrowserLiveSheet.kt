@@ -44,7 +44,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -87,7 +86,6 @@ internal fun BrowserLiveSheet(
     onInput: (BrowserInput) -> Unit,
     onRetry: (() -> Unit)? = null,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val addressState = remember(browser.threadId) { mutableStateOf(browser.url) }
     var address by addressState
     var textInputVisible by remember(browser.threadId) { mutableStateOf(false) }
@@ -132,10 +130,7 @@ internal fun BrowserLiveSheet(
         }
     }
 
-    GlassModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-    ) {
+    GlassModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

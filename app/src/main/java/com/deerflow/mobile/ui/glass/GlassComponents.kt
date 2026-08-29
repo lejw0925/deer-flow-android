@@ -1,34 +1,42 @@
 package com.deerflow.mobile.ui.glass
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.SheetState
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarData
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
-import androidx.compose.foundation.clickable
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.InnerShadow
@@ -50,36 +58,48 @@ import com.kyant.backdrop.shadow.Shadow
 /** Soft shadow lifting floating glass off the recorded content. */
 internal fun glassShadow(): Shadow = Shadow(radius = 8.dp, color = Color.Black.copy(alpha = 0.08f))
 
-/** Modal bottom sheet whose body is a glass panel over the underlying content. */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Modal bottom sheet whose body is a real glass panel sampling the screen's
+ * recorded backdrop. Unlike M3's ModalBottomSheet this renders IN the activity
+ * composition (a dialog window could never sample the backdrop), so screens
+ * gate it with `if (show)`: composition removal is the dismissal — the entry
+ * animates up, the exit is instant, and scrim taps / system back dismiss.
+ */
 @Composable
 fun GlassModalBottomSheet(
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
-    sheetState: SheetState = rememberModalBottomSheetState(),
     tint: Color? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
-    // Sheets cannot sample the recorded backdrop (own dialog window); use the
-    // frosted tint so they still read as translucent glass over the scrim.
-    val sheetTint = tint ?: rememberGlassTints().frosted
-    ModalBottomSheet(
-        onDismissRequest = onDismissRequest,
-        modifier = modifier,
-        sheetState = sheetState,
-        shape = sheetShape,
-        containerColor = Color.Transparent,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        tonalElevation = 0.dp,
-    ) {
-        Column(
+    val sheetTint = tint ?: rememberGlassTints().veil
+    val appear = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { appear.animateTo(1f, tween(260, easing = FastOutSlowInEasing)) }
+    BackHandler { onDismissRequest() }
+    Box(Modifier.fillMaxSize()) {
+        Box(
             Modifier
-                .glassFrosted(shape = sheetShape, tint = sheetTint)
+                .matchParentSize()
+                .graphicsLayer { alpha = appear.value }
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismissRequest,
+                ),
+        )
+        Column(
+            modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
+                .graphicsLayer { translationY = (1f - appear.value) * size.height }
+                .glass(shape = sheetShape, tint = sheetTint, useLens = true)
                 .glassEdge(sheetShape),
-        ) {
-            content()
-        }
+            content = content,
+        )
     }
 }
 

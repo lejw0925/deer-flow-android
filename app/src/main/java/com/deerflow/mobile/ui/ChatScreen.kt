@@ -250,11 +250,15 @@ fun ChatScreen(
         if (uri != null) viewModel.saveArtifact(uri)
     }
 
+    // Hoisted so the in-composition sheets below can be scoped to THIS screen's
+    // backdrop: they compose inside WorkspaceShell's recorded layer, so letting
+    // them inherit the shell backdrop would self-sample and SEGV the
+    // RenderThread (crash-proven on device, 2026-08-29).
+    val backdrop = rememberGlassBackdrop()
     Box(Modifier.fillMaxSize().testTag(UiTags.ChatScreen).padding(contentPadding)) {
         // Liquid glass layout: the conversation area is recorded into a backdrop;
         // the top bar and composer are sibling glass overlays that sample it.
         // Glass elements must stay OUTSIDE the layerBackdrop content they sample.
-        val backdrop = rememberGlassBackdrop()
         val menuHost = rememberGlassMenuHostState()
         CompositionLocalProvider(LocalGlassBackdrop provides backdrop, LocalGlassMenuHost provides menuHost) {
             var topOverlayHeightPx by remember { mutableIntStateOf(0) }
@@ -405,6 +409,7 @@ fun ChatScreen(
         }
     }
 
+    CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
     if (showAttachments) {
         AttachmentSheet(
             onDismiss = { showAttachments = false },
@@ -477,6 +482,7 @@ fun ChatScreen(
                 },
             )
         }
+    }
     }
 }
 

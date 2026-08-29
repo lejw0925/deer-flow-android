@@ -5,12 +5,13 @@ enum class AppRoute(val path: String) {
     Conversation("conversation"),
     Agents("agents"),
     Tasks("tasks"),
+    Skills("skills"),
     Memory("memory"),
     Profile("profile"),
 }
 
 internal val AppRoute.isWorkspaceChild: Boolean
-    get() = this in setOf(AppRoute.Agents, AppRoute.Tasks, AppRoute.Memory, AppRoute.Profile)
+    get() = this in setOf(AppRoute.Agents, AppRoute.Tasks, AppRoute.Skills, AppRoute.Memory, AppRoute.Profile)
 
 /** Existing threads animate on their own page; a new draft stays on its current chat page. */
 enum class ConversationPageTarget {

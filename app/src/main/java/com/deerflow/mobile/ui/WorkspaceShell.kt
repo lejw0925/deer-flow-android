@@ -110,7 +110,6 @@ private fun CompactWorkspace(
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
-    var showSkills by remember { mutableStateOf(false) }
     var drawerNavigationInProgress by remember { mutableStateOf(false) }
 
     fun navigateWithDrawerExit(overlapDrawerExit: Boolean = true, destination: () -> Unit) {
@@ -145,7 +144,7 @@ private fun CompactWorkspace(
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            val drawerShape = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp)
+            val drawerShape = RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp)
             ModalDrawerSheet(
                 modifier = Modifier
                     .width(drawerWidth)
@@ -187,10 +186,8 @@ private fun CompactWorkspace(
                             DrawerDestination.Tasks -> navigateWithDrawerExit {
                                 viewModel.openWorkspaceChild(AppRoute.Tasks)
                             }
-                            DrawerDestination.Skills -> navigateWithDrawerExit(overlapDrawerExit = false) {
-                                showSkills = true
-                                viewModel.refreshMcpConfig()
-                                viewModel.refreshMcpTools()
+                            DrawerDestination.Skills -> navigateWithDrawerExit {
+                                viewModel.openWorkspaceChild(AppRoute.Skills)
                             }
                             DrawerDestination.Memory -> navigateWithDrawerExit {
                                 viewModel.openWorkspaceChild(AppRoute.Memory)
@@ -232,7 +229,6 @@ private fun CompactWorkspace(
             }
         }
     }
-    if (showSkills) SkillsSheet(state, viewModel, onDismiss = { showSkills = false })
 }
 
 @Composable
@@ -242,7 +238,6 @@ private fun ExpandedWorkspace(
     snackbar: SnackbarHostState,
     backdrop: com.kyant.backdrop.backdrops.LayerBackdrop,
 ) {
-    var showSkills by remember { mutableStateOf(false) }
     val drawerShape = RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp)
     Box(Modifier.fillMaxSize()) {
         // The side panel sits at the screen's left edge with the chat to its RIGHT (not
@@ -279,11 +274,7 @@ private fun ExpandedWorkspace(
                         when (destination) {
                             DrawerDestination.Agents -> viewModel.openWorkspaceChild(AppRoute.Agents)
                             DrawerDestination.Tasks -> viewModel.openWorkspaceChild(AppRoute.Tasks)
-                            DrawerDestination.Skills -> {
-                                showSkills = true
-                                viewModel.refreshMcpConfig()
-                                viewModel.refreshMcpTools()
-                            }
+                            DrawerDestination.Skills -> viewModel.openWorkspaceChild(AppRoute.Skills)
                             DrawerDestination.Memory -> viewModel.openWorkspaceChild(AppRoute.Memory)
                             else -> Unit
                         }
@@ -300,7 +291,6 @@ private fun ExpandedWorkspace(
             }
         }
     }
-    if (showSkills) SkillsSheet(state, viewModel, onDismiss = { showSkills = false })
 }
 
 @Composable
@@ -378,6 +368,7 @@ private fun WorkspacePage(
                 }
                 AppRoute.Agents -> AgentsScreen(state, viewModel, viewModel::closeWorkspaceChild, contentPadding)
                 AppRoute.Tasks -> TasksScreen(state, viewModel, viewModel::closeWorkspaceChild, contentPadding)
+                AppRoute.Skills -> SkillsScreen(state, viewModel, viewModel::closeWorkspaceChild, contentPadding)
                 AppRoute.Memory -> MemoryScreen(
                     state = state,
                     onBack = viewModel::closeWorkspaceChild,

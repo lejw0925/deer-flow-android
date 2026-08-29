@@ -89,6 +89,7 @@ class AgentsScreenTest {
         compose.setContent {
             MaterialTheme {
                 AgentDetailScreen(
+                    backdrop = null,
                     agent = AgentInfo(
                         name = "researcher",
                         description = "Checks every source",
@@ -128,6 +129,7 @@ class AgentsScreenTest {
         compose.setContent {
             MaterialTheme {
                 AgentDetailScreen(
+                    backdrop = null,
                     agent = AgentInfo("lead_agent", "Built in", null, emptyList()),
                     isDefault = true,
                     mutationBusy = false,

@@ -22,9 +22,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
-import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
-import androidx.compose.foundation.lazy.staggeredgrid.items as staggeredItems
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -51,11 +48,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -68,12 +63,15 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
@@ -82,49 +80,41 @@ import com.deerflow.mobile.data.ChannelConnectResult
 import com.deerflow.mobile.data.ChannelProviderInfo
 import com.deerflow.mobile.data.ChannelProviders
 import com.deerflow.mobile.data.McpConfig
-import com.deerflow.mobile.data.SkillInfo
 import com.deerflow.mobile.data.ThreadSummary
 import com.deerflow.mobile.ui.glass.GlassAlertDialog
 import com.deerflow.mobile.ui.glass.GlassDropdownMenu
 import com.deerflow.mobile.ui.glass.GlassIconButton
-import com.deerflow.mobile.ui.glass.GlassMenuItem
 import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
+import com.deerflow.mobile.ui.glass.GlassMenuItem
 import com.deerflow.mobile.ui.glass.glass
 import com.deerflow.mobile.ui.glass.glassEdge
 import com.deerflow.mobile.ui.glass.glassFrosted
 import com.deerflow.mobile.ui.glass.glassShadow
+import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
 import com.deerflow.mobile.ui.glass.rememberGlassTints
 import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.highlight.Highlight
 import org.json.JSONObject
 import kotlinx.coroutines.delay
-
-private enum class SkillCatalogTab(val labelRes: Int) {
-    Public(R.string.public_skills),
-    Custom(R.string.custom_skills),
-    Tools(R.string.tools),
-}
 
 private val SelectedThreadShape = RoundedCornerShape(12.dp)
 
 private val DRAWER_ACTION_SHAPE = RoundedCornerShape(16.dp)
 private val DRAWER_BOTTOM_BAR_SHAPE = RoundedCornerShape(20.dp)
-private val DRAWER_BOTTOM_CONTENT_PADDING = 104.dp
 
 /**
  * See-through tint for the floating bottom action bar — slightly stronger than the drawer
  * panel tint ([rememberDrawerGlassTint] in WorkspaceShell) so the bar reads as a distinct
- * floating element over the drawer glass, while still letting the recorded content behind
- * show through. A soft [Shadow] lifts it off the panel (see the `.glass` call below).
+ * floating element over the drawer glass, while still letting the drawer's own recorded
+ * list content show through ([drawerListBackdrop]). A soft [Shadow] lifts it off the
+ * panel (see the `.glass` call below).
  */
 @Composable
 private fun rememberBottomBarGlassTint(): Color {
     val veil = rememberGlassTints().veil
     return if (veil.luminance() < 0.5f) veil.copy(alpha = 0.34f) else veil.copy(alpha = 0.30f)
 }
-
-private val SkillInfo.isCustom: Boolean
-    get() = category.contains("custom", ignoreCase = true) || category.contains("user", ignoreCase = true)
 
 @Composable
 fun WorkspaceDrawer(
@@ -143,10 +133,20 @@ fun WorkspaceDrawer(
     var query by remember { mutableStateOf("") }
     var renameTarget by remember { mutableStateOf<ThreadSummary?>(null) }
     var deleteTarget by remember { mutableStateOf<ThreadSummary?>(null) }
+    // The list must end ABOVE the floating search bar: measure the bar (it
+    // already includes the navigation-bar inset) and pad the scroll content by
+    // it — a fixed guess let the last rows slide underneath the glass.
+    var bottomBarHeightPx by remember { mutableStateOf(0) }
+    val bottomBarHeight = with(LocalDensity.current) { bottomBarHeightPx.toDp() }
     val headerFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val filtered = state.threads.filter { query.isBlank() || it.title.contains(query, ignoreCase = true) }
+    // Records the drawer's own list OVER an opaque base (transparent gaps would
+    // leave the bar sampleless — it rendered as a bare tint), so the floating
+    // bottom bar reads as real glass refracting the threads scrolling beneath.
+    val drawerListBackdrop = rememberGlassBackdrop()
 
+    val density = LocalDensity.current
     LaunchedEffect(drawerOpen) {
         if (drawerOpen) {
             focusManager.clearFocus(force = true)
@@ -200,13 +200,14 @@ fun WorkspaceDrawer(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
+                    .layerBackdrop(drawerListBackdrop)
                     .testTag(UiTags.RecentConversationRefresh),
             ) {
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
                         .testTag(UiTags.RecentConversationScroll),
-                    contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = DRAWER_BOTTOM_CONTENT_PADDING),
+                    contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = bottomBarHeight + 16.dp),
                 ) {
                     item {
                         DrawerDestinationRow(Icons.Outlined.SmartToy, stringResource(R.string.tab_agents)) {
@@ -255,6 +256,7 @@ fun WorkspaceDrawer(
                     }
                     items(filtered, key = { it.id }) { thread ->
                         ThreadDrawerRow(
+                            backdrop = backdrop,
                             thread = thread,
                             selected = state.selectedThread?.id == thread.id,
                             active = thread.id in state.activeRunThreadIds,
@@ -283,10 +285,11 @@ fun WorkspaceDrawer(
                 .navigationBarsPadding()
                 .imePadding()
                 .padding(horizontal = 12.dp, vertical = 10.dp)
+                .onGloballyPositioned { bottomBarHeightPx = it.size.height }
                 .testTag(UiTags.ConversationActionsBar)
                 .glass(
                     shape = DRAWER_BOTTOM_BAR_SHAPE,
-                    backdrop = backdrop,
+                    backdrop = drawerListBackdrop,
                     tint = rememberBottomBarGlassTint(),
                     useLens = true,
                     blurRadius = DrawerGlassBlurRadius,
@@ -370,6 +373,7 @@ private fun DrawerDestinationRow(icon: androidx.compose.ui.graphics.vector.Image
 
 @Composable
 private fun ThreadDrawerRow(
+    backdrop: Backdrop?,
     thread: ThreadSummary,
     selected: Boolean,
     active: Boolean,
@@ -403,18 +407,24 @@ private fun ThreadDrawerRow(
             trailingContent = {
                 if (thread.isPinned) Icon(Icons.Outlined.PushPin, contentDescription = stringResource(R.string.pinned), modifier = Modifier.size(18.dp))
             },
-            // Selected rows read as a frosted pill with a soft primary veil (same
-            // tint language as the enabled skill cards) instead of a flat
-            // secondaryContainer block on the see-through drawer glass.
+            // Selected rows read as a real glass pill (soft primary veil) sampling
+            // the workspace page behind the see-through drawer panel — NOT the
+            // frosted paint, which read as a cheap translucent block. Sampling a
+            // DIFFERENT backdrop than [drawerListBackdrop] (which records this
+            // row) is safe; the pill must never sample its own recording.
             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             modifier = Modifier
                 .fillMaxWidth()
                 .then(
                     if (selected) {
-                        Modifier.glassFrosted(
-                            SelectedThreadShape,
-                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
-                        )
+                        Modifier
+                            .glass(
+                                SelectedThreadShape,
+                                backdrop = backdrop,
+                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+                                useLens = true,
+                            )
+                            .glassEdge(SelectedThreadShape)
                     } else {
                         Modifier
                     },
@@ -482,123 +492,6 @@ private fun RenameThreadDialog(thread: ThreadSummary, onDismiss: () -> Unit, onC
 }
 
 @Composable
-fun SkillsSheet(
-    state: AppUiState,
-    viewModel: AppViewModel,
-    onDismiss: () -> Unit,
-) {
-    // A stable expanded anchor prevents the sheet from jumping when the async
-    // skill catalog replaces its initial empty state with the loaded grid.
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var detail by remember { mutableStateOf<SkillInfo?>(null) }
-    var tab by remember { mutableStateOf(SkillCatalogTab.Public) }
-    var editingConfiguration by remember { mutableStateOf(false) }
-    GlassModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        modifier = Modifier.testTag(UiTags.SkillsSheet),
-    ) {
-        val selectedDetail = detail?.let { detailSkill ->
-            state.capabilities.skills.firstOrNull { it.name == detailSkill.name } ?: detailSkill
-        }
-        val canManageSkillStates = state.user?.role == "admin"
-        if (editingConfiguration) {
-            McpConfigEditorContent(
-                config = state.mcpConfig,
-                mutationBusy = state.workspaceMutationBusy,
-                onBack = { editingConfiguration = false },
-                onSave = { rawJson -> viewModel.updateMcpConfiguration(rawJson) { editingConfiguration = false } },
-            )
-        } else {
-            Box(Modifier.fillMaxWidth().heightIn(min = 560.dp)) {
-                if (selectedDetail == null) {
-                    Column(Modifier.fillMaxWidth()) {
-                        Text(
-                            stringResource(R.string.skills),
-                            style = MaterialTheme.typography.titleLarge,
-                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-                        )
-                        TabRow(
-                            selectedTabIndex = tab.ordinal,
-                            containerColor = Color.Transparent,
-                            contentColor = MaterialTheme.colorScheme.onSurface,
-                        ) {
-                            SkillCatalogTab.entries.forEach { item ->
-                                androidx.compose.material3.Tab(
-                                    selected = tab == item,
-                                    onClick = { tab = item },
-                                    text = { Text(stringResource(item.labelRes)) },
-                                )
-                            }
-                        }
-                        when (tab) {
-                            SkillCatalogTab.Public, SkillCatalogTab.Custom -> {
-                                val custom = tab == SkillCatalogTab.Custom
-                                SkillsSheetContent(
-                                    skills = state.capabilities.skills.filter { skill -> skill.isCustom == custom },
-                                    onSkillDetail = { detail = it },
-                                    showDisabledSkills = canManageSkillStates,
-                                    canManageSkillStates = canManageSkillStates,
-                                    mutationBusy = state.workspaceMutationBusy,
-                                    onSkillEnabledChanged = viewModel::setSkillEnabled,
-                                )
-                            }
-                            SkillCatalogTab.Tools -> McpSheetContent(
-                                config = state.mcpConfig,
-                                loading = state.loadingMcpConfig,
-                                mutationBusy = state.workspaceMutationBusy,
-                                canManageServers = canManageSkillStates,
-                                onServerEnabledChanged = viewModel::setMcpServerEnabled,
-                                onEditConfiguration = { editingConfiguration = true },
-                                showTitle = false,
-                            )
-                        }
-                    }
-                }
-                else {
-                    SkillDetailContent(
-                        skill = selectedDetail,
-                        onBack = { detail = null },
-                        canManageSkillStates = canManageSkillStates,
-                        mutationBusy = state.workspaceMutationBusy,
-                        onSkillEnabledChanged = viewModel::setSkillEnabled,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun McpSheet(
-    state: AppUiState,
-    viewModel: AppViewModel,
-    onDismiss: () -> Unit,
-) {
-    var editingConfiguration by remember { mutableStateOf(false) }
-    GlassModalBottomSheet(onDismissRequest = onDismiss, modifier = Modifier.testTag(UiTags.McpSheet)) {
-        if (editingConfiguration) {
-            McpConfigEditorContent(
-                config = state.mcpConfig,
-                mutationBusy = state.workspaceMutationBusy,
-                onBack = { editingConfiguration = false },
-                onSave = { rawJson ->
-                    viewModel.updateMcpConfiguration(rawJson) { editingConfiguration = false }
-                },
-            )
-        } else {
-            McpSheetContent(
-                config = state.mcpConfig,
-                loading = state.loadingMcpConfig,
-                mutationBusy = state.workspaceMutationBusy,
-                onServerEnabledChanged = viewModel::setMcpServerEnabled,
-                onEditConfiguration = { editingConfiguration = true },
-            )
-        }
-    }
-}
-
-@Composable
 internal fun McpSheetContent(
     config: McpConfig?,
     loading: Boolean,
@@ -607,6 +500,7 @@ internal fun McpSheetContent(
     onServerEnabledChanged: (String, Boolean) -> Unit,
     onEditConfiguration: () -> Unit = {},
     showTitle: Boolean = true,
+    listHeight: Dp? = 440.dp,
 ) {
     if (showTitle || (config != null && canManageServers)) {
         Row(
@@ -647,7 +541,7 @@ internal fun McpSheetContent(
         )
 
         else -> LazyColumn(
-            modifier = Modifier.fillMaxWidth().height(440.dp),
+            modifier = Modifier.fillMaxWidth().then(if (listHeight != null) Modifier.height(listHeight) else Modifier),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -979,156 +873,4 @@ private fun ChannelRuntimeConfigDialog(
             TextButton(onClick = onDismiss, enabled = !mutationBusy) { Text(stringResource(R.string.cancel)) }
         },
     )
-}
-
-@Composable
-internal fun SkillsSheetContent(
-    skills: List<SkillInfo>,
-    onSkillDetail: (SkillInfo) -> Unit = {},
-    showDisabledSkills: Boolean = false,
-    canManageSkillStates: Boolean = false,
-    mutationBusy: Boolean = false,
-    onSkillEnabledChanged: (String, Boolean) -> Unit = { _, _ -> },
-) {
-    var query by remember { mutableStateOf("") }
-    val visibleSkills = skills.filter { skill ->
-        (showDisabledSkills || skill.enabled) && (
-            query.isBlank() || listOf(skill.name, skill.description, skill.category)
-                .any { value -> value.contains(query, ignoreCase = true) }
-        )
-    }
-    OutlinedTextField(
-        value = query,
-        onValueChange = { query = it },
-        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-        placeholder = { Text(stringResource(R.string.search_skills)) },
-        singleLine = true,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .testTag(UiTags.SkillsSearch),
-    )
-    if (visibleSkills.isEmpty()) {
-        Text(
-            stringResource(if (skills.any { it.enabled }) R.string.no_matching_skills else R.string.no_skills_available),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 32.dp),
-        )
-    } else {
-        LazyVerticalStaggeredGrid(
-            columns = StaggeredGridCells.Adaptive(168.dp),
-            modifier = Modifier.fillMaxWidth().height(440.dp).testTag(UiTags.SkillsGrid),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalItemSpacing = 10.dp,
-        ) {
-            staggeredItems(visibleSkills, key = { it.name }) { skill ->
-                // Frosted glass card instead of a solid color block: enabled skills
-                // get a soft primary veil, disabled ones the neutral frosted tint.
-                val cardTint = if (skill.enabled) {
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
-                } else {
-                    null
-                }
-                Surface(
-                    onClick = { onSkillDetail(skill) },
-                    shape = MaterialTheme.shapes.large,
-                    color = Color.Transparent,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .glassFrosted(MaterialTheme.shapes.large, tint = cardTint)
-                        .testTag(UiTags.SkillCardPrefix + skill.name),
-                ) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(skill.name, style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            skill.description.ifBlank { stringResource(R.string.skill_no_description) },
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        if (canManageSkillStates) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    stringResource(R.string.enable_skill_for_workspace),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                Switch(
-                                    checked = skill.enabled,
-                                    onCheckedChange = { onSkillEnabledChanged(skill.name, it) },
-                                    enabled = !mutationBusy,
-                                    modifier = Modifier.testTag(UiTags.SkillGlobalEnablePrefix + skill.name),
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Spacer(Modifier.navigationBarsPadding().height(20.dp))
-}
-
-@Composable
-internal fun SkillDetailContent(
-    skill: SkillInfo,
-    onBack: () -> Unit,
-    canManageSkillStates: Boolean = false,
-    mutationBusy: Boolean = false,
-    onSkillEnabledChanged: (String, Boolean) -> Unit = { _, _ -> },
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag(UiTags.SkillDetailScreen)
-            .padding(horizontal = 24.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack, modifier = Modifier.testTag(UiTags.SkillDetailBack)) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
-            }
-            Text(skill.name, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(stringResource(R.string.skill_category), style = MaterialTheme.typography.labelLarge)
-            Text(
-                skill.category.ifBlank { stringResource(R.string.skill_uncategorized) },
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(stringResource(R.string.description), style = MaterialTheme.typography.labelLarge)
-            Text(
-                skill.description.ifBlank { stringResource(R.string.skill_no_description) },
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        HorizontalDivider()
-        if (canManageSkillStates) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    stringResource(R.string.enable_skill_for_workspace),
-                    modifier = Modifier.weight(1f),
-                )
-                Switch(
-                    checked = skill.enabled,
-                    onCheckedChange = { onSkillEnabledChanged(skill.name, it) },
-                    enabled = !mutationBusy,
-                    modifier = Modifier.testTag(UiTags.SkillDetailGlobalEnable),
-                )
-            }
-        }
-        Spacer(Modifier.navigationBarsPadding().height(20.dp))
-    }
 }

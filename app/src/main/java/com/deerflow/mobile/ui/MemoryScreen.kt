@@ -72,8 +72,11 @@ import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
 import com.deerflow.mobile.ui.glass.LocalGlassMenuHost
 import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
 import com.deerflow.mobile.ui.glass.rememberGlassMenuHostState
-import com.deerflow.mobile.ui.glass.glassFrosted
+import com.deerflow.mobile.ui.glass.glass
+import com.deerflow.mobile.ui.glass.glassEdge
+import com.deerflow.mobile.ui.glass.glassShadow
 import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.highlight.Highlight
 import java.text.NumberFormat
 
 @Composable
@@ -99,23 +102,28 @@ fun MemoryScreen(
 
     // Liquid glass layout: the content is recorded into a backdrop; the top bar is a
     // sibling glass overlay that samples it. Glass stays OUTSIDE the layerBackdrop content.
+    // Hoisted: the sheets below compose inside WorkspaceShell's recorded layer
+    // and MUST be scoped to this screen's backdrop (self-sampling = SEGV).
+    val backdrop = rememberGlassBackdrop()
     Box(Modifier.fillMaxSize().padding(contentPadding).testTag(UiTags.MemoryScreen)) {
-        val backdrop = rememberGlassBackdrop()
         val menuHost = rememberGlassMenuHostState()
         CompositionLocalProvider(LocalGlassBackdrop provides backdrop, LocalGlassMenuHost provides menuHost) {
             var topBarHeightPx by remember { mutableIntStateOf(0) }
             val topBarHeight = with(LocalDensity.current) { topBarHeightPx.toDp() }
             Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
-                // Aurora inside the recorded layer so the floating glass top bar
-                // samples colorful refraction, not the dead solid background.
+                // Record only the aurora; the summary/fact cards are REAL sampling
+                // glass, so the content lives as a sibling overlay (recorded glass
+                // self-samples and crashes RenderThread).
                 GeminiAuroraBackground(Modifier.fillMaxSize())
-                Column(Modifier.fillMaxSize().padding(top = topBarHeight)) {
+            }
+            Column(Modifier.fillMaxSize().padding(top = topBarHeight)) {
                     if (state.offline && state.memory != null) {
                         Row(
                             Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 6.dp)
-                                .glassFrosted(MaterialTheme.shapes.small),
+                                .glass(MaterialTheme.shapes.small, useLens = true)
+                                .glassEdge(MaterialTheme.shapes.small),
                         ) {
                             Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) { OfflineBanner() }
                         }
@@ -133,16 +141,15 @@ fun MemoryScreen(
                                 body = stringResource(R.string.memory_unavailable_body),
                             )
                         }
-                        else -> MemoryContent(
-                            memory = memory,
-                            query = query,
-                            onQueryChange = { query = it },
-                            filter = filter,
-                            onFilterChange = { filterName = it.name },
-                            onSelectFact = { selectedFact = it },
-                            onSelectSummary = { selectedSummary = it },
-                        )
-                    }
+                    else -> MemoryContent(
+                        memory = memory,
+                        query = query,
+                        onQueryChange = { query = it },
+                        filter = filter,
+                        onFilterChange = { filterName = it.name },
+                        onSelectFact = { selectedFact = it },
+                        onSelectSummary = { selectedSummary = it },
+                    )
                 }
             }
             FloatingScreenTopBar(
@@ -193,6 +200,7 @@ fun MemoryScreen(
         }
     }
 
+    CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
     selectedFact?.let { fact ->
         MemoryFactDetailSheet(
             fact = fact,
@@ -225,6 +233,7 @@ fun MemoryScreen(
                 }
             },
         )
+    }
     }
 
     deleteTarget?.let { fact ->
@@ -386,7 +395,13 @@ private fun MemorySummaryRow(item: MemorySummaryItem, onClick: () -> Unit) {
         },
         modifier = Modifier
             .fillMaxWidth()
-            .glassFrosted(MaterialTheme.shapes.medium)
+            .glass(
+                MaterialTheme.shapes.medium,
+                useLens = true,
+                shadow = { glassShadow() },
+                highlight = { Highlight.Ambient },
+            )
+            .glassEdge(MaterialTheme.shapes.medium)
             .clickable(onClick = onClick)
             .testTag(UiTags.MemorySummaryPrefix + item.title),
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
@@ -435,7 +450,13 @@ private fun MemoryFactRow(fact: MemoryFact, onClick: () -> Unit) {
         trailingContent = { Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.memory_open_fact)) },
         modifier = Modifier
             .fillMaxWidth()
-            .glassFrosted(MaterialTheme.shapes.medium)
+            .glass(
+                MaterialTheme.shapes.medium,
+                useLens = true,
+                shadow = { glassShadow() },
+                highlight = { Highlight.Ambient },
+            )
+            .glassEdge(MaterialTheme.shapes.medium)
             .clickable(onClick = onClick)
             .testTag("${UiTags.MemoryFactPrefix}${fact.id}"),
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),

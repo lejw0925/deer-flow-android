@@ -3,9 +3,7 @@ package com.deerflow.mobile.ui.glass
 import android.os.Build
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -49,6 +47,7 @@ import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.InnerShadow
@@ -122,7 +121,7 @@ fun rememberGlassTints(): GlassTints {
 
 /** Effect tuning for [glass]. Centralized so the whole UI can be dialed in one place. */
 object GlassTunables {
-    val BlurRadius: Dp = 2.dp
+    val BlurRadius: Dp = 3.dp
     val LensHeight: Dp = 12.dp
     val LensAmount: Dp = 24.dp
     val PressExpand: Dp = 14.dp
@@ -163,49 +162,31 @@ private val AuroraCyan = Color(0xFF4EC8D8)
 private const val AURORA_TWO_PI = 6.2831855f
 
 /**
+ * Master loop of the whole aurora. Every motion below completes an INTEGER
+ * number of cycles inside this window, so the composition is exactly periodic:
+ * the loop point is mathematically invisible (the earlier independent
+ * 28/37/46s loops produced slow near-beat "color pumping" that read as jumps).
+ */
+private const val AURORA_LOOP_MILLIS = 144_000
+
+/**
  * The visible Gemini-style aurora: a neutral background wash with soft
  * blue/violet/pink radial glows that slowly drift and pulse ("breathing"),
  * plus a faint cyan roaming core for a sci-fi depth cue. Drawn as real
  * content (first child of the recorded layer) so both the screen and the
- * glass sampling see it. All animation values are read inside the draw block,
- * so the animation invalidates drawing only, never composition.
+ * glass sampling see it. One master sawtooth drives everything (5/4/3 drift
+ * cycles and 20/15/12 breath cycles per loop), read inside the draw block so
+ * the animation invalidates drawing only, never composition.
  */
 @Composable
 fun GeminiAuroraBackground(modifier: Modifier = Modifier) {
     val background = MaterialTheme.colorScheme.background
     val dark = background.luminance() < 0.5f
     val transition = rememberInfiniteTransition(label = "aurora")
-    // Slow, differently-perioded loops; the phase offsets between glows fall
-    // out of the mismatched durations, so paths never visibly repeat.
-    val driftA = transition.animateFloat(
+    val phase = transition.animateFloat(
         0f, 1f,
-        infiniteRepeatable(tween(28000, easing = LinearEasing), RepeatMode.Restart),
-        "driftA",
-    )
-    val driftB = transition.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(37000, easing = LinearEasing), RepeatMode.Restart),
-        "driftB",
-    )
-    val driftC = transition.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(46000, easing = LinearEasing), RepeatMode.Restart),
-        "driftC",
-    )
-    val breathA = transition.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(7000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        "breathA",
-    )
-    val breathB = transition.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(9500, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        "breathB",
-    )
-    val breathC = transition.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(12000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        "breathC",
+        infiniteRepeatable(tween(AURORA_LOOP_MILLIS, easing = LinearEasing)),
+        "phase",
     )
     Box(
         modifier.drawBehind {
@@ -213,13 +194,17 @@ fun GeminiAuroraBackground(modifier: Modifier = Modifier) {
             val w = size.width
             val h = size.height
             val maxDim = size.maxDimension
-            val aA = driftA.value * AURORA_TWO_PI
-            val aB = driftB.value * AURORA_TWO_PI
-            val aC = driftC.value * AURORA_TWO_PI
-            val pA = breathA.value
-            val pB = breathB.value
-            val pC = breathC.value
+            val t = phase.value * AURORA_TWO_PI
             val alphaScale = if (dark) 1f else 0.72f
+
+            // Drift angles: integer cycles per master loop (cos/sin paths).
+            val aA = t * 5f
+            val aB = t * 4f
+            val aC = t * 3f
+            // Breathing: pure sinusoids in [0, 1], no easing kinks.
+            val pA = 0.5f - 0.5f * cos(t * 20f)
+            val pB = 0.5f - 0.5f * cos(t * 15f)
+            val pC = 0.5f - 0.5f * cos(t * 12f)
 
             // Blue: roams a wide arc across the upper half.
             drawRect(
@@ -293,10 +278,11 @@ fun Modifier.glass(
             backdrop = backdrop,
             shape = { shape },
             effects = {
-                // vibrancy() removed — the backdrop library's vibrancy has no
-                // strength parameter, so to weaken the color-mixing we drop it
-                // entirely (sampled content renders at natural saturation).
                 blur(blurRadius.toPx())
+                // Color-mixing with the sampled content: pushes the backdrop's
+                // hues into the glass so panels pick up what's behind them.
+                // (No strength parameter in the library — on/off only.)
+                vibrancy()
                 if (useLens &&
                     shape is CornerBasedShape &&
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU

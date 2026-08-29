@@ -146,6 +146,20 @@ popup-glass constraint). Everything below is context for the next agent.
   button was the original offender; emulator mock gateway always returns 2
   tasks so it never showed the empty state). Inside the recorded layer use
   `glassFrosted` only.
+- **SEGV rule variant (crash-proven 08-29 on iQOO): IN-COMPOSITION overlays
+  (GlassModalBottomSheet since its in-composition rewrite) inherit the NEAREST
+  LocalGlassBackdrop — for screens composed inside WorkspaceShell that is the
+  SHELL backdrop, and the shell's `layerBackdrop` records WorkspacePage,
+  i.e. the sheet itself → self-sample → computeTransformImpl recursion →
+  RenderThread SIGSEGV when opening run details/browser.** Every sheet call
+  site is therefore wrapped in `CompositionLocalProvider(LocalGlassBackdrop
+  provides <screen backdrop>)` with the screen's backdrop hoisted above the
+  screen Box (Chat/Tasks/Memory/Agents/Profile; Agents threads one instance
+  through both sub-screens; Profile passes it into ProfileContent with a null
+  default so tests stay unchanged). Same rule as popup windows: never trust
+  the ambient LocalGlassBackdrop for glass that renders inside a recorded
+  subtree. The old M3 ModalBottomSheet never hit this because its dialog
+  window saw a null backdrop and fell back to frosted.
 - **AgentRow swipe**: SwipeToDismissBox was replaced with a two-anchor
   `AnchoredDraggableState<AgentRevealValue>` (Settled=0 / Revealed=
   -actionsWidthPx). Two bytecode-verified defects forced this:

@@ -393,7 +393,7 @@ class ChatControlsTest {
         var selected = ""
         compose.setContent {
             MaterialTheme {
-                SkillsSheetContent(
+                SkillsPageContent(
                     skills = listOf(
                         SkillInfo("deep-research", "Investigate sources", "research", enabled = true),
                         SkillInfo("writing-studio", "Draft reports", "writing", enabled = true),
@@ -416,7 +416,7 @@ class ChatControlsTest {
         var openedSkill = ""
         compose.setContent {
             MaterialTheme {
-                SkillsSheetContent(
+                SkillsPageContent(
                     skills = listOf(
                         SkillInfo("deep-research", "Investigate sources", "research", enabled = true),
                         SkillInfo("writing-studio", "Draft reports", "writing", enabled = true),
@@ -438,7 +438,7 @@ class ChatControlsTest {
         var changed: Pair<String, Boolean>? = null
         compose.setContent {
             MaterialTheme {
-                SkillsSheetContent(
+                SkillsPageContent(
                     skills = listOf(
                         SkillInfo("disabled-skill", "Unavailable", "other", enabled = false),
                     ),

@@ -91,8 +91,11 @@ import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
 import com.deerflow.mobile.ui.glass.GlassAlertDialog
 import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
 import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
-import com.deerflow.mobile.ui.glass.glassFrosted
+import com.deerflow.mobile.ui.glass.glass
+import com.deerflow.mobile.ui.glass.glassEdge
+import com.deerflow.mobile.ui.glass.glassShadow
 import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.highlight.Highlight
 
 @Composable
 fun ProfileScreen(
@@ -105,7 +108,12 @@ fun ProfileScreen(
     var showChannels by remember { mutableStateOf(false) }
     var showLarkIntegration by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { viewModel.refreshCacheStats() }
+    // Hoisted + threaded into ProfileContent so the sheets below can sample the
+    // SAME recorded profile: they compose inside WorkspaceShell's recorded layer
+    // and inheriting the shell backdrop would self-sample = SEGV.
+    val profileBackdrop = rememberGlassBackdrop()
     ProfileContent(
+        backdrop = profileBackdrop,
         state = state,
         onBack = onBack,
         onSaveServerUrl = viewModel::saveServerUrl,
@@ -131,16 +139,19 @@ fun ProfileScreen(
         },
         contentPadding = contentPadding,
     )
-    if (showChannels) {
-        ChannelsSheet(state, viewModel, onDismiss = { showChannels = false })
-    }
-    if (showLarkIntegration) {
-        LarkIntegrationSheet(state, viewModel, onDismiss = { showLarkIntegration = false })
+    CompositionLocalProvider(LocalGlassBackdrop provides profileBackdrop) {
+        if (showChannels) {
+            ChannelsSheet(state, viewModel, onDismiss = { showChannels = false })
+        }
+        if (showLarkIntegration) {
+            LarkIntegrationSheet(state, viewModel, onDismiss = { showLarkIntegration = false })
+        }
     }
 }
 
 @Composable
 internal fun ProfileContent(
+    backdrop: com.kyant.backdrop.backdrops.LayerBackdrop? = null,
     state: AppUiState,
     onBack: () -> Unit,
     onSaveServerUrl: (String) -> Unit,
@@ -187,20 +198,22 @@ internal fun ProfileContent(
         // Liquid glass layout: the settings list is recorded into a backdrop and the
         // glass top bar floats above it as a sibling overlay sampling that recording.
         Box(Modifier.fillMaxSize().padding(contentPadding).testTag(UiTags.ProfileScreen)) {
-            val backdrop = rememberGlassBackdrop()
+            val backdrop = backdrop ?: rememberGlassBackdrop()
             CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
                 var topBarHeightPx by remember { mutableIntStateOf(0) }
                 val topBarHeight = with(LocalDensity.current) { topBarHeightPx.toDp() }
                 Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
-                    // Aurora inside the recorded layer so the floating glass top bar
-                    // samples colorful refraction, not the dead solid background.
+                    // Record only the aurora; the settings cards are REAL sampling
+                    // glass, so the list lives as a sibling overlay (recorded glass
+                    // self-samples and crashes RenderThread).
                     GeminiAuroraBackground(Modifier.fillMaxSize())
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize().navigationBarsPadding().testTag(UiTags.ProfileList),
-                        contentPadding = PaddingValues(start = 20.dp, top = topBarHeight + 16.dp, end = 20.dp, bottom = 16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
+                }
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().navigationBarsPadding().testTag(UiTags.ProfileList),
+                    contentPadding = PaddingValues(start = 20.dp, top = topBarHeight + 16.dp, end = 20.dp, bottom = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
                         item {
                             ProfileSection {
                                 SettingsSectionTitle(R.string.account)
@@ -430,12 +443,11 @@ internal fun ProfileContent(
                                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                                     )
                                 }
-                                OutlinedButton(
-                                    onClick = onSignOut,
-                                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                                ) {
-                                    Text(stringResource(R.string.sign_out))
-                                }
+                            OutlinedButton(
+                                onClick = onSignOut,
+                                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                            ) {
+                                Text(stringResource(R.string.sign_out))
                             }
                         }
                     }
@@ -544,14 +556,14 @@ private fun AboutScreen(
             var topBarHeightPx by remember { mutableIntStateOf(0) }
             val topBarHeight = with(LocalDensity.current) { topBarHeightPx.toDp() }
             Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
-                // Aurora inside the recorded layer so the floating glass top bar
-                // samples colorful refraction, not the dead solid background.
+                // Record only the aurora; the license card is real sampling glass.
                 GeminiAuroraBackground(Modifier.fillMaxSize())
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize().navigationBarsPadding(),
-                    contentPadding = PaddingValues(start = 20.dp, top = topBarHeight + 20.dp, end = 20.dp, bottom = 20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
+            }
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().navigationBarsPadding(),
+                contentPadding = PaddingValues(start = 20.dp, top = topBarHeight + 20.dp, end = 20.dp, bottom = 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
                     item {
                         Column(Modifier.widthIn(max = 680.dp).fillMaxWidth()) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -605,9 +617,8 @@ private fun AboutScreen(
                                         .fillMaxWidth()
                                         .clickable(onClick = onOpenSourceCode)
                                         .testTag(UiTags.AboutSourceCode),
-                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                                )
-                            }
+                                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            )
                         }
                     }
                 }
@@ -815,7 +826,13 @@ private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .glassFrosted(MaterialTheme.shapes.medium),
+            .glass(
+                MaterialTheme.shapes.medium,
+                useLens = true,
+                shadow = { glassShadow() },
+                highlight = { Highlight.Ambient },
+            )
+            .glassEdge(MaterialTheme.shapes.medium),
         content = content,
     )
 }

@@ -77,7 +77,9 @@ import com.deerflow.mobile.data.parseOnceSchedule
 import com.deerflow.mobile.ui.glass.GlassDropdownMenu
 import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
 import com.deerflow.mobile.ui.glass.GlassIconButton
-import com.deerflow.mobile.ui.glass.glassFrosted
+import com.deerflow.mobile.ui.glass.glass
+import com.deerflow.mobile.ui.glass.glassEdge
+import com.deerflow.mobile.ui.glass.glassShadow
 import com.deerflow.mobile.ui.glass.GlassMenuItem
 import com.deerflow.mobile.ui.glass.GlassMenuOverlayHost
 import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
@@ -86,6 +88,7 @@ import com.deerflow.mobile.ui.glass.LocalGlassMenuHost
 import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
 import com.deerflow.mobile.ui.glass.rememberGlassMenuHostState
 import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.highlight.Highlight
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
@@ -94,16 +97,21 @@ fun TasksScreen(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit, 
     var creating by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<ScheduledTaskInfo?>(null) }
     var historyTask by remember { mutableStateOf<ScheduledTaskInfo?>(null) }
+    // Hoisted: the sheets below compose inside WorkspaceShell's recorded layer
+    // and MUST be scoped to this screen's backdrop (self-sampling = SEGV).
+    val backdrop = rememberGlassBackdrop()
     Box(Modifier.fillMaxSize().padding(contentPadding)) {
-        val backdrop = rememberGlassBackdrop()
         val menuHost = rememberGlassMenuHostState()
         CompositionLocalProvider(LocalGlassBackdrop provides backdrop, LocalGlassMenuHost provides menuHost) {
             var topBarHeightPx by remember { mutableIntStateOf(0) }
             val topBarHeight = with(LocalDensity.current) { topBarHeightPx.toDp() }
-            Box(Modifier.fillMaxSize().layerBackdrop(backdrop), contentAlignment = Alignment.Center) {
-                // Aurora inside the recorded layer so the floating glass top bar
-                // samples colorful refraction, not the dead solid background.
+            Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+                // Record only the aurora; the task cards and the empty-state
+                // create pill are REAL sampling glass, so the content lives as
+                // a sibling overlay (recorded glass self-samples and crashes).
                 GeminiAuroraBackground(Modifier.fillMaxSize())
+            }
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 when {
                     state.loadingTasks && state.tasks.isEmpty() -> LoadingIndicator(Modifier.size(32.dp))
                     state.tasks.isEmpty() -> EmptyState(
@@ -111,13 +119,16 @@ fun TasksScreen(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit, 
                         title = stringResource(R.string.no_tasks),
                         body = stringResource(R.string.no_tasks_body),
                         action = {
-                            // Inside the recorded backdrop layer: frosted fill only —
-                            // a sampling Modifier.glass here would record itself and
-                            // crash RenderThread (transform recursion stack overflow).
                             Row(
                                 Modifier
                                     .testTag(UiTags.TasksEmptyCreate)
-                                    .glassFrosted(CircleShape)
+                                    .glass(
+                                        CircleShape,
+                                        useLens = true,
+                                        shadow = { glassShadow() },
+                                        highlight = { Highlight.Ambient },
+                                    )
+                                    .glassEdge(CircleShape)
                                     .clickable(
                                         enabled = !state.workspaceMutationBusy,
                                         role = Role.Button,
@@ -168,6 +179,7 @@ fun TasksScreen(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit, 
             GlassMenuOverlayHost(menuHost, Modifier.fillMaxSize())
         }
     }
+    CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
     if (creating || editing != null) {
         TaskEditorSheet(
             state = state,
@@ -193,6 +205,7 @@ fun TasksScreen(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit, 
                 viewModel.openTaskRunConversation(task, run)
             },
         )
+    }
     }
 }
 
@@ -280,7 +293,13 @@ internal fun TaskRow(
         },
         modifier = Modifier
             .fillMaxWidth()
-            .glassFrosted(MaterialTheme.shapes.medium)
+            .glass(
+                MaterialTheme.shapes.medium,
+                useLens = true,
+                shadow = { glassShadow() },
+                highlight = { Highlight.Ambient },
+            )
+            .glassEdge(MaterialTheme.shapes.medium)
             .testTag(UiTags.TaskRowPrefix + task.id),
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
     )
