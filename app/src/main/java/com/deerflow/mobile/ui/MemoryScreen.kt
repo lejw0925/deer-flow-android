@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,6 +24,9 @@ import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.FactCheck
+import androidx.compose.material.icons.outlined.Summarize
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
@@ -34,9 +38,6 @@ import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -64,6 +65,7 @@ import com.deerflow.mobile.data.MemorySection
 import com.deerflow.mobile.ui.glass.GlassAlertDialog
 import com.deerflow.mobile.ui.glass.GlassDropdownMenu
 import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
+import com.deerflow.mobile.ui.glass.GlassFloatingTabBar
 import com.deerflow.mobile.ui.glass.GlassIconButton
 import com.deerflow.mobile.ui.glass.GlassMenuItem
 import com.deerflow.mobile.ui.glass.GlassMenuOverlayHost
@@ -196,6 +198,22 @@ fun MemoryScreen(
                     }
                 }
             }
+            GlassFloatingTabBar(
+                icons = listOf(
+                    Icons.Outlined.Apps,
+                    Icons.Outlined.FactCheck,
+                    Icons.Outlined.Summarize,
+                ),
+                tabs = MemoryFilter.entries.map { it.label() },
+                selected = filter.ordinal,
+                onSelect = { index -> filterName = MemoryFilter.entries[index].name },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 24.dp)
+                    .navigationBarsPadding()
+                    .padding(bottom = 12.dp),
+                itemTag = { index -> UiTags.MemoryFilterPrefix + MemoryFilter.entries[index].name.lowercase() },
+            )
             GlassMenuOverlayHost(menuHost, Modifier.fillMaxSize())
         }
     }
@@ -308,17 +326,6 @@ private fun MemoryContent(
             singleLine = true,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag(UiTags.MemorySearch),
         )
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-            MemoryFilter.entries.forEachIndexed { index, item ->
-                SegmentedButton(
-                    selected = item == filter,
-                    onClick = { onFilterChange(item) },
-                    shape = SegmentedButtonDefaults.itemShape(index, MemoryFilter.entries.size),
-                    label = { Text(item.label()) },
-                    modifier = Modifier.testTag("${UiTags.MemoryFilterPrefix}${item.name.lowercase()}"),
-                )
-            }
-        }
 
         if (!hasResults) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

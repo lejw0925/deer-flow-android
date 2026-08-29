@@ -143,6 +143,10 @@ private fun CompactWorkspace(
 
     ModalNavigationDrawer(
         drawerState = drawerState,
+        // Child pages (memory/skills/…) have bottom-floating glass controls;
+        // their horizontal swipes must not yank the drawer out. Those pages
+        // open the drawer via the top-bar menu button instead.
+        gesturesEnabled = !state.route.isWorkspaceChild,
         drawerContent = {
             val drawerShape = RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp)
             ModalDrawerSheet(

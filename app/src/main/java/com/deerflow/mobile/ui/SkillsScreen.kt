@@ -21,7 +21,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Handyman
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -30,7 +33,6 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
@@ -56,6 +58,7 @@ import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
 import com.deerflow.mobile.ui.glass.glass
 import com.deerflow.mobile.ui.glass.glassEdge
 import com.deerflow.mobile.ui.glass.glassShadow
+import com.deerflow.mobile.ui.glass.GlassFloatingTabBar
 import com.deerflow.mobile.ui.glass.GlassIconButton
 import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
 import com.deerflow.mobile.ui.glass.glassFrosted
@@ -129,24 +132,6 @@ fun SkillsScreen(
                     )
                 } else {
                     Column(Modifier.fillMaxSize()) {
-                        Text(
-                            stringResource(R.string.skills),
-                            style = MaterialTheme.typography.titleLarge,
-                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-                        )
-                        TabRow(
-                            selectedTabIndex = tab.ordinal,
-                            containerColor = Color.Transparent,
-                            contentColor = MaterialTheme.colorScheme.onSurface,
-                        ) {
-                            SkillCatalogTab.entries.forEach { item ->
-                                androidx.compose.material3.Tab(
-                                    selected = tab == item,
-                                    onClick = { tab = item },
-                                    text = { Text(stringResource(item.labelRes)) },
-                                )
-                            }
-                        }
                         when (tab) {
                             SkillCatalogTab.Public, SkillCatalogTab.Custom -> {
                                 val custom = tab == SkillCatalogTab.Custom
@@ -182,6 +167,23 @@ fun SkillsScreen(
                 title = stringResource(R.string.skills),
                 onBack = onBack,
             )
+            if (!editingConfiguration && detail == null) {
+                GlassFloatingTabBar(
+                    icons = listOf(
+                        Icons.Outlined.Public,
+                        Icons.Outlined.Tune,
+                        Icons.Outlined.Handyman,
+                    ),
+                    tabs = SkillCatalogTab.entries.map { stringResource(it.labelRes) },
+                    selected = tab.ordinal,
+                    onSelect = { index -> tab = SkillCatalogTab.entries[index] },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(horizontal = 24.dp)
+                        .navigationBarsPadding()
+                        .padding(bottom = 12.dp),
+                )
+            }
         }
     }
 }
