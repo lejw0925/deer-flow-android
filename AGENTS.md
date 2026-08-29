@@ -75,114 +75,152 @@ include screenshots for visual changes. Never commit `local.properties`,
 may use local HTTP endpoints; release deployments require appropriate HTTPS and
 signing configuration.
 
-## Session Handoff (2026-08-24)
+## Session Handoff (2026-08-29)
 
-Branch `release/v1.1.8`. HEAD `31f7c08` (pushed; beta `v1.1.8-beta.2` published
-with that commit's release-signed APK). See `~/.config` project MEMORY for the
-full durable notes (Clash proxy node switching, release signing, the
-github.com/Maven TLS block + aliyun mirror workaround, the #1 popup-glass
-constraint). This section is the in-flight work for the next agent.
+Branch `release/v1.2.0`. The liquid-glass consistency round is COMMITTED:
+`b7b8ad0` (feat(ui): floating headers, frosted cards, material unification —
+supersedes the previously uncommitted 2026-08-28 rounds), `cbb1c0c` (fix(tools):
+mock gateway artifact fixtures by basename), `a7d04f2` (test: regenerate
+workspace screenshot baselines). See `~/.config` project MEMORY for durable
+env notes (Clash proxy, release signing, github/Maven TLS + aliyun mirror,
+popup-glass constraint). Everything below is context for the next agent.
 
-### Uncommitted working-tree changes (build-verified `assembleDebug` ✅, not committed)
+### What the consistency round changed (design rules now in force)
 
-Three files, all chat/glass tuning per user feedback this round:
+- **Headers**: `FloatingScreenTopBar` (SharedComponents.kt) = glass circular
+  `GlassIconButton`s + floating title, ChatScreen style. **`GlassTopAppBar` is
+  DELETED** — all screens (tasks/memory/profile/about/licenses/agents/SSO)
+  migrated; screens still measure the header via `onGloballyPositioned` and pad
+  their scrollables by that height. SSO screen now has an aurora backdrop
+  (recorded art layer only — the WebView is intentionally NOT recorded) and a
+  floating header; `LoadingScreen` has an aurora layer.
+- **Lists**: ProfileScreen rewritten as grouped `SettingsCard` frosted panels
+  (one card per section, transparent ListItems inside, `SettingsRowDivider`
+  between rows; both artifact-limit sliders live INSIDE the storage card per
+  user decision). Memory summary/fact rows and Task rows are
+  `glassFrosted(shapes.medium)` cards with `spacedBy(8.dp)`; memory row
+  dividers removed. Drawer selected thread = frosted pill with
+  `primary.copy(alpha=0.22f)` veil (`SelectedThreadShape` 12dp); offline
+  banners are frosted cards (memory + drawer).
+- **Buttons role rule**: sheet/dialog primary = `Button`, secondary =
+  `OutlinedButton`/`TextButton`, destructive confirm = error color.
+  `FilledTonalButton` eliminated everywhere (Lark install/config/auth →
+  Button, open-verification → Outlined; Channels connect → Button; HumanInput
+  submit → Button; Agent detail set-default → Outlined). `GlassButton` stays
+  for sampling-capable floating layers (login) only.
+- **Chat**: composer TextField containers `Color.Transparent` (sits directly
+  on the glass panel); TodoSummary/TodoProgressDetails upgraded to real
+  sampling glass (they are siblings OUTSIDE the recorded layer); progress
+  track unified to `secondary.copy(alpha=0.18f)`; message list + composer
+  widths unified at 900dp; welcome centers between the two overlays.
+- **Menus**: explicit `RoundedCornerShape(20.dp)` overrides removed —
+  `GlassDropdownMenu` default 24dp everywhere (matches sheets' 28dp top
+  corners and `GlassMenuSurface`).
+- Trailing action buttons inside list rows stay raw M3 `IconButton` (they sit
+  inside the recorded layer; see SEGV rule). AttachmentChip's 32dp mini
+  buttons stay raw too.
 
-- `ui/ChatScreen.kt` — **Top bar: model selector is now the compressible element.**
-  Removed the `Spacer(weight 1f)`; `ChatTopSelectors` gets `Modifier.weight(1f, fill=false)`
-  (new `modifier` param threaded to its `Row`); the model `TopSelector` gets
-  `Modifier.weight(1f, fill=false).widthIn(max=152.dp)` so it shrinks + ellipsizes
-  when crowded while nav/mode/browser/overflow stay fixed. `TopSelector` now applies
-  the caller `modifier` to its **outer `Box`** (was the inner `Surface` — weight was
-  ignored there) and the `Surface` uses `Modifier.fillMaxWidth()`.
-  Also: composer `Column` padding `start 12.dp -> 6.dp` (left margin was larger
-  than top/bottom; user wanted it smaller).
-- `ui/MessageContent.kt` — **Conversation content no longer uses glass/gradient.**
-  Message bubbles: `Surface(color=…)` by role instead of `Modifier.glassFrosted`
-  (`User -> primaryContainer`, `Tool/System -> surfaceContainerHigh`,
-  `Assistant -> Transparent`). `ProcessingCard` (thinking block) and
-  `HumanInputCard` -> `surfaceContainerHigh` (was `glassFrosted`). The
-  `import …glassFrosted` is now unused in this file — remove it when convenient.
-- `ui/glass/Glass.kt` — `GlassTunables.BlurRadius 6.dp -> 4.dp` (further blur
-  reduction); **removed `vibrancy()`** from `Modifier.glass`'s effects (user wanted
-  the color-mixing weakened; the backdrop library's `vibrancy()` has NO strength
-  parameter — `void vibrancy(BackdropEffectScope)` — so the only way to weaken it is
-  to drop it; sampled content now renders at natural saturation). The
-  `import …effects.vibrancy` was removed too.
+### Verification status (2026-08-29, emulator-5554 API 36)
 
-> These are visual glass/markdown tweaks; verify on a **real device** (the
-> headless `swiftshader` emulator does NOT render the backdrop `RenderEffect`
-> blur, so glass-blur changes can't be visually confirmed there).
+- Full `testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest`:
+  BUILD SUCCESSFUL.
+- Targeted `connectedDebugAndroidTest` (WorkspaceNavigation, MemoryScreen,
+  ChatControls, AgentsScreen, TasksScreen, ProfileScreen, SsoLoginControls,
+  BrowserLiveSheet, AuroraAnimationProbe, Accessibility): **82 tests, 81 green**;
+  the only failure is the pre-existing RED `runModeMenuDispatchesSupportedMode`
+  (ChatControlsTest.kt:120, fails on HEAD without this round too).
+  AccessibilityTest 6/6 → the 48dp `GlassIconButton` touch-target a11y fix is
+  CONFIRMED.
+- `WorkspaceScreenshotTest` baselines regenerated on this emulator
+  (`-e deerflow.record_screenshots true`, `animator_duration_scale 1`) and
+  verified 6/6 against the new in-code signatures.
+- NOT yet verified: real-device pass (iQOO `V2520A` and Honor `APH-AN00`) —
+  neither was reachable this session. iQOO adb id contains spaces/parens —
+  `"adb-10AFBD2D6C0042F-6slL6P (2)._adb-tls-connect._tcp"` — always quote it.
 
-### Done: Markdown rendering fix (user reported: headings too big, tables missing internal divider lines, tables all left-aligned)
+### Durable lessons (kept from the 08-28 rounds; still critical)
 
-Fixed in `ui/MarkdownContent.kt` (unit tests pass, incl. new
-`ui/MarkdownTableAlignmentTest.kt`):
+- **SEGV rule (crash-proven): NEVER use real-sampling `Modifier.glass` inside
+  the `layerBackdrop` recorded layer** — libhwui `computeTransformImpl`
+  infinite recursion → RenderThread SIGSEGV on real devices (tasks empty-state
+  button was the original offender; emulator mock gateway always returns 2
+  tasks so it never showed the empty state). Inside the recorded layer use
+  `glassFrosted` only.
+- **AgentRow swipe**: SwipeToDismissBox was replaced with a two-anchor
+  `AnchoredDraggableState<AgentRevealValue>` (Settled=0 / Revealed=
+  -actionsWidthPx). Two bytecode-verified defects forced this:
+  `AnchoredDraggableState.progress` returns 1f at rest when
+  settledValue==targetValue (so `progress > 0f` does NOT hide swipe actions —
+  they ghost through frosted cards), and its EndToStart anchor is the FULL row
+  width (released swipes slid the card off-screen). Actions render only while
+  `offset < -1f`; tap on the shifted card closes.
+- Aurora/tints/blur rationale and the round-1 regression tests
+  (SharedComponentsTest compact-time cases, ChatControlsTest overflow,
+  BrowserLiveSheetTest retry, MemoryScreenTest summary detail with
+  `useUnmergedTree`, AuroraAnimationProbeTest) are described in commit
+  `b7b8ad0`'s message. Compose gotchas: `assertDoesNotExist`/`onNode` are
+  member fns — do NOT import them; `captureToImage()` returns ImageBitmap →
+  `asAndroidBitmap().sameAs()`.
 
-1. **Smaller headings**: `EnhancedMarkdown` now gets
-   `typography = markdownTypography(h1..h6 = …)` — h1 `headlineSmall`, h2
-   `titleLarge`, h3 `titleMedium`, h4–h6 `titleSmall`, all `SemiBold`, matching
-   the legacy renderer's heading scale (m3 defaults were `displayLarge` etc.).
-   Note the m3 API is `markdownTypography(h1: TextStyle, …)` (NOT
-   `markdownStyle`) — confirmed from the v0.28.0 source at
-   `multiplatform-markdown-renderer-m3/.../m3/MarkdownTypography.kt`.
-2. **Table borders + alignment**: `borderedTableComponent` overrides the `table`
-   slot in both `defaultMarkdownComponents` and `streamingMarkdownComponents`
-   (streaming wraps it in `revealOnAppear`). `EnhancedMarkdownTable`/
-   `EnhancedMarkdownTableRow` are adapted from the library default but draw an
-   outer border + per-row `HorizontalDivider`s + per-cell vertical dividers
-   (0.5.dp `dividerColor`), and `tableColumnAlignments(...)` parses the
-   `TABLE_SEPARATOR` source (`:---` / `:---:` / `---:`) into per-column
-   `TextAlign` passed to `MarkdownBasicText`. Cells are fixed 160.dp with
-   horizontal scroll and wrap (no ellipsis). Key API facts: `MarkdownComponent =
-   @Composable ColumnScope.(MarkdownComponentModel) -> Unit`; the model carries
-   `content`/`node`/`typography`; `org.jetbrains:markdown` (ASTNode,
-   GFMElementTypes/GFMTokenTypes) is an `api` dep of the renderer so it's on the
-   compile classpath; `LocalMarkdownColors`/`LocalMarkdownDimens`/
-   `MarkdownBasicText`/`buildMarkdownAnnotatedString` are all public.
-3. Also removed the now-unused `import …glass.glassFrosted` from
-   `MessageContent.kt`.
+### Emulator facts that contradict older notes
 
-> Same caveat as above: visual check (heading scale, hairline cell borders,
-> column alignment) should happen on a real device.
+- **This API36 swiftshader AVD DOES render backdrop blur** — drawer/menu
+  screenshots show real background smearing; in-composition menus verified
+  sampling (conversation ⋮ menu ghosts the messages behind it). The old
+  "swiftshader can't render RenderEffect" note is wrong for this AVD.
+- BUT it is brutally slow at it: first-launch/tap frames take 5–8s → repeated
+  ANR dialogs (main thread parked in `HardwareRenderer.setStopped` waiting on
+  RenderThread stuck in `glCreateProgram` over the qemu pipe). The app DOES
+  finish each frame; tap Wait and continue. Login-by-typing is impractical;
+  seed the session instead: force-stop, then an instrumentation snippet that
+  runs `SettingsStore.setServerUrl("http://10.0.2.2:2027")` +
+  `CookieManager.setCookie(url, "access_token=emulator; Path=/; HttpOnly")` +
+  `flush()` (mock gateway accepts it; instrumentation component is
+  `com.deerflow.mobile.test/androidx.test.runner.AndroidJUnitRunner` — note the
+  `.test` package). A `SeedSessionTest` doing exactly this was used and then
+  deleted; recreate it if needed.
+- **Aurora animation DOES tick on this emulator — the earlier "static"
+  measurement was self-inflicted**: `rememberInfiniteTransition` respects the
+  system `animator_duration_scale` developer setting (verified in the
+  animation-core 1.11.4 bytecode: `InfiniteTransition.run` reads the scale and
+  suspends its frame loop at 0). The session had zeroed the animation scales
+  to fight ANRs and never restored them. With `animator_duration_scale 1` the
+  idle app sits at ~100% CPU driving ~0.2fps frames (each frame is ~5s of
+  swiftshader GPU work), and screencaps 20s apart show the aurora clearly
+  drifted/breathed (~77% sampled pixels changed, no interaction). Correctness
+  proven on-device; only smoothness needs a real GPU. NOTE: a compose-test
+  harness probe (createComposeRule, autoAdvance, no interaction) still sees a
+  static image — the test environment's `InfiniteAnimationPolicy` gates
+  infinite animations; do not trust the harness for this, use the real app.
+- Helper scripts for manual walkthroughs live in `.tmp/glass-check/`
+  (`walk.py`: texts/tap-text/screenshot; `login_fill.py`: focus-validated
+  field fill).
 
-### Done: real liquid glass on popups (#1) — in-composition menu hosting
+### Kept from before: real liquid glass on popups (#1) — in-composition menu hosting
 
-Implemented the approach the MEMORY note prescribed (NEW
-`ui/glass/GlassMenuHost.kt`, compiles + connected-tested on emulator):
+(Details from the previous round preserved; still accurate.)
 
-- `GlassMenuHostState` + `LocalGlassMenuHost`; screens provide it next to
-  `LocalGlassBackdrop` and place ONE `GlassMenuOverlayHost(state)` as the LAST
-  sibling inside the provider (done in `ChatScreen`, `WorkspaceShell` (covers
-  the drawer), `TasksScreen`, `MemoryScreen`). Screens with their own backdrop
-  MUST shadow the host so menus sample their own recorded layer.
-- `GlassDropdownMenu` with a host → `HostedGlassDropdownMenu`: zero-size
-  `Spacer` at the call site whose **parent** layout bounds anchor the panel
-  (mirrors DropdownMenu), `BackHandler` for back, DisposableEffect open/close;
-  without a host → unchanged popup+frosted fallback (isolated tests, slash
-  popup `ChatScreen` ~1690 stays a `Popup(focusable=false)` + frosted).
+- `GlassMenuHostState` + `LocalGlassMenuHost` in `ui/glass/GlassMenuHost.kt`;
+  screens provide it next to `LocalGlassBackdrop` and place ONE
+  `GlassMenuOverlayHost(state)` as the LAST sibling inside the provider
+  (ChatScreen, WorkspaceShell, TasksScreen, MemoryScreen).
+- `GlassDropdownMenu` with a host → hosted in-composition panel anchored to the
+  call-site parent bounds; without a host → popup+frosted fallback.
 - `GlassMenuSurface` picks `Modifier.glass` vs `glassFrosted` via
   **`LocalGlassMenuInComposition`** (true only around the overlay panel) — never
-  gate on `LocalGlassBackdrop` (non-null-but-unreachable in popup windows →
-  menu renders nothing; that was the original #1 regression).
-- Overlay host: modal scrim (clickable, blocks scroll-through) + panel placed
-  below/start-aligned with end-align + above-flip clamping, 140ms fade/scale-in
-  (transformOrigin flips when placed above).
-- Gotchas hit: `Modifier.offset { }` needs `foundation.layout.offset` import;
-  entry/content/shape stored in `mutableStateOf` so overlay recomposes with the
-  call site; anchor bounds written only when changed.
-- Bonus fix while debugging: `EnhancedMarkdownTable` cell text is now trimmed
-  (GFM CELL nodes keep a trailing space → broke exact `onNodeWithText`;
-  `finalTableReplyPlacesTheReasoningControlAboveTheTable` was RED at HEAD and
-  passes now), and `TopSelector` gained a `buttonModifier` param — tag +
-  traversalIndex moved back onto the inner `Surface` (merged semantics), fixing
-  `nonThinkingModelExposesFlashOnly`.
+  gate on `LocalGlassBackdrop` (non-null-but-unreachable in popup windows).
 
-Pre-existing RED at HEAD `31f7c08` (NOT from this work, verified via a
-`git worktree` HEAD build): `citationTapBringsItsMatchingSourceIntoView`,
-the 44dp `GlassIconButton` vs 48dp a11y gate, `WorkspaceDatabaseMigration…`
-(kotlinx `AbstractMethodError`), `SettingsStore` snapshot mismatch. The 6
-`WorkspaceScreenshotTest` baselines differ after this round's deliberate
-glass/markdown visual tuning — need intentional baseline regeneration.
+Known REDs (documented earlier, live in classes outside the 08-29 targeted
+run — re-verify when touching those areas, NOT caused by the glass round):
+`citationTapBringsItsMatchingSourceIntoView`, 5× `WorkspaceDatabaseMigration…`
+(kotlinx `AbstractMethodError`), `SettingsStore` snapshot mismatch, and
+`runModeMenuDispatchesSupportedMode` (reconfirmed 08-29 on the emulator).
+Screenshot baselines are current as of `a7d04f2` — regenerate with
+`-e deerflow.record_screenshots true` only for intentional visual changes,
+with `animator_duration_scale 1` (at 0 the aurora freezes mid-frame and
+pollutes the capture).
 
-> Glass blur on the emulator is NOT renderable (swiftshader, no RenderEffect) —
-> the liquid look of in-composition menus still needs a real-device check.
+> Still pending: real-device pass (iQOO + Honor) on the glass round — glass
+> blur look at 60fps, aurora breathing smoothness, edge refraction, frosted
+> card rows/sections. Animation correctness and the full Compose test surface
+> are already verified on the emulator.
