@@ -60,9 +60,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalFocusManager
@@ -87,13 +90,14 @@ import com.deerflow.mobile.ui.glass.GlassIconButton
 import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
 import com.deerflow.mobile.ui.glass.GlassMenuItem
 import com.deerflow.mobile.ui.glass.glass
+import com.deerflow.mobile.ui.theme.GeminiColors
 import com.deerflow.mobile.ui.glass.glassEdge
 import com.deerflow.mobile.ui.glass.glassFrosted
-import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
 import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
 import com.deerflow.mobile.ui.glass.rememberFloatingBarTint
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.shadow.Shadow
 import org.json.JSONObject
 import kotlinx.coroutines.delay
@@ -128,10 +132,46 @@ fun WorkspaceDrawer(
     val headerFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val filtered = state.threads.filter { query.isBlank() || it.title.contains(query, ignoreCase = true) }
-    // Records the drawer's own list OVER an opaque base (transparent gaps would
-    // leave the bar sampleless — it rendered as a bare tint), so the floating
-    // bottom bar reads as real glass refracting the threads scrolling beneath.
-    val drawerListBackdrop = rememberGlassBackdrop()
+    // Records the drawer's own list so the floating bottom bar refracts the
+    // threads scrolling beneath it (not the page under the drawer). The base
+    // reproduces the page's aurora glow at a fixed phase: a bare background
+    // base made the bar read as a black slab, far darker than the glass panel
+    // around it, and transparent gaps left it sampleless/invisible.
+    val listBackground = MaterialTheme.colorScheme.background
+    val listDark = listBackground.luminance() < 0.5f
+    val drawerListBackdrop = rememberLayerBackdrop {
+        drawRect(listBackground)
+        val maxDim = size.maxDimension
+        val alphaScale = if (listDark) 1f else 0.72f
+        // Glow centers sit LOW (violet/pink around the bar's zone) so the
+        // sampled color at the floating bar matches the chat composer's
+        // bottom-of-page aurora mixing.
+        drawRect(
+            Brush.radialGradient(
+                0f to GeminiColors.Blue.copy(alpha = 0.40f * alphaScale),
+                1f to Color.Transparent,
+                center = Offset(size.width * 0.5f, size.height * 0.15f),
+                radius = maxDim * 0.75f,
+            ),
+        )
+        drawRect(
+            Brush.radialGradient(
+                0f to GeminiColors.Violet.copy(alpha = 0.38f * alphaScale),
+                1f to Color.Transparent,
+                center = Offset(size.width * 0.85f, size.height * 0.72f),
+                radius = maxDim * 0.70f,
+            ),
+        )
+        drawRect(
+            Brush.radialGradient(
+                0f to GeminiColors.Pink.copy(alpha = 0.30f * alphaScale),
+                1f to Color.Transparent,
+                center = Offset(size.width * 0.15f, size.height * 0.95f),
+                radius = maxDim * 0.68f,
+            ),
+        )
+        drawContent()
+    }
 
     val density = LocalDensity.current
     LaunchedEffect(drawerOpen) {
