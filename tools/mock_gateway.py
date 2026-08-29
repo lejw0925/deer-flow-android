@@ -339,12 +339,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self.close_connection = True
 
     def write_artifact(self, artifact_path: str) -> None:
-        fixture = ARTIFACT_FIXTURES.get(artifact_path)
+        # Thread artifact URLs carry the workspace-relative path; fixtures are
+        # keyed by basename.
+        fixture_key = artifact_path.rsplit("/", 1)[-1]
+        fixture = ARTIFACT_FIXTURES.get(fixture_key)
         if fixture is None:
             self.write_json({"detail": "Artifact not found"}, status=404)
             return
         body, content_type, reports_length = fixture
-        if artifact_path == "two-hundred-one-mib.bin":
+        if fixture_key == "two-hundred-one-mib.bin":
             # Header-only rejection coverage: clients must stop before requesting the complete body.
             total = 201 * MEBIBYTE
             body = b"\0"
