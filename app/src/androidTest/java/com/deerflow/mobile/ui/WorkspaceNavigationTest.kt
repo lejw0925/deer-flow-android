@@ -11,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
@@ -91,7 +92,7 @@ class WorkspaceNavigationTest {
             }
         }
 
-        compose.onNodeWithText("Agents").performClick()
+        compose.onNodeWithText(context.getString(R.string.tab_agents)).performClick()
         compose.runOnIdle { assertEquals(DrawerDestination.Agents, destination) }
     }
 
@@ -301,18 +302,15 @@ class WorkspaceNavigationTest {
     fun todoProgressUsesAnOverlayWithoutMovingTheConversationArea() {
         compose.setContent {
             MaterialTheme {
-                TodoProgressHost(
-                    conversationKey = "thread-1",
-                    todos = listOf(
-                        TodoItem("Inspect code", "completed"),
-                        TodoItem("Add tests", "in_progress"),
-                    ),
-                    modifier = Modifier.height(520.dp),
-                ) {
+                Box(modifier = Modifier.height(520.dp)) {
+                    // Conversation sibling — stands in for the recorded content layer
+                    // the overlay floats over. In ChatScreen the conversation is a
+                    // sibling of TodoProgressHost (outside the recorded layer), not
+                    // its content, so the overlay's glass can sample it.
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                            .testTag(UiTags.TodoConversationArea)
                             .background(MaterialTheme.colorScheme.surfaceContainerLow),
                     ) {
                         Text(
@@ -320,6 +318,14 @@ class WorkspaceNavigationTest {
                             modifier = Modifier.padding(16.dp),
                         )
                     }
+                    TodoProgressHost(
+                        conversationKey = "thread-1",
+                        todos = listOf(
+                            TodoItem("Inspect code", "completed"),
+                            TodoItem("Add tests", "in_progress"),
+                        ),
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 }
             }
         }

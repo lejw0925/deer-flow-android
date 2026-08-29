@@ -3,6 +3,7 @@ package com.deerflow.mobile.ui
 import android.graphics.Bitmap
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -23,11 +24,13 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import com.deerflow.mobile.R
@@ -137,6 +140,36 @@ class ChatControlsTest {
         compose.onNodeWithText(writing).performClick()
 
         compose.runOnIdle { assertEquals(writingPrompt, selectedPrompt) }
+    }
+
+    @Test
+    fun quickActionsOverflowIntoMoreMenuWhenNarrow() {
+        var selectedPrompt = ""
+        val research = context.getString(R.string.quick_research)
+        val image = context.getString(R.string.quick_image)
+        val imagePrompt = context.getString(R.string.quick_image_prompt)
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.width(300.dp)) {
+                    CapabilityRow(
+                        state = AppUiState(serverUrl = "http://10.0.2.2:2027"),
+                        onAgentSelected = {},
+                        onQuickAction = { prompt, _ -> selectedPrompt = prompt },
+                    )
+                }
+            }
+        }
+
+        // The first actions stay inline; the rest only exist inside the more menu.
+        compose.onNodeWithText(research).assertExists()
+        compose.onNodeWithText(image).assertDoesNotExist()
+        compose.onNodeWithTag(UiTags.QuickActionsMore).assertExists()
+
+        compose.onNodeWithTag(UiTags.QuickCapabilities).performTouchInput { swipeLeft() }
+        compose.onNodeWithTag(UiTags.QuickActionsMore).performClick()
+        compose.onNodeWithText(image).performClick()
+
+        compose.runOnIdle { assertEquals(imagePrompt, selectedPrompt) }
     }
 
     @Test

@@ -94,4 +94,31 @@ class BrowserLiveSheetTest {
             assertEquals(0.5f, click.ny, 0.05f)
         }
     }
+
+    @Test
+    fun errorStateShowsRetryAndDispatchesIt() {
+        var retries = 0
+        compose.setContent {
+            MaterialTheme {
+                BrowserLiveSheet(
+                    browser = BrowserUiState(
+                        visible = true,
+                        threadId = "thread-1",
+                        url = "https://example.com",
+                        status = BrowserLiveStatus.Error,
+                        error = "connection lost",
+                    ),
+                    serverUrl = "https://deerflow.example.com",
+                    onDismiss = {},
+                    onLiveControlChange = {},
+                    onInput = {},
+                    onRetry = { retries++ },
+                )
+            }
+        }
+
+        compose.onNodeWithTag(UiTags.BrowserRetry).assertHasClickAction().performClick()
+
+        compose.runOnIdle { assertEquals(1, retries) }
+    }
 }

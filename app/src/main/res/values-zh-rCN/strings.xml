@@ -11,7 +11,7 @@
     <string name="continue_with_provider">使用 %1$s 继续</string>
     <string name="sso_web_title">使用 %1$s 登录</string>
     <string name="tab_chat">聊天</string>
-    <string name="tab_agents">Agents</string>
+    <string name="tab_agents">智能体</string>
     <string name="tab_tasks">任务</string>
     <string name="tab_memory">记忆</string>
     <string name="tab_profile">我的</string>
@@ -72,7 +72,7 @@
     <string name="run_details_tokens">令牌</string>
     <string name="run_details_llm_calls">LLM 调用</string>
     <string name="run_details_messages">消息</string>
-    <string name="run_details_token_breakdown">主 Agent %1$s · 子 Agent %2$s · 中间件 %3$s</string>
+    <string name="run_details_token_breakdown">主智能体 %1$s · 子智能体 %2$s · 中间件 %3$s</string>
     <string name="run_details_stop_reason">停止原因：%1$s</string>
     <string name="run_details_events">运行事件</string>
     <string name="run_details_no_events">没有可用的持久化运行事件。</string>
@@ -191,7 +191,7 @@
     <string name="retry_upload">重试上传</string>
     <string name="system">系统</string>
     <string name="you">你</string>
-    <string name="message_deerflow">给 DeerFlow 发消息</string>
+    <string name="message_deerflow">发消息</string>
     <string name="add_attachment">添加附件</string>
     <string name="remove_attachment">移除附件</string>
     <string name="input_polish">优化输入</string>
@@ -279,7 +279,7 @@
     <string name="model">模型</string>
     <string name="reasoning_effort">推理深度</string>
     <string name="no_models_available">暂无可用模型</string>
-    <string name="agent">Agent</string>
+    <string name="agent">智能体</string>
     <string name="mode_flash">闪速</string>
     <string name="mode_flash_description">快速且高效的完成任务，但可能不够精准</string>
     <string name="mode_thinking">思考</string>
@@ -287,7 +287,7 @@
     <string name="mode_plan">Pro</string>
     <string name="mode_plan_description">思考、计划再执行，获得更精准的结果，可能需要更多时间</string>
     <string name="mode_ultra">Ultra</string>
-    <string name="mode_ultra_description">继承自 Pro 模式，可调用子代理分工协作，适合复杂多步骤任务，能力最强</string>
+    <string name="mode_ultra_description">继承自 Pro 模式，可调用子智能体分工协作，适合复杂多步骤任务，能力最强</string>
     <string name="reasoning_effort_minimal">最低</string>
     <string name="reasoning_effort_minimal_description">检索 + 直接输出</string>
     <string name="reasoning_effort_low">低</string>
@@ -313,16 +313,16 @@
     <string name="skill_no_description">暂未提供功能介绍。</string>
     <string name="select">选择</string>
     <string name="option_selected">已选择</string>
-    <string name="agents_title">Agents</string>
-    <string name="lead_agent_description">可使用工作区工具的 DeerFlow 通用 Agent。</string>
-    <string name="custom_agents_disabled">此服务器未启用自定义 Agent。</string>
-    <string name="create_agent">创建 Agent</string>
-    <string name="edit_agent">编辑 Agent</string>
-    <string name="agent_name">Agent 名称</string>
+    <string name="agents_title">智能体</string>
+    <string name="lead_agent_description">可使用工作区工具的 DeerFlow 通用智能体。</string>
+    <string name="custom_agents_disabled">此服务器未启用自定义智能体。</string>
+    <string name="create_agent">创建智能体</string>
+    <string name="edit_agent">编辑智能体</string>
+    <string name="agent_name">智能体名称</string>
     <string name="agent_instructions">指令</string>
     <string name="no_agent_description">暂未提供描述。</string>
-    <string name="default_agent">默认 Agent</string>
-    <string name="set_default_agent">设为默认 Agent</string>
+    <string name="default_agent">默认智能体</string>
+    <string name="set_default_agent">设为默认智能体</string>
     <string name="description">描述</string>
     <string name="server_default">服务器默认</string>
     <string name="edit">编辑</string>
@@ -331,7 +331,7 @@
     <string name="retry">重试</string>
     <string name="untitled_conversation">未命名会话</string>
     <string name="conversation">会话</string>
-    <string name="no_agent_runs">此 Agent 暂无执行记录。</string>
+    <string name="no_agent_runs">此智能体暂无执行记录。</string>
     <string name="agent_run_created">创建时间</string>
     <string name="agent_run_updated">更新时间</string>
     <string name="agent_run_duration">耗时</string>
@@ -469,7 +469,7 @@
     <string name="theme_system">跟随系统</string>
     <string name="theme_light">浅色</string>
     <string name="theme_dark">深色</string>
-    <string name="run_channel">Agent 运行</string>
+    <string name="run_channel">智能体运行</string>
     <string name="run_in_progress">DeerFlow 正在运行</string>
     <string name="run_count_in_progress">%1$d 个会话正在运行</string>
 </resources>

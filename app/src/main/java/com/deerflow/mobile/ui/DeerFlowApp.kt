@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -38,10 +37,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -65,7 +62,6 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -182,16 +178,19 @@ private fun AuthenticatedNavigation(
 
 @Composable
 private fun LoadingScreen(serverUrl: String) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        BrandMark()
-        Spacer(Modifier.height(28.dp))
-        LoadingIndicator(Modifier.size(32.dp))
-        Spacer(Modifier.height(16.dp))
-        Text(serverUrl, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Box(Modifier.fillMaxSize()) {
+        GeminiAuroraBackground(Modifier.fillMaxSize())
+        Column(
+            modifier = Modifier.fillMaxSize().padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            BrandMark()
+            Spacer(Modifier.height(28.dp))
+            LoadingIndicator(Modifier.size(32.dp))
+            Spacer(Modifier.height(16.dp))
+            Text(serverUrl, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
@@ -356,49 +355,54 @@ private fun SsoLoginScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = viewModel::cancelSsoLogin) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
+    val backdrop = rememberGlassBackdrop()
+    CompositionLocalProvider(LocalGlassBackdrop provides backdrop) {
+        Box(Modifier.fillMaxSize()) {
+            // Recorded art layer only: the glass header buttons sample the aurora.
+            // Recording the live WebView would re-record every scroll frame and
+            // gains little on this secondary screen.
+            Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+                GeminiAuroraBackground(Modifier.fillMaxSize())
             }
-            Text(
-                stringResource(R.string.sso_web_title, provider.displayName),
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(start = 8.dp),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (state.checkingSsoSession) LoadingIndicator(Modifier.size(24.dp).align(Alignment.CenterHorizontally))
-        AndroidView(
-            factory = { context ->
-                WebView(context).also { browser ->
-                    webView = browser
-                    browser.settings.apply {
-                        javaScriptEnabled = true
-                        domStorageEnabled = true
-                        allowFileAccess = false
-                        allowContentAccess = false
-                        mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                        mediaPlaybackRequiresUserGesture = true
-                    }
-                    browser.webViewClient = object : WebViewClient() {
-                        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                            return request.url.scheme?.lowercase() !in setOf("http", "https")
-                        }
-
-                        override fun onPageFinished(view: WebView, url: String) {
-                            super.onPageFinished(view, url)
-                            viewModel.completeSsoLoginIfAvailable()
-                        }
-                    }
-                    browser.loadUrl(loginUrl)
+            Column(Modifier.fillMaxSize()) {
+                FloatingScreenTopBar(
+                    title = stringResource(R.string.sso_web_title, provider.displayName),
+                    onBack = { viewModel.cancelSsoLogin() },
+                )
+                if (state.checkingSsoSession) {
+                    LoadingIndicator(Modifier.size(24.dp).align(Alignment.CenterHorizontally))
                 }
-            },
-            modifier = Modifier.fillMaxSize().testTag(UiTags.SsoWebView),
-        )
+                AndroidView(
+                    factory = { context ->
+                        WebView(context).also { browser ->
+                            webView = browser
+                            browser.settings.apply {
+                                javaScriptEnabled = true
+                                domStorageEnabled = true
+                                allowFileAccess = false
+                                allowContentAccess = false
+                                mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                                mediaPlaybackRequiresUserGesture = true
+                            }
+                            browser.webViewClient = object : WebViewClient() {
+                                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                                    return request.url.scheme?.lowercase() !in setOf("http", "https")
+                                }
+
+                                override fun onPageFinished(view: WebView, url: String) {
+                                    super.onPageFinished(view, url)
+                                    viewModel.completeSsoLoginIfAvailable()
+                                }
+                            }
+                            browser.loadUrl(loginUrl)
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .testTag(UiTags.SsoWebView),
+                )
+            }
+        }
     }
 }

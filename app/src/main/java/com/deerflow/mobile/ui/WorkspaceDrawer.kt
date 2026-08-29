@@ -41,7 +41,7 @@ import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -91,6 +91,7 @@ import com.deerflow.mobile.ui.glass.GlassMenuItem
 import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
 import com.deerflow.mobile.ui.glass.glass
 import com.deerflow.mobile.ui.glass.glassEdge
+import com.deerflow.mobile.ui.glass.glassFrosted
 import com.deerflow.mobile.ui.glass.glassShadow
 import com.deerflow.mobile.ui.glass.rememberGlassTints
 import com.kyant.backdrop.Backdrop
@@ -103,6 +104,8 @@ private enum class SkillCatalogTab(val labelRes: Int) {
     Custom(R.string.custom_skills),
     Tools(R.string.tools),
 }
+
+private val SelectedThreadShape = RoundedCornerShape(12.dp)
 
 private val DRAWER_ACTION_SHAPE = RoundedCornerShape(16.dp)
 private val DRAWER_BOTTOM_BAR_SHAPE = RoundedCornerShape(20.dp)
@@ -203,7 +206,7 @@ fun WorkspaceDrawer(
                     modifier = Modifier
                         .fillMaxSize()
                         .testTag(UiTags.RecentConversationScroll),
-                    contentPadding = PaddingValues(bottom = DRAWER_BOTTOM_CONTENT_PADDING),
+                    contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = DRAWER_BOTTOM_CONTENT_PADDING),
                 ) {
                     item {
                         DrawerDestinationRow(Icons.Outlined.SmartToy, stringResource(R.string.tab_agents)) {
@@ -240,7 +243,14 @@ fun WorkspaceDrawer(
                     }
                     if (state.offline) {
                         item {
-                            Box(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) { OfflineBanner() }
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                                    .glassFrosted(MaterialTheme.shapes.small),
+                            ) {
+                                Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) { OfflineBanner() }
+                            }
                         }
                     }
                     items(filtered, key = { it.id }) { thread ->
@@ -376,7 +386,7 @@ private fun ThreadDrawerRow(
             },
             supportingContent = {
                 Text(
-                    thread.updatedAt.toDisplayTime(),
+                    thread.updatedAt.toCompactDisplayTime(),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.secondary,
                     maxLines = 1,
@@ -393,9 +403,22 @@ private fun ThreadDrawerRow(
             trailingContent = {
                 if (thread.isPinned) Icon(Icons.Outlined.PushPin, contentDescription = stringResource(R.string.pinned), modifier = Modifier.size(18.dp))
             },
-            colors = ListItemDefaults.colors(containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent),
+            // Selected rows read as a frosted pill with a soft primary veil (same
+            // tint language as the enabled skill cards) instead of a flat
+            // secondaryContainer block on the see-through drawer glass.
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             modifier = Modifier
                 .fillMaxWidth()
+                .then(
+                    if (selected) {
+                        Modifier.glassFrosted(
+                            SelectedThreadShape,
+                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+                        )
+                    } else {
+                        Modifier
+                    },
+                )
                 .testTag(UiTags.ThreadRowPrefix + thread.id)
                 .combinedClickable(onClick = onClick, onLongClick = { menu = true }),
         )
@@ -881,7 +904,7 @@ private fun ChannelProviderRow(
                     }
                 }
                 if (provider.connectable && provider.connectionStatus != "connected") {
-                    FilledTonalButton(
+                    Button(
                         onClick = onConnect,
                         enabled = !mutationBusy,
                         modifier = Modifier.testTag(UiTags.ChannelConnectPrefix + provider.provider),
@@ -1000,26 +1023,30 @@ internal fun SkillsSheetContent(
             verticalItemSpacing = 10.dp,
         ) {
             staggeredItems(visibleSkills, key = { it.name }) { skill ->
+                // Frosted glass card instead of a solid color block: enabled skills
+                // get a soft primary veil, disabled ones the neutral frosted tint.
+                val cardTint = if (skill.enabled) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+                } else {
+                    null
+                }
                 Surface(
                     onClick = { onSkillDetail(skill) },
                     shape = MaterialTheme.shapes.large,
-                    color = if (skill.enabled) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surfaceVariant
-                    },
-                    modifier = Modifier.fillMaxWidth().testTag(UiTags.SkillCardPrefix + skill.name),
+                    color = Color.Transparent,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .glassFrosted(MaterialTheme.shapes.large, tint = cardTint)
+                        .testTag(UiTags.SkillCardPrefix + skill.name),
                 ) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(skill.name, style = MaterialTheme.typography.titleMedium)
                         Text(
                             skill.description.ifBlank { stringResource(R.string.skill_no_description) },
                             style = MaterialTheme.typography.bodyMedium,
-                            color = if (skill.enabled) {
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         if (canManageSkillStates) {
                             Row(

@@ -44,7 +44,7 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LoadingIndicator
@@ -746,7 +746,7 @@ private fun HumanInputCard(
                             .onFocusChanged { textInputFocused = it.isFocused }
                             .testTag(UiTags.HumanInputText),
                     )
-                    FilledTonalButton(
+                    Button(
                         onClick = { onSubmit(request, answer, null) },
                         enabled = enabled && answer.isNotBlank(),
                         modifier = Modifier

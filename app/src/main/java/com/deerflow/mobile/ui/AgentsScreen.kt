@@ -1,11 +1,19 @@
 @file:OptIn(
     androidx.compose.material3.ExperimentalMaterial3Api::class,
     androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
 )
 
 package com.deerflow.mobile.ui
 
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.rememberSplineBasedDecay
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.AnchoredDraggableState
+import androidx.compose.foundation.gestures.DraggableAnchors
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.anchoredDraggable
+import androidx.compose.foundation.gestures.snapTo
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -38,7 +47,6 @@ import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.Button
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LoadingIndicator
@@ -50,10 +58,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -63,24 +71,26 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.deerflow.mobile.R
 import com.deerflow.mobile.data.AgentInfo
 import com.deerflow.mobile.data.AgentRunInfo
 import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
+import com.deerflow.mobile.ui.glass.GlassIconButton
 import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
-import com.deerflow.mobile.ui.glass.GlassTopAppBar
 import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
 import com.deerflow.mobile.ui.glass.glassFrosted
 import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
-import com.deerflow.mobile.ui.glass.rememberGlassTints
 import com.kyant.backdrop.backdrops.layerBackdrop
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 @Composable
 fun AgentsScreen(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit, contentPadding: PaddingValues) {
@@ -231,31 +241,29 @@ private fun AgentListScreen(
                     }
                 }
             }
-            GlassTopAppBar(
+            FloatingScreenTopBar(
                 modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter).onGloballyPositioned { topBarHeightPx = it.size.height },
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
+                title = stringResource(R.string.agents_title),
+                onBack = onBack,
+            ) {
+                if (state.capabilities.agentsEnabled) {
+                    GlassIconButton(onClick = onCreate, enabled = !state.workspaceMutationBusy) {
+                        Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.create_agent))
                     }
-                },
-                title = { Text(stringResource(R.string.agents_title)) },
-                actions = {
-                    if (state.capabilities.agentsEnabled) {
-                        IconButton(onClick = onCreate, enabled = !state.workspaceMutationBusy, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.create_agent))
-                        }
-                    }
-                    IconButton(onClick = onRefresh, enabled = !state.loadingCapabilities, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.refresh))
-                    }
-                },
-            )
+                }
+                GlassIconButton(onClick = onRefresh, enabled = !state.loadingCapabilities) {
+                    Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.refresh))
+                }
+            }
         }
     }
 }
 
 internal fun List<AgentInfo>.customAgentsOnly(): List<AgentInfo> =
     filterNot { it.name == "lead_agent" }
+
+/** Anchors for [AgentRow]'s swipe-to-reveal: rest, or actions revealed. */
+private enum class AgentRevealValue { Settled, Revealed }
 
 @Composable
 internal fun AgentRow(
@@ -266,62 +274,83 @@ internal fun AgentRow(
     onChat: () -> Unit,
     onEdit: (() -> Unit)?,
 ) {
-    val swipeState = androidx.compose.material3.rememberSwipeToDismissBoxState()
     val scope = rememberCoroutineScope()
-    val closeActions: () -> Unit = { scope.launch { swipeState.reset() } }
-    SwipeToDismissBox(
-        state = swipeState,
-        enableDismissFromStartToEnd = false,
-        enableDismissFromEndToStart = true,
-        backgroundContent = {
-            Box(
-                modifier = Modifier.fillMaxSize().glassFrosted(MaterialTheme.shapes.medium),
+    val density = LocalDensity.current
+    val actionCount = 1 + (if (onEdit != null) 1 else 0)
+    val actionsWidthPx = with(density) { (actionCount * 48 + 8).dp.toPx() }
+    val decay = rememberSplineBasedDecay<Float>()
+    // SwipeToDismissBox is dismiss-only (its open anchor is the full row width,
+    // so a released swipe slid the card entirely off-screen). This two-anchor
+    // draggable pins the reveal at exactly the actions' width instead.
+    val revealState = remember {
+        AnchoredDraggableState(
+            initialValue = AgentRevealValue.Settled,
+            positionalThreshold = { distance -> distance * 0.5f },
+            velocityThreshold = { with(density) { 100.dp.toPx() } },
+            snapAnimationSpec = tween(),
+            decayAnimationSpec = decay,
+        )
+    }
+    LaunchedEffect(actionsWidthPx) {
+        revealState.updateAnchors(
+            DraggableAnchors {
+                AgentRevealValue.Settled at 0f
+                AgentRevealValue.Revealed at -actionsWidthPx
+            },
+        )
+    }
+    val closeActions: () -> Unit = { scope.launch { revealState.snapTo(AgentRevealValue.Settled) } }
+    // The foreground card is translucent frosted glass, so the swipe actions
+    // would ghost through it at rest — only render them while displaced.
+    val revealActions = revealState.offset.let { !it.isNaN() && it < -1f }
+    Box(Modifier.fillMaxWidth().anchoredDraggable(revealState, Orientation.Horizontal)) {
+        if (revealActions) {
+            Row(
+                modifier = Modifier
+                    .matchParentSize()
+                    .glassFrosted(MaterialTheme.shapes.medium)
+                    .padding(horizontal = 4.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (isDefault) {
-                        IconButton(
-                            onClick = closeActions,
-                            modifier = Modifier.size(48.dp).testTag(UiTags.AgentDefaultPrefix + agent.name),
-                        ) {
-                            Icon(
-                                Icons.Filled.Star,
-                                contentDescription = stringResource(R.string.default_agent),
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                    } else {
-                        IconButton(
-                            onClick = {
-                                onSetDefault()
-                                closeActions()
-                            },
-                            modifier = Modifier.size(48.dp).testTag(UiTags.AgentDefaultPrefix + agent.name),
-                        ) {
-                            Icon(
-                                Icons.Outlined.StarOutline,
-                                contentDescription = stringResource(R.string.set_default_agent),
-                            )
-                        }
+                if (isDefault) {
+                    IconButton(
+                        onClick = closeActions,
+                        modifier = Modifier.size(48.dp).testTag(UiTags.AgentDefaultPrefix + agent.name),
+                    ) {
+                        Icon(
+                            Icons.Filled.Star,
+                            contentDescription = stringResource(R.string.default_agent),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
                     }
-                    if (onEdit != null) {
-                        IconButton(
-                            onClick = {
-                                onEdit()
-                                closeActions()
-                            },
-                            modifier = Modifier.size(48.dp).testTag(UiTags.AgentEditPrefix + agent.name),
-                        ) {
-                            Icon(Icons.Outlined.Edit, contentDescription = stringResource(R.string.edit))
-                        }
+                } else {
+                    IconButton(
+                        onClick = {
+                            onSetDefault()
+                            closeActions()
+                        },
+                        modifier = Modifier.size(48.dp).testTag(UiTags.AgentDefaultPrefix + agent.name),
+                    ) {
+                        Icon(
+                            Icons.Outlined.StarOutline,
+                            contentDescription = stringResource(R.string.set_default_agent),
+                        )
+                    }
+                }
+                if (onEdit != null) {
+                    IconButton(
+                        onClick = {
+                            onEdit()
+                            closeActions()
+                        },
+                        modifier = Modifier.size(48.dp).testTag(UiTags.AgentEditPrefix + agent.name),
+                    ) {
+                        Icon(Icons.Outlined.Edit, contentDescription = stringResource(R.string.edit))
                     }
                 }
             }
-        },
-    ) {
+        }
         ListItem(
             headlineContent = { Text(agent.name) },
             supportingContent = {
@@ -343,9 +372,15 @@ internal fun AgentRow(
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onOpen)
+                .offset {
+                    IntOffset(revealState.offset.let { if (it.isNaN()) 0 else it.roundToInt() }, 0)
+                }
+                .glassFrosted(MaterialTheme.shapes.medium)
+                .clickable {
+                    if (revealState.currentValue == AgentRevealValue.Revealed) closeActions() else onOpen()
+                }
                 .testTag(UiTags.AgentRowPrefix + agent.name),
-            colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         )
     }
 }
@@ -435,9 +470,10 @@ internal fun AgentDetailScreen(
                             ) {
                                 items(agent.skills, key = { it }) { skill ->
                                     Surface(
-                                        color = MaterialTheme.colorScheme.secondaryContainer,
-                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        color = Color.Transparent,
+                                        contentColor = MaterialTheme.colorScheme.onSurface,
                                         shape = MaterialTheme.shapes.small,
+                                        modifier = Modifier.glassFrosted(MaterialTheme.shapes.small),
                                     ) {
                                         Text(
                                             skill,
@@ -474,7 +510,7 @@ internal fun AgentDetailScreen(
                         }
                         if (!isDefault) {
                             Spacer(Modifier.height(10.dp))
-                            FilledTonalButton(
+                            OutlinedButton(
                                 onClick = onSetDefault,
                                 enabled = !mutationBusy,
                                 modifier = Modifier.fillMaxWidth().height(48.dp).testTag(UiTags.AgentDetailSetDefault),
@@ -487,29 +523,21 @@ internal fun AgentDetailScreen(
                     }
                 }
             }
-            GlassTopAppBar(
+            FloatingScreenTopBar(
                 modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter).onGloballyPositioned { topBarHeightPx = it.size.height },
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                        Icon(
-                            Icons.AutoMirrored.Outlined.ArrowBack,
-                            contentDescription = stringResource(R.string.back),
-                        )
+                title = agent.name,
+                onBack = onBack,
+            ) {
+                if (onEdit != null) {
+                    GlassIconButton(
+                        onClick = onEdit,
+                        enabled = !mutationBusy,
+                        modifier = Modifier.testTag(UiTags.AgentDetailEdit),
+                    ) {
+                        Icon(Icons.Outlined.Edit, contentDescription = stringResource(R.string.edit))
                     }
-                },
-                title = { Text(agent.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                actions = {
-                    if (onEdit != null) {
-                        IconButton(
-                            onClick = onEdit,
-                            enabled = !mutationBusy,
-                            modifier = Modifier.size(48.dp).testTag(UiTags.AgentDetailEdit),
-                        ) {
-                            Icon(Icons.Outlined.Edit, contentDescription = stringResource(R.string.edit))
-                        }
-                    }
-                },
-            )
+                }
+            }
         }
     }
 }
@@ -614,6 +642,7 @@ private fun AgentRunList(
                         trailingContent = run.modelName?.takeIf(String::isNotBlank)?.let { model ->
                             { Text(model, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
                         },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         modifier = Modifier.fillMaxWidth()
                             .clickable { onSelect(run) }
                             .testTag(UiTags.AgentRunPrefix + run.runId),

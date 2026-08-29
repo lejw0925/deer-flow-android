@@ -30,6 +30,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -81,6 +82,7 @@ import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
@@ -133,10 +135,12 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.isTraversalGroup
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.traversalIndex
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -180,6 +184,7 @@ import com.deerflow.mobile.ui.glass.LocalGlassMenuHost
 import com.deerflow.mobile.ui.glass.glass
 import com.deerflow.mobile.ui.glass.glassEdge
 import com.deerflow.mobile.ui.glass.glassFrosted
+import com.deerflow.mobile.ui.glass.glassShadow
 import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
 import com.deerflow.mobile.ui.glass.rememberGlassMenuHostState
 import com.deerflow.mobile.ui.glass.rememberGlassTints
@@ -260,19 +265,25 @@ fun ChatScreen(
 
             Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
                 // Aurora is drawn inside the recorded layer so it is visible on
-                // screen AND picked up by sampling glass (top bar, composer).
-                // Without it the composer samples only the solid background color
-                // (messages are padded above it) and reads as dead-black.
+                // screen AND picked up by sampling glass (top bar, composer, and the
+                // todo overlay below). Without it the composer samples only the solid
+                // background color (messages are padded above it) and reads as dead-black.
                 GeminiAuroraBackground(Modifier.fillMaxSize())
-                TodoProgressHost(
-                    conversationKey = state.selectedThread?.id,
-                    todos = state.todos,
-                    topInset = topOverlayHeight,
-                    modifier = Modifier.fillMaxSize(),
+                // The conversation is the recorded content. The todo summary + expand
+                // panel render as a sibling OUTSIDE this box (below) so their glass
+                // surfaces sample this layer without self-sampling.
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag(UiTags.TodoConversationArea),
+                    contentAlignment = Alignment.Center,
                 ) {
                     when {
                         state.loadingChat -> LoadingIndicator(Modifier.size(32.dp))
-                        state.messages.isEmpty() -> ChatWelcome()
+                        state.messages.isEmpty() -> ChatWelcome(
+                            topInset = topOverlayHeight,
+                            bottomInset = bottomOverlayHeight,
+                        )
                         else -> ProvideMarkdownImageContext(
                             MarkdownImageContext(
                                 serverUrl = state.serverUrl,
@@ -299,6 +310,14 @@ fun ChatScreen(
                     }
                 }
             }
+            // Sibling overlay OUTSIDE the recorded layer: the todo summary + expand
+            // panel are real liquid glass sampling the conversation behind them.
+            TodoProgressHost(
+                conversationKey = state.selectedThread?.id,
+                todos = state.todos,
+                topInset = topOverlayHeight,
+                modifier = Modifier.fillMaxSize(),
+            )
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -433,6 +452,7 @@ fun ChatScreen(
             onDismiss = viewModel::closeBrowser,
             onLiveControlChange = viewModel::setBrowserLiveControl,
             onInput = viewModel::sendBrowserInput,
+            onRetry = { viewModel.openBrowser(state.browser.preview) },
         )
     }
     state.artifactSession?.let { session ->
@@ -785,7 +805,6 @@ internal fun ChatTopBar(
                 GlassDropdownMenu(
                     expanded = overflowMenuExpanded,
                     onDismissRequest = { overflowMenuExpanded = false },
-                    shape = RoundedCornerShape(20.dp),
                 ) {
                     Column {
                         if (showRunDetails) {
@@ -837,7 +856,9 @@ internal fun ChatTopSelectors(
     modifier: Modifier = Modifier,
 ) {
     val selectedModel = state.capabilities.selectedModel(state.composer.options.modelName)
-    val model = selectedModel?.displayName ?: stringResource(R.string.model)
+    // The narrow top bar shows a compact label (no provider path / suffix); the
+    // menu keeps the full display name.
+    val model = selectedModel?.displayName?.let(::shortModelLabel) ?: stringResource(R.string.model)
     val availableModes = state.capabilities.availableRunModes(state.composer.options.modelName)
     val menuMaxHeight = 300.dp
     Row(
@@ -998,7 +1019,6 @@ private fun TopSelector(
             modifier = Modifier
                 .width(250.dp)
                 .animateContentSize(ExpressiveMotion.spatial()),
-            shape = selectorShape,
             content = menuContent,
         )
     }
@@ -1010,13 +1030,18 @@ internal enum class TopSelectorKind {
 }
 
 @Composable
-private fun ChatWelcome() {
+private fun ChatWelcome(topInset: Dp = 0.dp, bottomInset: Dp = 0.dp) {
+    // Center within the free area between the glass top bar and the composer,
+    // not within the full screen — the overlays make full-screen centering read
+    // as too low.
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 12.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = topInset, bottom = bottomInset)
+            .padding(horizontal = 24.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Spacer(Modifier.height(10.dp))
         Text(stringResource(R.string.chat_welcome), style = MaterialTheme.typography.titleLarge)
     }
 }
@@ -1028,7 +1053,6 @@ internal fun TodoProgressHost(
     todos: List<TodoItem>,
     modifier: Modifier = Modifier,
     topInset: Dp = 0.dp,
-    content: @Composable () -> Unit,
 ) {
     var expanded by rememberSaveable(conversationKey) { mutableStateOf(false) }
     LaunchedEffect(todos.isEmpty()) {
@@ -1039,16 +1063,10 @@ internal fun TodoProgressHost(
     SharedTransitionLayout(modifier = modifier.testTag(UiTags.TodoProgressHost)) {
         val progressBounds = rememberSharedContentState(key = "todo-progress-${conversationKey.orEmpty()}")
         Box(Modifier.fillMaxSize()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag(UiTags.TodoConversationArea),
-                contentAlignment = Alignment.Center,
-            ) {
-                content()
-            }
             // The summary floats over the conversation (below the glass top bar),
-            // so messages can scroll underneath it.
+            // so messages can scroll underneath it. The conversation itself is now a
+            // sibling in the recorded layer (ChatScreen), so these glass surfaces
+            // sample it without self-sampling.
             if (todos.isNotEmpty()) {
                 Box(
                     modifier = Modifier
@@ -1131,8 +1149,13 @@ internal fun TodoSummary(
             tonalElevation = 0.dp,
             modifier = Modifier
                 .fillMaxSize()
-                .glassFrosted(shape)
-                .clip(shape)
+                .glass(
+                    shape = shape,
+                    useLens = true,
+                    highlight = { Highlight.Ambient },
+                    shadow = { glassShadow() },
+                )
+                .glassEdge(shape)
                 .testTag(UiTags.TodoProgressSummary),
         ) {
             Column(
@@ -1179,12 +1202,17 @@ private fun TodoProgressDetails(
         contentColor = MaterialTheme.colorScheme.onSurface,
         shape = shape,
         tonalElevation = 0.dp,
-        shadowElevation = 10.dp,
+        shadowElevation = 0.dp,
         modifier = modifier
             .widthIn(max = 900.dp)
             .heightIn(max = TODO_PROGRESS_DETAILS_MAX_HEIGHT)
-            .glassFrosted(shape)
-            .clip(shape)
+            .glass(
+                shape = shape,
+                useLens = true,
+                highlight = { Highlight.Ambient },
+                shadow = { glassShadow() },
+            )
+            .glassEdge(shape)
             .testTag(UiTags.TodoProgressDetails),
     ) {
         Column(
@@ -1218,7 +1246,7 @@ private fun TodoProgressDetails(
                     .height(6.dp)
                     .clip(RoundedCornerShape(3.dp)),
                 color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                trackColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.18f),
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             LazyColumn(
@@ -1532,7 +1560,6 @@ internal fun MessageComposer(
         SlashSkillSuggestionPositionProvider(with(density) { 8.dp.roundToPx() })
     }
     var composerAnchorWidthPx by remember { mutableStateOf(0) }
-    val composerTints = rememberGlassTints()
     // Mostly-clear glass: a light veil just enough for text readability, with the
     // blur + vibrancy from [glass] supplying the frosted backdrop.
     val composerTint = if (isSystemInDarkTheme()) {
@@ -1551,7 +1578,7 @@ internal fun MessageComposer(
     ) {
             Column(
                 Modifier
-                    .widthIn(max = 820.dp)
+                    .widthIn(max = 900.dp)
                     .fillMaxWidth()
                     .glass(
                         shape = RoundedCornerShape(28.dp),
@@ -1669,8 +1696,8 @@ internal fun MessageComposer(
                             },
                             shape = RoundedCornerShape(20.dp),
                             colors = TextFieldDefaults.colors(
-                                focusedContainerColor = composerTints.frosted.copy(alpha = 0.5f),
-                                unfocusedContainerColor = composerTints.frosted.copy(alpha = 0.5f),
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
                                 focusedIndicatorColor = Color.Transparent,
                                 unfocusedIndicatorColor = Color.Transparent,
                                 disabledIndicatorColor = Color.Transparent,
@@ -1883,31 +1910,96 @@ internal fun CapabilityRow(
             expandedShadowElevation = 0.dp,
             collapsedShadowElevation = 0.dp,
         ) {
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                GlassChip(
-                    onClick = { agentSelectorExpanded = !agentSelectorExpanded },
-                    label = { Text(state.composer.options.agentLabel()) },
-                    leadingIcon = {
-                        Icon(
-                            Icons.Outlined.KeyboardArrowUp,
-                            contentDescription = stringResource(R.string.agent),
-                            modifier = Modifier.size(18.dp).rotate(agentArrowRotation),
-                        )
-                    },
-                    modifier = Modifier.testTag(UiTags.AgentSelector),
-                )
-                actions.forEach { action ->
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val density = LocalDensity.current
+                val textMeasurer = rememberTextMeasurer()
+                val chipTextStyle = MaterialTheme.typography.bodyLarge
+                // Chip = 24dp horizontal padding + 18dp icon + 6dp gap + label; the
+                // slack keeps estimates conservative so a chip is never clipped.
+                fun estimatedChipWidth(label: String): Dp {
+                    val textPx = textMeasurer.measure(AnnotatedString(label), style = chipTextStyle).size.width
+                    return with(density) { textPx.toDp() } + 58.dp
+                }
+                val moreLabel = stringResource(R.string.more_actions)
+                var moreMenuExpanded by remember { mutableStateOf(false) }
+                val agentChipWidth = estimatedChipWidth(state.composer.options.agentLabel())
+                val moreChipWidth = estimatedChipWidth(moreLabel)
+                val chipSpacing = 8.dp
+                // Keep as many leading actions fully visible as fit; the rest go
+                // into a "more" glass menu. Never fewer than three inline so the
+                // primary suggestions stay one tap away; the row stays scrollable
+                // as fallback for the estimate being off.
+                var usedWidth = agentChipWidth
+                var visibleCount = 0
+                actions.forEachIndexed { index, action ->
+                    if (visibleCount == index) {
+                        val chipWidth = estimatedChipWidth(action.label) + chipSpacing
+                        val reserve = if (index < actions.lastIndex) moreChipWidth + chipSpacing else 0.dp
+                        if (usedWidth + chipWidth + reserve <= maxWidth) {
+                            usedWidth += chipWidth
+                            visibleCount++
+                        }
+                    }
+                }
+                val inlineCount = visibleCount.coerceAtLeast(3).coerceAtMost(actions.size)
+                val overflowActions = actions.drop(inlineCount)
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(chipSpacing),
+                ) {
                     GlassChip(
-                        onClick = {
-                            agentSelectorExpanded = false
-                            onQuickAction(action.prompt, action.keywords)
+                        onClick = { agentSelectorExpanded = !agentSelectorExpanded },
+                        label = { Text(state.composer.options.agentLabel()) },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Outlined.KeyboardArrowUp,
+                                contentDescription = stringResource(R.string.agent),
+                                modifier = Modifier.size(18.dp).rotate(agentArrowRotation),
+                            )
                         },
-                        label = { Text(action.label) },
-                        leadingIcon = { Icon(action.icon, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        modifier = Modifier.testTag(UiTags.AgentSelector),
                     )
+                    actions.take(inlineCount).forEach { action ->
+                        GlassChip(
+                            onClick = {
+                                agentSelectorExpanded = false
+                                onQuickAction(action.prompt, action.keywords)
+                            },
+                            label = { Text(action.label) },
+                            leadingIcon = { Icon(action.icon, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        )
+                    }
+                    if (overflowActions.isNotEmpty()) {
+                        GlassChip(
+                            onClick = { moreMenuExpanded = true },
+                            label = { Text(moreLabel) },
+                            leadingIcon = {
+                                Icon(Icons.Outlined.MoreHoriz, contentDescription = null, modifier = Modifier.size(18.dp))
+                            },
+                            modifier = Modifier.testTag(UiTags.QuickActionsMore),
+                        )
+                        GlassDropdownMenu(
+                            expanded = moreMenuExpanded,
+                            onDismissRequest = { moreMenuExpanded = false },
+                            modifier = Modifier.testTag(UiTags.QuickActionsMoreMenu),
+                        ) {
+                            Column {
+                                overflowActions.forEach { action ->
+                                    GlassMenuItem(
+                                        text = { Text(action.label) },
+                                        leadingIcon = {
+                                            Icon(action.icon, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        },
+                                        onClick = {
+                                            moreMenuExpanded = false
+                                            agentSelectorExpanded = false
+                                            onQuickAction(action.prompt, action.keywords)
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2213,6 +2305,10 @@ internal fun insertSkillCommand(value: TextFieldValue, skillName: String): TextF
 
 private fun com.deerflow.mobile.data.RunOptions.agentLabel(): String =
     if (assistantId == "lead_agent") "DeerFlow" else assistantId
+
+/** Compact top-bar label: drops any provider path prefix and "(…)" suffix. */
+private fun shortModelLabel(displayName: String): String =
+    displayName.substringBefore("(").substringAfterLast("/").trim().ifEmpty { displayName }
 
 private fun createCameraUri(context: Context): Uri {
     val file = File.createTempFile("deerflow-camera-", ".jpg", context.cacheDir)

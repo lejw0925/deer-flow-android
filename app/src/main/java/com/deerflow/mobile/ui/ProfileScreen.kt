@@ -9,8 +9,10 @@ import android.provider.Settings
 import android.text.format.Formatter
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,7 +29,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.CleaningServices
 import androidx.compose.material.icons.outlined.Code
@@ -68,6 +69,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -87,10 +89,9 @@ import com.deerflow.mobile.data.ThemePreference
 import com.deerflow.mobile.data.parseThirdPartyLicenseNotices
 import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
 import com.deerflow.mobile.ui.glass.GlassAlertDialog
-import com.deerflow.mobile.ui.glass.GlassTopAppBar
 import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
 import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
-import com.deerflow.mobile.ui.glass.rememberGlassTints
+import com.deerflow.mobile.ui.glass.glassFrosted
 import com.kyant.backdrop.backdrops.layerBackdrop
 
 @Composable
@@ -198,238 +199,254 @@ internal fun ProfileContent(
                         modifier = Modifier.fillMaxSize().navigationBarsPadding().testTag(UiTags.ProfileList),
                         contentPadding = PaddingValues(start = 20.dp, top = topBarHeight + 16.dp, end = 20.dp, bottom = 16.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                         item {
                             ProfileSection {
                                 SettingsSectionTitle(R.string.account)
-                                ListItem(
-                                    headlineContent = { Text(state.user?.email.orEmpty()) },
-                                    supportingContent = { Text(state.user?.role.orEmpty()) },
-                                    leadingContent = { Icon(Icons.Outlined.PersonOutline, contentDescription = null) },
-                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
-                                )
-                            }
-                        }
-                        item {
-                            ProfileSection {
-                                SettingsDivider()
-                                SettingsSectionTitle(R.string.connection)
-                                ListItem(
-                                    headlineContent = { Text(stringResource(R.string.server_address)) },
-                                    supportingContent = { Text(serverUrl) },
-                                    leadingContent = { Icon(Icons.Outlined.Link, contentDescription = null) },
-                                    trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                                    modifier = Modifier.fillMaxWidth().clickable { showServerDialog = true }.testTag(UiTags.ProfileServer),
-                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
-                                )
-                                ListItem(
-                                    headlineContent = { Text(stringResource(R.string.channels)) },
-                                    leadingContent = { Icon(Icons.Outlined.Link, contentDescription = null) },
-                                    trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable(onClick = onOpenChannels)
-                                        .testTag(UiTags.ProfileChannels),
-                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
-                                )
-                                ListItem(
-                                    headlineContent = { Text(stringResource(R.string.lark_integration)) },
-                                    supportingContent = { Text(stringResource(R.string.lark_integration_subtitle)) },
-                                    leadingContent = { Icon(Icons.Outlined.Extension, contentDescription = null) },
-                                    trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable(onClick = onOpenLarkIntegration)
-                                        .testTag(UiTags.ProfileLarkIntegration),
-                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
-                                )
-                            }
-                        }
-                        item {
-                            ProfileSection {
-                                SettingsDivider()
-                                SettingsSectionTitle(R.string.preferences)
-                                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                                    ThemePreference.entries.forEachIndexed { index, preference ->
-                                        SegmentedButton(
-                                            selected = state.theme == preference,
-                                            onClick = { onThemeSelected(preference) },
-                                            shape = SegmentedButtonDefaults.itemShape(index, ThemePreference.entries.size),
-                                            label = { Text(preference.label()) },
-                                            modifier = Modifier.testTag(UiTags.ProfileThemePrefix + preference.name),
-                                        )
-                                    }
+                                SettingsCard {
+                                    ListItem(
+                                        headlineContent = { Text(state.user?.email.orEmpty()) },
+                                        supportingContent = { Text(state.user?.role.orEmpty()) },
+                                        leadingContent = { Icon(Icons.Outlined.PersonOutline, contentDescription = null) },
+                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                    )
                                 }
-                                ListItem(
-                                    headlineContent = { Text(stringResource(R.string.language)) },
-                                    supportingContent = { Text(state.language.label()) },
-                                    leadingContent = { Icon(Icons.Outlined.Language, contentDescription = null) },
-                                    trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { showLanguageDialog = true }
-                                        .testTag(UiTags.ProfileLanguage),
-                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
-                                )
                             }
                         }
                         item {
                             ProfileSection {
-                                SettingsDivider()
-                                SettingsSectionTitle(R.string.notifications)
-                                ListItem(
-                                    headlineContent = { Text(stringResource(R.string.run_completion_notifications)) },
-                                    supportingContent = { Text(stringResource(R.string.run_completion_notifications_subtitle)) },
-                                    leadingContent = { Icon(Icons.Outlined.Notifications, contentDescription = null) },
-                                    trailingContent = {
-                                        Switch(
-                                            checked = state.notifyOnRunCompletion,
-                                            onCheckedChange = onNotifyOnRunCompletionChanged,
-                                            modifier = Modifier.testTag(UiTags.ProfileNotifications),
-                                        )
-                                    },
-                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
-                                )
-                                LiveUpdateSettingsItem()
+                                SettingsSectionTitle(R.string.connection)
+                                SettingsCard {
+                                    ListItem(
+                                        headlineContent = { Text(stringResource(R.string.server_address)) },
+                                        supportingContent = { Text(serverUrl) },
+                                        leadingContent = { Icon(Icons.Outlined.Link, contentDescription = null) },
+                                        trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                        modifier = Modifier.fillMaxWidth().clickable { showServerDialog = true }.testTag(UiTags.ProfileServer),
+                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                    )
+                                    SettingsRowDivider()
+                                    ListItem(
+                                        headlineContent = { Text(stringResource(R.string.channels)) },
+                                        leadingContent = { Icon(Icons.Outlined.Link, contentDescription = null) },
+                                        trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable(onClick = onOpenChannels)
+                                            .testTag(UiTags.ProfileChannels),
+                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                    )
+                                    SettingsRowDivider()
+                                    ListItem(
+                                        headlineContent = { Text(stringResource(R.string.lark_integration)) },
+                                        supportingContent = { Text(stringResource(R.string.lark_integration_subtitle)) },
+                                        leadingContent = { Icon(Icons.Outlined.Extension, contentDescription = null) },
+                                        trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable(onClick = onOpenLarkIntegration)
+                                            .testTag(UiTags.ProfileLarkIntegration),
+                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                    )
+                                }
                             }
                         }
                         item {
                             ProfileSection {
-                                SettingsDivider()
-                                SettingsSectionTitle(R.string.storage)
-                                ArtifactDownloadLimitSlider(
-                                    title = stringResource(R.string.artifact_auto_download_limit),
-                                    summary = stringResource(
-                                        R.string.artifact_auto_download_limit_summary,
-                                        Formatter.formatFileSize(
-                                            LocalContext.current,
-                                            state.artifactDownloadLimits.autoDownloadBytes,
-                                        ),
-                                    ),
-                                    valueBytes = state.artifactDownloadLimits.autoDownloadBytes,
-                                    valueRange = MIN_ARTIFACT_AUTO_DOWNLOAD_BYTES.toFloat()..MAX_ARTIFACT_AUTO_DOWNLOAD_BYTES.toFloat(),
-                                    steps = 0,
-                                    tag = UiTags.ProfileArtifactAutoDownloadLimit,
-                                    onValueChangeFinished = { value ->
-                                        onArtifactDownloadLimitsSelected(
-                                            ArtifactDownloadLimits(
-                                                autoDownloadBytes = value,
-                                                manualDownloadBytes = state.artifactDownloadLimits.manualDownloadBytes,
-                                            ),
-                                        )
-                                    },
-                                )
-                                ArtifactDownloadLimitSlider(
-                                    title = stringResource(R.string.artifact_manual_download_limit),
-                                    summary = stringResource(
-                                        R.string.artifact_manual_download_limit_summary,
-                                        Formatter.formatFileSize(
-                                            LocalContext.current,
-                                            state.artifactDownloadLimits.manualDownloadBytes,
-                                        ),
-                                    ),
-                                    valueBytes = state.artifactDownloadLimits.manualDownloadBytes,
-                                    valueRange = MIN_ARTIFACT_MANUAL_DOWNLOAD_BYTES.toFloat()..MAX_ARTIFACT_DOWNLOAD_BYTES.toFloat(),
-                                    steps = 0,
-                                    tag = UiTags.ProfileArtifactManualDownloadLimit,
-                                    onValueChangeFinished = { value ->
-                                        onArtifactDownloadLimitsSelected(
-                                            ArtifactDownloadLimits(
-                                                autoDownloadBytes = state.artifactDownloadLimits.autoDownloadBytes,
-                                                manualDownloadBytes = value,
-                                            ),
-                                        )
-                                    },
-                                )
-                                ListItem(
-                                    headlineContent = { Text(stringResource(R.string.cached_data)) },
-                                    supportingContent = {
-                                        val size = Formatter.formatShortFileSize(LocalContext.current, state.cacheStats.bytesOnDisk)
-                                        Text(
-                                            if (state.loadingCacheStats) {
-                                                stringResource(R.string.loading)
-                                            } else {
-                                                stringResource(R.string.cache_summary, state.cacheStats.itemCount, size)
-                                            },
-                                        )
-                                    },
-                                    leadingContent = { Icon(Icons.Outlined.Storage, contentDescription = null) },
-                                    trailingContent = {
-                                        IconButton(
-                                            onClick = onRefreshCacheStats,
-                                            enabled = !state.loadingCacheStats && !state.clearingCache,
-                                            modifier = Modifier.size(48.dp).testTag(UiTags.ProfileCacheRefresh),
-                                        ) {
-                                            if (state.loadingCacheStats) {
-                                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                                            } else {
-                                                Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.refresh))
+                                SettingsSectionTitle(R.string.preferences)
+                                SettingsCard {
+                                    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                            ThemePreference.entries.forEachIndexed { index, preference ->
+                                                SegmentedButton(
+                                                    selected = state.theme == preference,
+                                                    onClick = { onThemeSelected(preference) },
+                                                    shape = SegmentedButtonDefaults.itemShape(index, ThemePreference.entries.size),
+                                                    label = { Text(preference.label()) },
+                                                    modifier = Modifier.testTag(UiTags.ProfileThemePrefix + preference.name),
+                                                )
                                             }
                                         }
-                                    },
-                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
-                                )
-                                ListItem(
-                                    headlineContent = { Text(stringResource(R.string.cache_retention)) },
-                                    supportingContent = { Text(state.cacheRetentionPolicy.label()) },
-                                    leadingContent = { Icon(Icons.Outlined.Policy, contentDescription = null) },
-                                    trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { showCachePolicyDialog = true }
-                                        .testTag(UiTags.ProfileCachePolicy),
-                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
-                                )
-                                ListItem(
-                                    headlineContent = { Text(stringResource(R.string.clear_cached_data)) },
-                                    supportingContent = {
-                                        if (state.run.active) Text(stringResource(R.string.clear_cache_run_active))
-                                    },
-                                    leadingContent = { Icon(Icons.Outlined.CleaningServices, contentDescription = null) },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable(enabled = !state.run.active && !state.clearingCache) {
-                                            showClearCacheDialog = true
-                                        }
-                                        .testTag(UiTags.ProfileCacheClear),
-                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
-                                )
+                                    }
+                                    SettingsRowDivider()
+                                    ListItem(
+                                        headlineContent = { Text(stringResource(R.string.language)) },
+                                        supportingContent = { Text(state.language.label()) },
+                                        leadingContent = { Icon(Icons.Outlined.Language, contentDescription = null) },
+                                        trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { showLanguageDialog = true }
+                                            .testTag(UiTags.ProfileLanguage),
+                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                    )
+                                }
                             }
                         }
                         item {
                             ProfileSection {
-                                SettingsDivider()
+                                SettingsSectionTitle(R.string.notifications)
+                                SettingsCard {
+                                    ListItem(
+                                        headlineContent = { Text(stringResource(R.string.run_completion_notifications)) },
+                                        supportingContent = { Text(stringResource(R.string.run_completion_notifications_subtitle)) },
+                                        leadingContent = { Icon(Icons.Outlined.Notifications, contentDescription = null) },
+                                        trailingContent = {
+                                            Switch(
+                                                checked = state.notifyOnRunCompletion,
+                                                onCheckedChange = onNotifyOnRunCompletionChanged,
+                                                modifier = Modifier.testTag(UiTags.ProfileNotifications),
+                                            )
+                                        },
+                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                    )
+                                    SettingsRowDivider()
+                                    LiveUpdateSettingsItem()
+                                }
+                            }
+                        }
+                        item {
+                            ProfileSection {
+                                SettingsSectionTitle(R.string.storage)
+                                SettingsCard {
+                                    ArtifactDownloadLimitSlider(
+                                        title = stringResource(R.string.artifact_auto_download_limit),
+                                        summary = stringResource(
+                                            R.string.artifact_auto_download_limit_summary,
+                                            Formatter.formatFileSize(
+                                                LocalContext.current,
+                                                state.artifactDownloadLimits.autoDownloadBytes,
+                                            ),
+                                        ),
+                                        valueBytes = state.artifactDownloadLimits.autoDownloadBytes,
+                                        valueRange = MIN_ARTIFACT_AUTO_DOWNLOAD_BYTES.toFloat()..MAX_ARTIFACT_AUTO_DOWNLOAD_BYTES.toFloat(),
+                                        steps = 0,
+                                        tag = UiTags.ProfileArtifactAutoDownloadLimit,
+                                        onValueChangeFinished = { value ->
+                                            onArtifactDownloadLimitsSelected(
+                                                ArtifactDownloadLimits(
+                                                    autoDownloadBytes = value,
+                                                    manualDownloadBytes = state.artifactDownloadLimits.manualDownloadBytes,
+                                                ),
+                                            )
+                                        },
+                                    )
+                                    SettingsRowDivider()
+                                    ArtifactDownloadLimitSlider(
+                                        title = stringResource(R.string.artifact_manual_download_limit),
+                                        summary = stringResource(
+                                            R.string.artifact_manual_download_limit_summary,
+                                            Formatter.formatFileSize(
+                                                LocalContext.current,
+                                                state.artifactDownloadLimits.manualDownloadBytes,
+                                            ),
+                                        ),
+                                        valueBytes = state.artifactDownloadLimits.manualDownloadBytes,
+                                        valueRange = MIN_ARTIFACT_MANUAL_DOWNLOAD_BYTES.toFloat()..MAX_ARTIFACT_DOWNLOAD_BYTES.toFloat(),
+                                        steps = 0,
+                                        tag = UiTags.ProfileArtifactManualDownloadLimit,
+                                        onValueChangeFinished = { value ->
+                                            onArtifactDownloadLimitsSelected(
+                                                ArtifactDownloadLimits(
+                                                    autoDownloadBytes = state.artifactDownloadLimits.autoDownloadBytes,
+                                                    manualDownloadBytes = value,
+                                                ),
+                                            )
+                                        },
+                                    )
+                                    SettingsRowDivider()
+                                    ListItem(
+                                        headlineContent = { Text(stringResource(R.string.cached_data)) },
+                                        supportingContent = {
+                                            val size = Formatter.formatShortFileSize(LocalContext.current, state.cacheStats.bytesOnDisk)
+                                            Text(
+                                                if (state.loadingCacheStats) {
+                                                    stringResource(R.string.loading)
+                                                } else {
+                                                    stringResource(R.string.cache_summary, state.cacheStats.itemCount, size)
+                                                },
+                                            )
+                                        },
+                                        leadingContent = { Icon(Icons.Outlined.Storage, contentDescription = null) },
+                                        trailingContent = {
+                                            IconButton(
+                                                onClick = onRefreshCacheStats,
+                                                enabled = !state.loadingCacheStats && !state.clearingCache,
+                                                modifier = Modifier.size(48.dp).testTag(UiTags.ProfileCacheRefresh),
+                                            ) {
+                                                if (state.loadingCacheStats) {
+                                                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                                } else {
+                                                    Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.refresh))
+                                                }
+                                            }
+                                        },
+                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                    )
+                                    SettingsRowDivider()
+                                    ListItem(
+                                        headlineContent = { Text(stringResource(R.string.cache_retention)) },
+                                        supportingContent = { Text(state.cacheRetentionPolicy.label()) },
+                                        leadingContent = { Icon(Icons.Outlined.Policy, contentDescription = null) },
+                                        trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { showCachePolicyDialog = true }
+                                            .testTag(UiTags.ProfileCachePolicy),
+                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                    )
+                                    SettingsRowDivider()
+                                    ListItem(
+                                        headlineContent = { Text(stringResource(R.string.clear_cached_data)) },
+                                        supportingContent = {
+                                            if (state.run.active) Text(stringResource(R.string.clear_cache_run_active))
+                                        },
+                                        leadingContent = { Icon(Icons.Outlined.CleaningServices, contentDescription = null) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable(enabled = !state.run.active && !state.clearingCache) {
+                                                showClearCacheDialog = true
+                                            }
+                                            .testTag(UiTags.ProfileCacheClear),
+                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                    )
+                                }
+                            }
+                        }
+                        item {
+                            ProfileSection {
                                 SettingsSectionTitle(R.string.about_title)
-                                ListItem(
-                                    headlineContent = { Text(stringResource(R.string.about_deerflow)) },
-                                    supportingContent = { Text(stringResource(R.string.version, BuildConfig.VERSION_NAME)) },
-                                    leadingContent = { Icon(Icons.Outlined.Info, contentDescription = null) },
-                                    trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { showAbout = true }
-                                        .testTag(UiTags.ProfileAbout),
-                                    colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
-                                )
-                                SettingsDivider()
-                                OutlinedButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) {
+                                SettingsCard {
+                                    ListItem(
+                                        headlineContent = { Text(stringResource(R.string.about_deerflow)) },
+                                        supportingContent = { Text(stringResource(R.string.version, BuildConfig.VERSION_NAME)) },
+                                        leadingContent = { Icon(Icons.Outlined.Info, contentDescription = null) },
+                                        trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { showAbout = true }
+                                            .testTag(UiTags.ProfileAbout),
+                                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = onSignOut,
+                                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                                ) {
                                     Text(stringResource(R.string.sign_out))
                                 }
                             }
                         }
                     }
                 }
-                GlassTopAppBar(
+                FloatingScreenTopBar(
                     modifier = Modifier
                         .fillMaxWidth()
                         .align(Alignment.TopCenter)
                         .onGloballyPositioned { topBarHeightPx = it.size.height },
-                    navigationIcon = {
-                        IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
-                        }
-                    },
-                    title = { Text(stringResource(R.string.profile_title)) },
+                    title = stringResource(R.string.profile_title),
+                    onBack = onBack,
                 )
             }
         }
@@ -497,7 +514,7 @@ internal fun ProfileContent(
                         onClearCache()
                     },
                     modifier = Modifier.testTag(UiTags.ProfileCacheClearConfirm),
-                ) { Text(stringResource(R.string.clear_cached_data)) }
+                ) { Text(stringResource(R.string.clear_cached_data), color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
                 TextButton(onClick = { showClearCacheDialog = false }) {
@@ -553,55 +570,56 @@ private fun AboutScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            SettingsDivider()
-                            ListItem(
-                                headlineContent = { Text(stringResource(R.string.deerflow_license)) },
-                                supportingContent = { Text(stringResource(R.string.mit_license)) },
-                                leadingContent = { Icon(Icons.Outlined.Policy, contentDescription = null) },
-                                trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable(onClick = onOpenDeerFlowLicense)
-                                    .testTag(UiTags.AboutDeerFlowLicense),
-                                colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
-                            )
-                            ListItem(
-                                headlineContent = { Text(stringResource(R.string.open_source_licenses)) },
-                                supportingContent = { Text(stringResource(R.string.open_source_licenses_subtitle)) },
-                                leadingContent = { Icon(Icons.Outlined.Info, contentDescription = null) },
-                                trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable(onClick = onOpenSourceLicenses)
-                                    .testTag(UiTags.AboutOpenSourceLicenses),
-                                colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
-                            )
-                            ListItem(
-                                headlineContent = { Text(stringResource(R.string.source_code)) },
-                                supportingContent = { Text(SOURCE_CODE_URL) },
-                                leadingContent = { Icon(Icons.Outlined.Code, contentDescription = null) },
-                                trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable(onClick = onOpenSourceCode)
-                                    .testTag(UiTags.AboutSourceCode),
-                                colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
-                            )
+                            Spacer(Modifier.height(16.dp))
+                            SettingsCard {
+                                ListItem(
+                                    headlineContent = { Text(stringResource(R.string.deerflow_license)) },
+                                    supportingContent = { Text(stringResource(R.string.mit_license)) },
+                                    leadingContent = { Icon(Icons.Outlined.Policy, contentDescription = null) },
+                                    trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable(onClick = onOpenDeerFlowLicense)
+                                        .testTag(UiTags.AboutDeerFlowLicense),
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                )
+                                SettingsRowDivider()
+                                ListItem(
+                                    headlineContent = { Text(stringResource(R.string.open_source_licenses)) },
+                                    supportingContent = { Text(stringResource(R.string.open_source_licenses_subtitle)) },
+                                    leadingContent = { Icon(Icons.Outlined.Info, contentDescription = null) },
+                                    trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable(onClick = onOpenSourceLicenses)
+                                        .testTag(UiTags.AboutOpenSourceLicenses),
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                )
+                                SettingsRowDivider()
+                                ListItem(
+                                    headlineContent = { Text(stringResource(R.string.source_code)) },
+                                    supportingContent = { Text(SOURCE_CODE_URL) },
+                                    leadingContent = { Icon(Icons.Outlined.Code, contentDescription = null) },
+                                    trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable(onClick = onOpenSourceCode)
+                                        .testTag(UiTags.AboutSourceCode),
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                )
+                            }
                         }
                     }
                 }
             }
-            GlassTopAppBar(
+            FloatingScreenTopBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
                     .onGloballyPositioned { topBarHeightPx = it.size.height },
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp).testTag(UiTags.AboutBack)) {
-                        Icon(Icons.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
-                    }
-                },
-                title = { Text(stringResource(R.string.about_title)) },
+                title = stringResource(R.string.about_title),
+                onBack = onBack,
+                backModifier = Modifier.testTag(UiTags.AboutBack),
             )
         }
     }
@@ -667,17 +685,13 @@ private fun ThirdPartyLicensesScreen(onBack: () -> Unit, contentPadding: Padding
                     }
                 }
             }
-            GlassTopAppBar(
+            FloatingScreenTopBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
                     .onGloballyPositioned { topBarHeightPx = it.size.height },
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
-                    }
-                },
-                title = { Text(stringResource(R.string.open_source_licenses)) },
+                title = stringResource(R.string.open_source_licenses),
+                onBack = onBack,
             )
         }
     }
@@ -704,7 +718,7 @@ private fun LiveUpdateSettingsItem() {
                     .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
             )
         },
-        colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
     )
 }
 
@@ -727,6 +741,7 @@ private fun <T> SingleChoiceDialog(
                     ListItem(
                         headlineContent = { Text(label(value)) },
                         leadingContent = { RadioButton(selected = selected == value, onClick = null) },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         modifier = Modifier
                             .fillMaxWidth()
                             .selectable(selected = selected == value, onClick = { onSelect(value) })
@@ -786,12 +801,28 @@ private fun ProfileSection(content: @Composable () -> Unit) {
 
 @Composable
 private fun SettingsSectionTitle(resourceId: Int) {
-    Text(stringResource(resourceId), style = MaterialTheme.typography.titleMedium)
+    Text(
+        stringResource(resourceId),
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 8.dp),
+    )
+}
+
+/** Grouped glass settings card: one frosted rounded panel per settings section. */
+@Composable
+private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassFrosted(MaterialTheme.shapes.medium),
+        content = content,
+    )
 }
 
 @Composable
-private fun SettingsDivider() {
-    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+private fun SettingsRowDivider() {
+    HorizontalDivider(Modifier.padding(horizontal = 16.dp))
 }
 
 @Composable

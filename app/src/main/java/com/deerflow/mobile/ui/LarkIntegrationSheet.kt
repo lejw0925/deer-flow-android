@@ -17,12 +17,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -143,7 +144,7 @@ internal fun LarkIntegrationContent(
 
                     !status.installed -> {
                         if (isAdmin) {
-                            FilledTonalButton(
+                            Button(
                                 onClick = onInstall,
                                 enabled = !busy,
                                 modifier = Modifier.testTag(UiTags.LarkInstall),
@@ -175,7 +176,7 @@ internal fun LarkIntegrationContent(
                                 )
                             }
                         }
-                        FilledTonalButton(
+                        Button(
                             onClick = { onStartConfiguration(brand) },
                             enabled = !busy,
                             modifier = Modifier.testTag(UiTags.LarkStartConfiguration),
@@ -184,7 +185,7 @@ internal fun LarkIntegrationContent(
 
                     status.appConfigured && !status.auth.authenticated && verification?.kind != LarkVerificationKind.Authorization -> {
                         Text(stringResource(R.string.lark_authorization), style = MaterialTheme.typography.titleSmall)
-                        FilledTonalButton(
+                        Button(
                             onClick = onStartAuthorization,
                             enabled = !busy,
                             modifier = Modifier.testTag(UiTags.LarkStartAuthorization),
@@ -251,7 +252,7 @@ private fun VerificationActions(
             Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilledTonalButton(
+            OutlinedButton(
                 onClick = { onOpenUrl(flow.verificationUrl) },
                 enabled = !busy,
                 modifier = Modifier.testTag(UiTags.LarkOpenVerification),

@@ -3,7 +3,14 @@ package com.deerflow.mobile.ui.glass
 import android.os.Build
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CornerBasedShape
@@ -47,6 +54,8 @@ import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
 import kotlinx.coroutines.launch
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * Liquid Glass foundation built on Kyant0's Backdrop library.
@@ -87,16 +96,16 @@ private fun defaultGlassTints(dark: Boolean, surfaceContainerHigh: Color): Glass
     if (dark) {
         GlassTints(
             surface = Color.Black.copy(alpha = 0.32f),
-            veil = Color.Black.copy(alpha = 0.44f),
-            frosted = surfaceContainerHigh.copy(alpha = 0.72f),
+            veil = Color.Black.copy(alpha = 0.52f),
+            frosted = surfaceContainerHigh.copy(alpha = 0.80f),
             frostedBorder = Color.White.copy(alpha = 0.16f),
             fallback = surfaceContainerHigh.copy(alpha = 0.96f),
         )
     } else {
         GlassTints(
             surface = Color.White.copy(alpha = 0.55f),
-            veil = Color.White.copy(alpha = 0.68f),
-            frosted = surfaceContainerHigh.copy(alpha = 0.82f),
+            veil = Color.White.copy(alpha = 0.74f),
+            frosted = surfaceContainerHigh.copy(alpha = 0.88f),
             frostedBorder = Color.White.copy(alpha = 0.40f),
             fallback = surfaceContainerHigh.copy(alpha = 0.94f),
         )
@@ -148,45 +157,107 @@ fun Modifier.brushTint(brush: Brush): Modifier = this
         drawRect(brush, blendMode = BlendMode.SrcIn)
     }
 
+/** Sci-fi accent for the aurora's roaming core glow (complements Gemini blue). */
+private val AuroraCyan = Color(0xFF4EC8D8)
+
+private const val AURORA_TWO_PI = 6.2831855f
+
 /**
  * The visible Gemini-style aurora: a neutral background wash with soft
- * blue/violet/pink radial glows. Drawn as real content (first child of the
- * recorded layer) so both the screen and the glass sampling see it.
+ * blue/violet/pink radial glows that slowly drift and pulse ("breathing"),
+ * plus a faint cyan roaming core for a sci-fi depth cue. Drawn as real
+ * content (first child of the recorded layer) so both the screen and the
+ * glass sampling see it. All animation values are read inside the draw block,
+ * so the animation invalidates drawing only, never composition.
  */
 @Composable
 fun GeminiAuroraBackground(modifier: Modifier = Modifier) {
     val background = MaterialTheme.colorScheme.background
     val dark = background.luminance() < 0.5f
-    val glowAlphas = if (dark) {
-        Triple(0.50f, 0.38f, 0.28f)
-    } else {
-        Triple(0.38f, 0.30f, 0.22f)
-    }
+    val transition = rememberInfiniteTransition(label = "aurora")
+    // Slow, differently-perioded loops; the phase offsets between glows fall
+    // out of the mismatched durations, so paths never visibly repeat.
+    val driftA = transition.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(28000, easing = LinearEasing), RepeatMode.Restart),
+        "driftA",
+    )
+    val driftB = transition.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(37000, easing = LinearEasing), RepeatMode.Restart),
+        "driftB",
+    )
+    val driftC = transition.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(46000, easing = LinearEasing), RepeatMode.Restart),
+        "driftC",
+    )
+    val breathA = transition.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(7000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        "breathA",
+    )
+    val breathB = transition.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(9500, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        "breathB",
+    )
+    val breathC = transition.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(12000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        "breathC",
+    )
     Box(
         modifier.drawBehind {
             drawRect(background)
+            val w = size.width
+            val h = size.height
+            val maxDim = size.maxDimension
+            val aA = driftA.value * AURORA_TWO_PI
+            val aB = driftB.value * AURORA_TWO_PI
+            val aC = driftC.value * AURORA_TWO_PI
+            val pA = breathA.value
+            val pB = breathB.value
+            val pC = breathC.value
+            val alphaScale = if (dark) 1f else 0.72f
+
+            // Blue: roams a wide arc across the upper half.
             drawRect(
                 Brush.radialGradient(
-                    0f to GeminiColors.Blue.copy(alpha = glowAlphas.first),
+                    0f to GeminiColors.Blue.copy(alpha = (0.34f + 0.18f * pA) * alphaScale),
                     1f to Color.Transparent,
-                    center = Offset(size.width * 0.12f, size.height * 0.02f),
-                    radius = size.maxDimension * 0.75f,
+                    center = Offset(w * (0.5f + 0.44f * cos(aA)), h * (0.14f + 0.12f * sin(aA))),
+                    radius = maxDim * (0.72f + 0.10f * pB),
                 ),
             )
+            // Violet: right side, slow vertical sweep.
             drawRect(
                 Brush.radialGradient(
-                    0f to GeminiColors.Violet.copy(alpha = glowAlphas.second),
+                    0f to GeminiColors.Violet.copy(alpha = (0.26f + 0.14f * pB) * alphaScale),
                     1f to Color.Transparent,
-                    center = Offset(size.width * 0.95f, size.height * 0.45f),
-                    radius = size.maxDimension * 0.7f,
+                    center = Offset(w * (0.86f + 0.12f * cos(aB)), h * (0.42f + 0.24f * sin(aB))),
+                    radius = maxDim * (0.66f + 0.10f * pC),
                 ),
             )
+            // Pink: bottom-left, breathing near the composer.
             drawRect(
                 Brush.radialGradient(
-                    0f to GeminiColors.Pink.copy(alpha = glowAlphas.third),
+                    0f to GeminiColors.Pink.copy(alpha = (0.20f + 0.10f * pC) * alphaScale),
                     1f to Color.Transparent,
-                    center = Offset(size.width * 0.1f, size.height * 0.98f),
-                    radius = size.maxDimension * 0.7f,
+                    center = Offset(w * (0.16f + 0.16f * cos(aC)), h * (0.92f + 0.08f * sin(aC))),
+                    radius = maxDim * (0.62f + 0.08f * pA),
+                ),
+            )
+            // Cyan: faint roaming core, the sci-fi depth cue.
+            drawRect(
+                Brush.radialGradient(
+                    0f to AuroraCyan.copy(alpha = (0.10f + 0.06f * pB) * alphaScale),
+                    1f to Color.Transparent,
+                    center = Offset(
+                        w * (0.5f + 0.30f * cos(aB * 0.5f + aC)),
+                        h * (0.55f + 0.20f * sin(aC * 0.7f)),
+                    ),
+                    radius = maxDim * (0.50f + 0.08f * pA),
                 ),
             )
         },

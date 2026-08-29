@@ -4,6 +4,9 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -43,6 +46,17 @@ class MemoryScreenTest {
 
         compose.onNodeWithTag(UiTags.MemoryFilterPrefix + "summaries").performClick()
         compose.onNodeWithText("Builds Android apps").assertIsDisplayed()
+    }
+
+    @Test
+    fun summaryRowOpensDetailSheetWithFullText() {
+        setMemoryContent()
+
+        compose.onNode(
+            hasClickAction() and hasAnyDescendant(hasText("Builds Android apps")),
+            useUnmergedTree = true,
+        ).performClick()
+        compose.onNodeWithTag(UiTags.MemorySummaryDetail).assertIsDisplayed()
     }
 
     @Test

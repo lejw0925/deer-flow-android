@@ -4,7 +4,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -26,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -113,10 +117,17 @@ fun GlassMenuOverlayHost(state: GlassMenuHostState, modifier: Modifier = Modifie
             .onGloballyPositioned { overlayBounds = it.boundsInRoot() },
     ) {
         // Modal scrim: consumes every outside press (blocking scroll-through)
-        // and dismisses on tap.
+        // and dismisses on tap. A faint theme-adaptive fill separates the panel
+        // from busy content behind it.
+        val scrimColor = if (isSystemInDarkTheme()) {
+            Color.Black.copy(alpha = 0.12f)
+        } else {
+            Color.White.copy(alpha = 0.16f)
+        }
         Box(
             Modifier
                 .fillMaxSize()
+                .background(scrimColor)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -213,7 +224,10 @@ internal fun HostedGlassDropdownMenu(
 ) {
     val entry = remember(host) { GlassMenuEntry() }
     entry.onDismiss = onDismissRequest
-    entry.panelModifier = modifier
+    // The overlay gives the panel the full screen as its max width constraint,
+    // and items use fillMaxWidth — without a Material-style cap the panel would
+    // stretch edge-to-edge (112/280.dp mirrors DropdownMenu's min/max width).
+    entry.panelModifier = Modifier.widthIn(min = 112.dp, max = 280.dp).then(modifier)
     entry.panelShape = shape
     entry.content = content
     BackHandler(enabled = expanded) { onDismissRequest() }

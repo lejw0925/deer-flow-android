@@ -19,9 +19,6 @@ import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarData
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarColors
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -29,7 +26,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.clickable
@@ -46,37 +42,13 @@ import com.kyant.backdrop.shadow.Shadow
  * Interactive elements (buttons, chips) carry the full liquid treatment from
  * the Backdrop catalog: ambient edge highlight, soft drop shadow, press-driven
  * inner shadow, and a radial glow that follows the finger.
+ *
+ * Screen headers use the floating style ([com.deerflow.mobile.ui.FloatingScreenTopBar]
+ * + [GlassIconButton]) — no full-width glass bar.
  */
-
-private val transparentBarColors: TopAppBarColors
-    @Composable
-    get() = TopAppBarDefaults.topAppBarColors(
-        containerColor = Color.Transparent,
-        scrolledContainerColor = Color.Transparent,
-    )
 
 /** Soft shadow lifting floating glass off the recorded content. */
 internal fun glassShadow(): Shadow = Shadow(radius = 8.dp, color = Color.Black.copy(alpha = 0.08f))
-
-/** Floating glass top bar; meant to overlay the recorded content layer. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun GlassTopAppBar(
-    title: @Composable () -> Unit,
-    modifier: Modifier = Modifier,
-    navigationIcon: @Composable () -> Unit = {},
-    actions: @Composable RowScope.() -> Unit = {},
-) {
-    TopAppBar(
-        title = title,
-        modifier = modifier
-            .glass(shape = RectangleShape, tint = rememberGlassTints().veil)
-            .glassEdge(RectangleShape),
-        navigationIcon = navigationIcon,
-        actions = actions,
-        colors = transparentBarColors,
-    )
-}
 
 /** Modal bottom sheet whose body is a glass panel over the underlying content. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -85,9 +57,13 @@ fun GlassModalBottomSheet(
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
     sheetState: SheetState = rememberModalBottomSheetState(),
+    tint: Color? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    // Sheets cannot sample the recorded backdrop (own dialog window); use the
+    // frosted tint so they still read as translucent glass over the scrim.
+    val sheetTint = tint ?: rememberGlassTints().frosted
     ModalBottomSheet(
         onDismissRequest = onDismissRequest,
         modifier = modifier,
@@ -97,12 +73,9 @@ fun GlassModalBottomSheet(
         contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 0.dp,
     ) {
-        // ModalBottomSheet renders in its own dialog window, where the recorded
-        // backdrop is unreachable (same constraint as popup menus): the frosted
-        // fill + glass edge reads as glass instead of an empty sample.
         Column(
             Modifier
-                .glassFrosted(shape = sheetShape, borderColor = Color.Transparent)
+                .glassFrosted(shape = sheetShape, tint = sheetTint)
                 .glassEdge(sheetShape),
         ) {
             content()
@@ -189,7 +162,7 @@ fun GlassIconButton(
     val glow = remember(scope) { InteractiveHighlight(scope) }
     Box(
         modifier
-            .size(44.dp)
+            .size(48.dp)
             .glass(
                 shape = CircleShape,
                 tint = tint,

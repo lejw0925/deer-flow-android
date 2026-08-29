@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.ArrowBack
@@ -28,9 +27,7 @@ import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.LoadingIndicator
@@ -41,7 +38,6 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -54,6 +50,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -67,15 +64,15 @@ import com.deerflow.mobile.data.MemorySection
 import com.deerflow.mobile.ui.glass.GlassAlertDialog
 import com.deerflow.mobile.ui.glass.GlassDropdownMenu
 import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
+import com.deerflow.mobile.ui.glass.GlassIconButton
 import com.deerflow.mobile.ui.glass.GlassMenuItem
 import com.deerflow.mobile.ui.glass.GlassMenuOverlayHost
 import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
-import com.deerflow.mobile.ui.glass.GlassTopAppBar
 import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
 import com.deerflow.mobile.ui.glass.LocalGlassMenuHost
 import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
 import com.deerflow.mobile.ui.glass.rememberGlassMenuHostState
-import com.deerflow.mobile.ui.glass.rememberGlassTints
+import com.deerflow.mobile.ui.glass.glassFrosted
 import com.kyant.backdrop.backdrops.layerBackdrop
 import java.text.NumberFormat
 
@@ -92,6 +89,7 @@ fun MemoryScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var filterName by rememberSaveable { mutableStateOf(MemoryFilter.All.name) }
     var selectedFact by remember { mutableStateOf<MemoryFact?>(null) }
+    var selectedSummary by remember { mutableStateOf<MemorySummaryItem?>(null) }
     var editingFact by remember { mutableStateOf<MemoryFact?>(null) }
     var showEditor by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<MemoryFact?>(null) }
@@ -113,7 +111,12 @@ fun MemoryScreen(
                 GeminiAuroraBackground(Modifier.fillMaxSize())
                 Column(Modifier.fillMaxSize().padding(top = topBarHeight)) {
                     if (state.offline && state.memory != null) {
-                        Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp)
+                                .glassFrosted(MaterialTheme.shapes.small),
+                        ) {
                             Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) { OfflineBanner() }
                         }
                     }
@@ -137,60 +140,55 @@ fun MemoryScreen(
                             filter = filter,
                             onFilterChange = { filterName = it.name },
                             onSelectFact = { selectedFact = it },
+                            onSelectSummary = { selectedSummary = it },
                         )
                     }
                 }
             }
-            GlassTopAppBar(
+            FloatingScreenTopBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.TopCenter)
                     .onGloballyPositioned { topBarHeightPx = it.size.height },
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
-                    }
-                },
-                title = { Text(stringResource(R.string.memory_title)) },
-                actions = {
-                    IconButton(
-                        onClick = { editingFact = null; showEditor = true },
-                        enabled = !state.memoryMutationBusy,
-                        modifier = Modifier.size(48.dp).testTag(UiTags.MemoryAddFact),
+                title = stringResource(R.string.memory_title),
+                onBack = onBack,
+            ) {
+                GlassIconButton(
+                    onClick = { editingFact = null; showEditor = true },
+                    enabled = !state.memoryMutationBusy,
+                    modifier = Modifier.testTag(UiTags.MemoryAddFact),
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.memory_add_fact))
+                }
+                GlassIconButton(onClick = onRefresh, enabled = !state.loadingMemory) {
+                    Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.refresh))
+                }
+                Box {
+                    GlassIconButton(
+                        onClick = { menuExpanded = true },
+                        modifier = Modifier.testTag(UiTags.MemoryMoreActions),
                     ) {
-                        Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.memory_add_fact))
+                        Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.more_actions))
                     }
-                    IconButton(onClick = onRefresh, enabled = !state.loadingMemory, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.refresh))
-                    }
-                    Box {
-                        IconButton(
-                            onClick = { menuExpanded = true },
-                            modifier = Modifier.size(48.dp).testTag(UiTags.MemoryMoreActions),
-                        ) {
-                            Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.more_actions))
-                        }
-                        GlassDropdownMenu(
-                            expanded = menuExpanded,
-                            onDismissRequest = { menuExpanded = false },
-                            shape = RoundedCornerShape(20.dp),
-                        ) {
-                            Column {
-                                GlassMenuItem(
-                                    text = { Text(stringResource(R.string.memory_clear_all), color = MaterialTheme.colorScheme.error) },
-                                    leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-                                    enabled = state.memory?.isEmpty == false && !state.memoryMutationBusy,
-                                    onClick = {
-                                        menuExpanded = false
-                                        showClearConfirmation = true
-                                    },
-                                    modifier = Modifier.testTag(UiTags.MemoryClearAction),
-                                )
-                            }
+                    GlassDropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false },
+                    ) {
+                        Column {
+                            GlassMenuItem(
+                                text = { Text(stringResource(R.string.memory_clear_all), color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                enabled = state.memory?.isEmpty == false && !state.memoryMutationBusy,
+                                onClick = {
+                                    menuExpanded = false
+                                    showClearConfirmation = true
+                                },
+                                modifier = Modifier.testTag(UiTags.MemoryClearAction),
+                            )
                         }
                     }
-                },
-            )
+                }
+            }
             GlassMenuOverlayHost(menuHost, Modifier.fillMaxSize())
         }
     }
@@ -209,6 +207,10 @@ fun MemoryScreen(
                 selectedFact = null
             },
         )
+    }
+
+    selectedSummary?.let { item ->
+        MemorySummaryDetailSheet(item = item, onDismiss = { selectedSummary = null })
     }
 
     if (showEditor) {
@@ -266,6 +268,7 @@ private fun MemoryContent(
     filter: MemoryFilter,
     onFilterChange: (MemoryFilter) -> Unit,
     onSelectFact: (MemoryFact) -> Unit,
+    onSelectSummary: (MemorySummaryItem) -> Unit,
 ) {
     val normalizedQuery = query.trim().lowercase()
     val userSummaries = listOf(
@@ -321,11 +324,12 @@ private fun MemoryContent(
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(vertical = 12.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item {
                 Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                    Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(stringResource(R.string.memory_version, memory.version), style = MaterialTheme.typography.labelLarge)
@@ -336,11 +340,11 @@ private fun MemoryContent(
             }
             if (showSummaries && userSummaries.isNotEmpty()) {
                 item { MemorySectionHeader(stringResource(R.string.memory_user_context)) }
-                items(userSummaries, key = { "user-${it.title}" }) { MemorySummaryRow(it) }
+                items(userSummaries, key = { "user-${it.title}" }) { MemorySummaryRow(it, onClick = { onSelectSummary(it) }) }
             }
             if (showSummaries && historySummaries.isNotEmpty()) {
                 item { MemorySectionHeader(stringResource(R.string.memory_history)) }
-                items(historySummaries, key = { "history-${it.title}" }) { MemorySummaryRow(it) }
+                items(historySummaries, key = { "history-${it.title}" }) { MemorySummaryRow(it, onClick = { onSelectSummary(it) }) }
             }
             if (showFacts && facts.isNotEmpty()) {
                 item { MemorySectionHeader(stringResource(R.string.memory_facts_count, facts.size)) }
@@ -358,12 +362,12 @@ private fun MemorySectionHeader(title: String) {
         text = title,
         style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 12.dp),
     )
 }
 
 @Composable
-private fun MemorySummaryRow(item: MemorySummaryItem) {
+private fun MemorySummaryRow(item: MemorySummaryItem, onClick: () -> Unit) {
     ListItem(
         headlineContent = { Text(item.title) },
         supportingContent = {
@@ -371,6 +375,8 @@ private fun MemorySummaryRow(item: MemorySummaryItem) {
                 Text(
                     item.section.summary.ifBlank { stringResource(R.string.memory_summary_empty) },
                     color = if (item.section.summary.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 item.section.updatedAt.takeIf { it.isNotBlank() }?.let {
                     Spacer(Modifier.height(4.dp))
@@ -378,10 +384,42 @@ private fun MemorySummaryRow(item: MemorySummaryItem) {
                 }
             }
         },
-        modifier = Modifier.fillMaxWidth(),
-        colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassFrosted(MaterialTheme.shapes.medium)
+            .clickable(onClick = onClick)
+            .testTag(UiTags.MemorySummaryPrefix + item.title),
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
     )
-    HorizontalDivider(Modifier.padding(horizontal = 20.dp))
+}
+
+/** Read-only full text of a memory summary section (rows truncate to 3 lines). */
+@Composable
+private fun MemorySummaryDetailSheet(item: MemorySummaryItem, onDismiss: () -> Unit) {
+    GlassModalBottomSheet(onDismissRequest = onDismiss) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().testTag(UiTags.MemorySummaryDetail),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+        ) {
+            item {
+                Text(item.title, style = MaterialTheme.typography.titleLarge)
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    item.section.summary.ifBlank { stringResource(R.string.memory_summary_empty) },
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                item.section.updatedAt.takeIf { it.isNotBlank() }?.let {
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        it.toDisplayTime(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.height(28.dp))
+            }
+        }
+    }
 }
 
 @Composable
@@ -397,11 +435,11 @@ private fun MemoryFactRow(fact: MemoryFact, onClick: () -> Unit) {
         trailingContent = { Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(R.string.memory_open_fact)) },
         modifier = Modifier
             .fillMaxWidth()
-            .testTag("${UiTags.MemoryFactPrefix}${fact.id}")
-            .clickable(onClick = onClick),
-        colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
+            .glassFrosted(MaterialTheme.shapes.medium)
+            .clickable(onClick = onClick)
+            .testTag("${UiTags.MemoryFactPrefix}${fact.id}"),
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
     )
-    HorizontalDivider(Modifier.padding(horizontal = 20.dp))
 }
 
 @Composable

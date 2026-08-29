@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Add
@@ -57,11 +58,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.deerflow.mobile.R
@@ -73,15 +76,15 @@ import com.deerflow.mobile.data.onceScheduleFor
 import com.deerflow.mobile.data.parseOnceSchedule
 import com.deerflow.mobile.ui.glass.GlassDropdownMenu
 import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
+import com.deerflow.mobile.ui.glass.GlassIconButton
+import com.deerflow.mobile.ui.glass.glassFrosted
 import com.deerflow.mobile.ui.glass.GlassMenuItem
 import com.deerflow.mobile.ui.glass.GlassMenuOverlayHost
 import com.deerflow.mobile.ui.glass.GlassModalBottomSheet
-import com.deerflow.mobile.ui.glass.GlassTopAppBar
 import com.deerflow.mobile.ui.glass.LocalGlassBackdrop
 import com.deerflow.mobile.ui.glass.LocalGlassMenuHost
 import com.deerflow.mobile.ui.glass.rememberGlassBackdrop
 import com.deerflow.mobile.ui.glass.rememberGlassMenuHostState
-import com.deerflow.mobile.ui.glass.rememberGlassTints
 import com.kyant.backdrop.backdrops.layerBackdrop
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -107,6 +110,27 @@ fun TasksScreen(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit, 
                         icon = { Icon(Icons.Outlined.Schedule, contentDescription = null, modifier = Modifier.size(46.dp), tint = MaterialTheme.colorScheme.primary) },
                         title = stringResource(R.string.no_tasks),
                         body = stringResource(R.string.no_tasks_body),
+                        action = {
+                            // Inside the recorded backdrop layer: frosted fill only —
+                            // a sampling Modifier.glass here would record itself and
+                            // crash RenderThread (transform recursion stack overflow).
+                            Row(
+                                Modifier
+                                    .testTag(UiTags.TasksEmptyCreate)
+                                    .glassFrosted(CircleShape)
+                                    .clickable(
+                                        enabled = !state.workspaceMutationBusy,
+                                        role = Role.Button,
+                                    ) { creating = true }
+                                    .padding(horizontal = 24.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(Icons.Filled.Add, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text(stringResource(R.string.create_task))
+                            }
+                        },
                     )
                     else -> LazyColumn(
                         modifier = Modifier.fillMaxSize(),
@@ -129,23 +153,18 @@ fun TasksScreen(state: AppUiState, viewModel: AppViewModel, onBack: () -> Unit, 
                     }
                 }
             }
-            GlassTopAppBar(
+            FloatingScreenTopBar(
                 modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter).onGloballyPositioned { topBarHeightPx = it.size.height },
-                navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Outlined.ArrowBack, contentDescription = stringResource(R.string.back))
-                    }
-                },
-                title = { Text(stringResource(R.string.tasks_title)) },
-                actions = {
-                    IconButton(onClick = { creating = true }, enabled = !state.workspaceMutationBusy, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.create_task))
-                    }
-                    IconButton(onClick = viewModel::refreshTasks, enabled = !state.loadingTasks, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.refresh))
-                    }
-                },
-            )
+                title = stringResource(R.string.tasks_title),
+                onBack = onBack,
+            ) {
+                GlassIconButton(onClick = { creating = true }, enabled = !state.workspaceMutationBusy) {
+                    Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.create_task))
+                }
+                GlassIconButton(onClick = viewModel::refreshTasks, enabled = !state.loadingTasks) {
+                    Icon(Icons.Outlined.Refresh, contentDescription = stringResource(R.string.refresh))
+                }
+            }
             GlassMenuOverlayHost(menuHost, Modifier.fillMaxSize())
         }
     }
@@ -259,8 +278,11 @@ internal fun TaskRow(
                 }
             }
         },
-        modifier = Modifier.fillMaxWidth().testTag(UiTags.TaskRowPrefix + task.id),
-        colors = ListItemDefaults.colors(containerColor = rememberGlassTints().frosted),
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassFrosted(MaterialTheme.shapes.medium)
+            .testTag(UiTags.TaskRowPrefix + task.id),
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
     )
 }
 
@@ -338,6 +360,7 @@ private fun TaskRunList(
                                 description = stringResource(R.string.status_description, taskRunStatusLabel(run.status)),
                             )
                         },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         modifier = Modifier.fillMaxWidth()
                             .clickable { onSelect(run) }
                             .testTag(UiTags.TaskRunPrefix + run.id),
