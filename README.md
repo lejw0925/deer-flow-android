@@ -31,6 +31,15 @@
   </tr>
 </table>
 
+### 2.0.0 liquid glass details / 2.0.0 液态玻璃细节
+
+<table>
+  <tr>
+    <td width="50%" align="center"><img src="docs/images/2.0.0-memory.png" alt="DeerFlow memory page with frosted glass cards and the floating liquid-glass tab bar" width="100%" /><br /><sub>Memory: glass cards + floating glass tabs / 记忆：玻璃卡片 + 悬浮玻璃标签栏</sub></td>
+    <td width="50%" align="center"><img src="docs/images/2.0.0-skills.png" alt="DeerFlow skills page as a standalone screen with the liquid-glass tab bar" width="100%" /><br /><sub>Skills page with glass tabs / 技能独立页 + 玻璃标签栏</sub></td>
+  </tr>
+</table>
+
 ### 1.1.7 interaction details / 1.1.7 交互细节
 
 <table>
@@ -44,9 +53,9 @@
   </tr>
 </table>
 
-> Screenshots were captured from a debug build on an Android emulator with the repository's local mock Gateway. The data is fixture data only.
+> Screenshots were captured from a debug build running on a real device (iQOO V2520A, Android 16) connected to a self-hosted Gateway. The 1.1.7 set came from the emulator + mock Gateway.
 >
-> 截图来自 Android 模拟器上的 Debug 构建，连接仓库内置的本地 Mock Gateway；展示数据仅为测试数据。
+> 截图来自真机（iQOO V2520A，Android 16）上的 Debug 构建，连接自托管 Gateway；1.1.7 组图来自模拟器 + Mock Gateway。
 
 <a id="chinese"></a>
 
@@ -79,6 +88,13 @@ DeerFlow Android 是 DeerFlow 工作区的原生 Android 客户端，而不是 W
 
 - **多文件回传**：助手消息中的多个产物文件收拢为单行横向列表，可左右滑动浏览并打开目标文件，避免长文件列表挤占对话空间。
 - **系统分享预填草稿**：可从其他应用向 DeerFlow 分享文本或文件；应用会创建新的本地会话草稿并预填内容，保留由用户手动发送的控制权。
+
+### 2.0.0 更新
+
+- **液态玻璃 2.0**：全量真实采样玻璃重构——记忆/任务/智能体/设置列表卡片、底部抽屉（组合内渲染，可折射背后会话内容）、官方 LiquidBottomTabs 三层结构的悬浮玻璃标签栏（选中项透镜放大折射 + 色散），技能改为独立页面。
+- **流式性能**：Markdown 流式跳过全文重解析、块解析追加快路径、RunService 同步 IPC 合帧、持久化增量 upsert、图片 LRU 缓存与降采样。
+- **动效与功耗**：极光背景 144s 无缝循环 + 前台/可见性门控 + 30fps 节流（空闲 CPU 由 ~110% 降至 24-45%，后台归零）；StreaminReveal 模糊分档缓存；小玻璃按钮色散仅按压时启用。
+- **阅读体验**：记忆/任务列表玻璃卡片化、记忆摘要详情、抽屉选中会话玻璃胶囊与紧凑时间戳、消息按角色重新着色。
 
 ### 1.1.1 更新
 
