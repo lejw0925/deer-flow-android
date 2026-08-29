@@ -55,7 +55,44 @@ fun ProvideMarkdownImageContext(
     CompositionLocalProvider(LocalMarkdownImageContext provides context, content = content)
 }
 
-private val bitmapCache = ConcurrentHashMap<String, Bitmap>()
+/**
+ * Bounded LRU: chat messages can embed many photos and nothing evicted here
+ * before, so a long session grew without limit (full-resolution decodes).
+ * ~48 full-screen ARGB_8888 bitmaps ≈ 96MB ceiling on the density-scaled
+ * dimension cap below; decode bounds are also sampled down to it.
+ */
+private const val MAX_IMAGE_DIMENSION = 1600
+private val bitmapCache = object : LinkedHashMap<String, Bitmap>(16, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>?): Boolean =
+        size > 48
+}
+private val bitmapCacheLock = Any()
+
+private fun cacheBitmap(url: String, bitmap: Bitmap): Bitmap = synchronized(bitmapCacheLock) {
+    bitmapCache[url] = bitmap
+    bitmap
+}
+
+private fun cachedBitmap(url: String): Bitmap? = synchronized(bitmapCacheLock) { bitmapCache[url] }
+
+/** Two-pass decode: bounds first, then downsample so max(w, h) fits [MAX_IMAGE_DIMENSION]. */
+private fun decodeSampled(bytes: ByteArray?, streamFactory: (() -> java.io.InputStream)?): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    if (bytes != null) {
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    } else {
+        streamFactory!!().use { BitmapFactory.decodeStream(it, null, bounds) }
+    }
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    var sample = 1
+    while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= MAX_IMAGE_DIMENSION) sample *= 2
+    val options = BitmapFactory.Options().apply { inSampleSize = sample }
+    return if (bytes != null) {
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+    } else {
+        streamFactory!!().use { BitmapFactory.decodeStream(it, null, options) }
+    }
+}
 private val imageHttpClient: OkHttpClient by lazy {
     OkHttpClient.Builder().build()
 }
@@ -130,10 +167,9 @@ internal fun MarkdownMessageImage(
 
 /** Shared by Markdown and Browser Live so both use the authenticated WebView cookie jar. */
 internal fun loadCachedDisplayBitmap(url: String): Bitmap? {
-    bitmapCache[url]?.let { return it }
+    cachedBitmap(url)?.let { return it }
     val loaded = loadMarkdownBitmap(url) ?: return null
-    bitmapCache.putIfAbsent(url, loaded)
-    return bitmapCache[url] ?: loaded
+    return cacheBitmap(url, loaded)
 }
 
 private fun loadMarkdownBitmap(url: String): Bitmap? = runCatching {
@@ -141,7 +177,7 @@ private fun loadMarkdownBitmap(url: String): Bitmap? = runCatching {
         val comma = url.indexOf(',')
         if (comma < 0) return null
         val bytes = Base64.decode(url.substring(comma + 1), Base64.DEFAULT)
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        return decodeSampled(bytes, null)
     }
     val requestBuilder = Request.Builder().url(url).get()
     CookieManager.getInstance().getCookie(url)?.let { cookie ->
@@ -149,9 +185,10 @@ private fun loadMarkdownBitmap(url: String): Bitmap? = runCatching {
     }
     imageHttpClient.newCall(requestBuilder.build()).execute().use { response ->
         if (!response.isSuccessful) return null
-        response.body?.byteStream()?.use { stream ->
-            BitmapFactory.decodeStream(stream)
-        }
+        val body = response.body ?: return null
+        // Two passes need two streams: buffer the bytes once, then decode twice.
+        val bytes = body.byteStream().use { it.readBytes() }
+        decodeSampled(bytes, null)
     }
 }.getOrNull()
 

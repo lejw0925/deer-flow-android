@@ -891,12 +891,39 @@ private class RunSessionCoordinator(context: Context) {
         return snapshot
     }
 
+    /**
+     * Message rows already persisted for this session. The reducer rebuilds the
+     * list each flush but keeps unchanged element INSTANCES, so an identity
+     * diff yields exactly the merged message — a partial row rewrite instead
+     * of a full-thread DELETE+INSERT every ~80ms. Null/full-save semantics:
+     * first persist, size change, or clearRun always rewrite everything.
+     */
+    private var persistedMessages: List<ChatMessage>? = null
+
+    private suspend fun persistMessagesLocked(state: CoordinatedRunState, clearRun: Boolean) {
+        val messages = state.serverMessages
+        val previous = persistedMessages
+        if (!clearRun && previous != null && previous.size == messages.size) {
+            val changed = buildList {
+                for (index in messages.indices) {
+                    if (messages[index] !== previous[index]) add(index to messages[index])
+                }
+            }
+            if (changed.isEmpty()) return
+            cache.upsertMessages(state.serverUrl, state.threadId, changed)
+            persistedMessages = messages
+            return
+        }
+        cache.saveMessages(state.serverUrl, state.threadId, messages)
+        persistedMessages = if (clearRun) null else messages
+    }
+
     private suspend fun persist(state: CoordinatedRunState, clearRun: Boolean = false) {
         persistenceMutex.withLock {
             val latest = mutableState.value
             if (!clearRun && latest != null && latest.revision > state.revision) return
             cache.saveRun(state.serverUrl, state.threadId, if (clearRun) RunState() else state.run)
-            cache.saveMessages(state.serverUrl, state.threadId, state.serverMessages)
+            persistMessagesLocked(state, clearRun)
         }
     }
 
@@ -909,7 +936,7 @@ private class RunSessionCoordinator(context: Context) {
                 latest.revision > state.revision
             ) return
             cache.saveRun(state.serverUrl, state.threadId, if (clearRun) RunState() else state.run)
-            cache.saveMessages(state.serverUrl, state.threadId, state.serverMessages)
+            persistMessagesLocked(state, clearRun)
             mutableState.value = state
         }
     }

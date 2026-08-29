@@ -537,3 +537,38 @@ class MessageBlocksTest {
         assertTrue(isLatestAssistantTurn(messages, requireNotNull(assistantTurnForMessage(messages, "ai-2"))))
     }
 }
+
+class MessageBlocksAppendFastPathTest {
+    private fun assertFastPathMatches(previousText: String, delta: String) {
+        val previousBlocks = parseMessageBlocks(previousText)
+        val fast = mergedTextBlocksByAppend(previousText, previousBlocks, previousText + delta)
+        val full = parseMessageBlocks(previousText + delta)
+        if (fast != null) {
+            assertEquals(full, fast)
+        }
+        // Null just means "fall back to the full parse" — always correct.
+    }
+
+    private val fence = "```"
+
+    @Test
+    fun `append fast path matches the full parse for markdown tails`() {
+        assertFastPathMatches("Hello", " world")
+        assertFastPathMatches("# Title\n\nFirst paragraph.", "\n\nSecond paragraph.")
+        assertFastPathMatches("text", "\n\n")
+    }
+
+    @Test
+    fun `append fast path matches the full parse after a closed fence`() {
+        val previous = "Intro\n\n" + fence + "kotlin\nval a = 1\n" + fence
+        assertFastPathMatches(previous, "\nTrailing note.")
+    }
+
+    @Test
+    fun `append fast path defers on structural markers`() {
+        val previous = "Intro"
+        assertEquals(null, mergedTextBlocksByAppend(previous, parseMessageBlocks(previous), previous + "\n" + fence))
+        // Unterminated fence opening in the delta must not take the fast path.
+        assertEquals(null, mergedTextBlocksByAppend(previous, parseMessageBlocks(previous), previous + "\n" + fence + "kotlin\n"))
+    }
+}

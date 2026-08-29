@@ -138,14 +138,21 @@ data class ChatMessage(
     val hiddenFromUi: Boolean = false,
     val tokenUsage: TokenUsage? = null,
 ) {
-    fun withText(value: String, streaming: Boolean = isStreaming) = copy(
+    fun withText(
+        value: String,
+        streaming: Boolean = isStreaming,
+        parsedTextBlocks: List<MessageBlock>? = null,
+    ) = copy(
         text = value,
         isStreaming = streaming,
-        blocks = parseMessageBlocks(value, role) + blocks.filter { it.isStructuredBlock() },
+        // parsedTextBlocks lets the streaming reducer skip the full-text block
+        // re-scan on pure appends (see mergedTextBlocksByAppend).
+        blocks = (parsedTextBlocks ?: parseMessageBlocks(value, role)) +
+            blocks.filter { it.isStructuredBlock() },
     )
 }
 
-private fun MessageBlock.isStructuredBlock(): Boolean = when (this) {
+internal fun MessageBlock.isStructuredBlock(): Boolean = when (this) {
     is MessageBlock.Markdown, is MessageBlock.Code, is MessageBlock.Quote -> false
     else -> true
 }

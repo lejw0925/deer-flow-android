@@ -307,6 +307,30 @@ class WorkspaceCache(context: Context) {
         })
     }
 
+    /**
+     * Streaming-flush path: rewrite only the messages whose instances changed
+     * (with their stable list index) instead of DELETE+INSERT of the whole
+     * thread every ~80ms. [changed] carries (index, message) pairs.
+     */
+    suspend fun upsertMessages(
+        serverUrl: String,
+        threadId: String,
+        changed: List<Pair<Int, ChatMessage>>,
+    ) {
+        if (changed.isEmpty()) return
+        dao.upsertMessages(changed.map { (index, message) ->
+            CachedMessage(
+                serverUrl,
+                threadId,
+                message.id,
+                index,
+                message.role.name,
+                message.text,
+                encodeCachedChatMessage(message),
+            )
+        })
+    }
+
     suspend fun loadMessages(serverUrl: String, threadId: String): List<ChatMessage> =
         dao.loadMessages(serverUrl, threadId).map { cached ->
             val role = MessageRole.valueOf(cached.role)

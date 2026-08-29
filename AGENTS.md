@@ -174,6 +174,21 @@ popup-glass constraint). Everything below is context for the next agent.
   by parse), StreamingReveal caches 9 blur RenderEffect steps (was: one
   native alloc per frame per block), and small glass buttons/chips enable
   lens chromaticAberration only while pressed (`progress.value > 0.01f`).
+- **Streaming-path perf (2026-08-29 second round)**: `RunService.synchronize`
+  is coalesced (status/topology fingerprint syncs immediately; otherwise at
+  most one Binder intent per second — was ~12/s during streaming).
+  `RunSessionCoordinator.persistMessagesLocked` diffs message instances
+  against `persistedMessages` and upserts ONLY changed rows (the reducer
+  rebuilds the list but keeps unchanged element instances) — full
+  DELETE+INSERT now happens once per size change/terminal, not every 80ms.
+  `mergedTextBlocksByAppend` (data/StreamStateReducer.kt) skips the full-text
+  block re-scan when an appended delta contains no backtick (fences cannot
+  move; tails extend, Quote conversion deferred to the full parse) —
+  `ChatMessage.withText` takes optional `parsedTextBlocks`.
+  MarkdownMessageSupport: bitmapCache is a 48-entry LRU (LinkedHashMap
+  access-order under a lock) and decodes are two-pass downsampled to
+  <=1600px. Equivalence tests in MessageBlocksAppendFastPathTest
+  (MessageBlocksTest.kt).
 - **AgentRow swipe**: SwipeToDismissBox was replaced with a two-anchor
   `AnchoredDraggableState<AgentRevealValue>` (Settled=0 / Revealed=
   -actionsWidthPx). Two bytecode-verified defects forced this:

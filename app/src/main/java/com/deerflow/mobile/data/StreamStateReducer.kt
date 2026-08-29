@@ -107,13 +107,15 @@ private fun ChatMessage.isGatewayUserEchoOf(incoming: ChatMessage): Boolean {
 private const val GATEWAY_USER_SUFFIX = "__user"
 
 private fun mergeMessage(existing: ChatMessage, incoming: ChatMessage, appendText: Boolean): ChatMessage {
-    val text = mergeMessageText(existing.text, incoming.text, appendText && incoming.role == MessageRole.Assistant)
+    val appendDelta = appendText && incoming.role == MessageRole.Assistant
+    val text = mergeMessageText(existing.text, incoming.text, appendDelta)
     val streaming = when {
         incoming.role != MessageRole.Assistant -> false
         appendText -> true
         else -> existing.isStreaming
     }
-    val textMerged = incoming.withText(text, streaming = streaming)
+    val fastTextBlocks = if (appendDelta) mergedTextBlocksByAppend(existing.text, existing.blocks, text) else null
+    val textMerged = incoming.withText(text, streaming = streaming, parsedTextBlocks = fastTextBlocks)
     return textMerged.copy(
         blocks = textMerged.blocks.filter(MessageBlock::isTextBlock) +
             mergeStructuredBlocks(existing.blocks, textMerged.blocks, appendText),
@@ -308,4 +310,42 @@ private fun ChatMessage.displayIdentity(): String {
     if (role != MessageRole.Tool) return "message:$id"
     val callId = blocks.filterIsInstance<MessageBlock.ToolResult>().firstOrNull()?.callId.orEmpty()
     return if (callId.isBlank()) "message:$id" else "tool:$callId"
+}
+
+/**
+ * Fast path for pure appends: if the delta contains no backtick, no fence can
+ * open or close, so the full-text block re-scan is equivalent to extending the
+ * trailing text block (or starting one after a closed fence). Returns the new
+ * TEXT-block list, or null to fall back to the full parse. Quote segments are
+ * left to the full parse (all-">" conversion is not worth replicating here).
+ */
+internal fun mergedTextBlocksByAppend(
+    previousText: String,
+    existingBlocks: List<MessageBlock>,
+    newText: String,
+): List<MessageBlock>? {
+    if (!newText.startsWith(previousText)) return null
+    val delta = newText.substring(previousText.length)
+    if (delta.contains('`')) return null
+    var textEnd = existingBlocks.size
+    while (textEnd > 0 && existingBlocks[textEnd - 1].isStructuredBlock()) textEnd--
+    val textBlocks = existingBlocks.subList(0, textEnd)
+    val last = textBlocks.lastOrNull()
+    return when {
+        delta.isBlank() -> textBlocks.toList()
+        last == null -> if (delta.trim().lines().all { it.startsWith(">") }) {
+            null
+        } else {
+            listOf(MessageBlock.Markdown(delta.trim()))
+        }
+        last is MessageBlock.Markdown ->
+            textBlocks.dropLast(1) + MessageBlock.Markdown((last.text + delta).trim())
+        last is MessageBlock.Code ->
+            if (delta.trim().lines().all { it.startsWith(">") }) {
+                null
+            } else {
+                textBlocks + MessageBlock.Markdown(delta.trim())
+            }
+        else -> null
+    }
 }

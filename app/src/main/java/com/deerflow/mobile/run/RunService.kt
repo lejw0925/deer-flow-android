@@ -655,6 +655,10 @@ class RunService : Service() {
         private const val STOP_REQUEST_CODE_SALT = 0x51A7
         private const val ACTION_STOP = "com.deerflow.mobile.action.STOP_RUN"
         private const val ACTION_SYNCHRONIZE = "com.deerflow.mobile.action.SYNCHRONIZE_RUNS"
+        private const val SYNC_COALESCE_MS = 1_000L
+        private val synchronizeLock = Any()
+        @Volatile private var lastSyncFingerprint: Int = 0
+        @Volatile private var lastSyncElapsedRealtime = 0L
         private const val ACTION_UPDATE = "com.deerflow.mobile.action.UPDATE_RUN"
         private const val ACTION_COMPLETE = "com.deerflow.mobile.action.COMPLETE_RUN"
         private const val ACTION_FAILED = "com.deerflow.mobile.action.FAILED_RUN"
@@ -670,7 +674,32 @@ class RunService : Service() {
         private const val EXTRA_LATEST_TOOL_NAME = "latest_tool_name"
         internal const val EXTRA_REQUEST_PROMOTED_ONGOING = "android.requestPromotedOngoing"
 
+        /**
+         * Streaming publishes state ~12x/second; the service only needs the
+         * snapshot when the notification topology changes or once per window.
+         * Syncs are coalesced: a status/topology change (fingerprint) always
+         * goes through immediately, otherwise at most one Binder intent per
+         * [SYNC_COALESCE_MS].
+         */
         fun synchronize(context: Context, states: Map<RunKey, CoordinatedRunState>) {
+            val fingerprint = states.entries
+                .sortedWith(compareBy({ it.key.serverUrl }, { it.key.threadId }))
+                .joinToString("\u0000") { (key, state) ->
+                    "${key.serverUrl}|${key.threadId}|" +
+                        "${state.run.status}|${state.run.awaitingInput}|" +
+                        "${state.run.startedAtEpochMs}|${state.run.gatewayStatus}"
+                }
+                .hashCode()
+            val now = android.os.SystemClock.elapsedRealtime()
+            synchronized(synchronizeLock) {
+                if (fingerprint == lastSyncFingerprint &&
+                    now - lastSyncElapsedRealtime < SYNC_COALESCE_MS
+                ) {
+                    return
+                }
+                lastSyncFingerprint = fingerprint
+                lastSyncElapsedRealtime = now
+            }
             val notifications = states.values.map(CoordinatedRunState::toManagedNotification)
             val snapshot = ManagedRunSnapshot(
                 active = notifications.filter { states[it.key]?.run?.active == true },
