@@ -168,6 +168,7 @@ import com.deerflow.mobile.data.TodoItem
 import com.deerflow.mobile.data.groupChatMessages
 import com.deerflow.mobile.data.conversationExportFileName
 import com.deerflow.mobile.ui.glass.GlassAlertDialog
+import com.deerflow.mobile.ui.glass.GlassCenteredDialog
 import androidx.compose.material3.LocalContentColor
 import com.deerflow.mobile.ui.glass.GeminiAuroraBackground
 import com.deerflow.mobile.ui.glass.GeminiBrush
@@ -1388,114 +1389,132 @@ internal fun ArtifactSessionDialog(
     val markdown = session.filename.endsWith(".md", ignoreCase = true) ||
         session.filename.endsWith(".markdown", ignoreCase = true)
     val language = artifactLanguage(session.filename, session.mimeType)
-    GlassAlertDialog(
+    // Centered dialog on real liquid glass: GlassAlertDialog lives in a dialog
+    // window that can never sample the backdrop (reads as a translucent block),
+    // while this in-composition dialog reflects the conversation behind it.
+    GlassCenteredDialog(
         onDismissRequest = {
             if (downloading) onCancel() else onDismiss()
         },
-        title = { Text(session.filename, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (session.mimeType.isNotBlank()) {
-                    Text(session.mimeType, style = MaterialTheme.typography.bodyMedium)
+        modifier = Modifier
+            .padding(horizontal = 24.dp)
+            .widthIn(max = 420.dp)
+            .fillMaxWidth(),
+    ) {
+        Column(
+            Modifier.padding(horizontal = 24.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                session.filename,
+                style = MaterialTheme.typography.headlineSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (session.mimeType.isNotBlank()) {
+                Text(
+                    session.mimeType,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(sizeLabel, style = MaterialTheme.typography.bodyMedium)
+            when {
+                awaiting -> {
+                    Text(
+                        stringResource(R.string.artifact_download_confirmation_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                 }
-                Text(sizeLabel, style = MaterialTheme.typography.bodyMedium)
-                when {
-                    awaiting -> {
-                        Text(
-                            stringResource(R.string.artifact_download_confirmation_body),
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                    downloading -> {
-                        Text(
-                            if (session.totalBytes == null) {
-                                stringResource(R.string.artifact_downloaded_unknown_total, downloadedLabel)
-                            } else {
-                                stringResource(R.string.artifact_downloaded_of_total, downloadedLabel, sizeLabel)
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        if (session.totalBytes == null || session.totalBytes <= 0L) {
-                            LoadingIndicator(Modifier.size(24.dp))
+                downloading -> {
+                    Text(
+                        if (session.totalBytes == null) {
+                            stringResource(R.string.artifact_downloaded_unknown_total, downloadedLabel)
                         } else {
-                            androidx.compose.material3.LinearProgressIndicator(
-                                progress = {
-                                    (session.downloadedBytes.toFloat() / session.totalBytes).coerceIn(0f, 1f)
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
+                            stringResource(R.string.artifact_downloaded_of_total, downloadedLabel, sizeLabel)
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    if (session.totalBytes == null || session.totalBytes <= 0L) {
+                        LoadingIndicator(Modifier.size(24.dp))
+                    } else {
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = {
+                                (session.downloadedBytes.toFloat() / session.totalBytes).coerceIn(0f, 1f)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
-                    ready && session.text != null -> {
-                        Surface(
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 420.dp)
-                                .verticalScroll(rememberScrollState()),
-                        ) {
-                            SelectionContainer {
-                                Column(
-                                    Modifier.padding(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    if (session.textTruncated) {
+                }
+                ready && session.text != null -> {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 360.dp)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        SelectionContainer {
+                            Column(
+                                Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                if (session.textTruncated) {
+                                    Text(
+                                        stringResource(R.string.artifact_preview_truncated),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                when {
+                                    markdown && !session.textTruncated -> MarkdownContent(session.text)
+                                    language != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text(
-                                            stringResource(R.string.artifact_preview_truncated),
+                                            language,
                                             style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            color = MaterialTheme.colorScheme.primary,
                                         )
-                                    }
-                                    when {
-                                        markdown && !session.textTruncated -> MarkdownContent(session.text)
-                                        language != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Text(
-                                                language,
-                                                style = MaterialTheme.typography.labelMedium,
-                                                color = MaterialTheme.colorScheme.primary,
-                                            )
-                                            Text(
-                                                session.text,
-                                                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                                            )
-                                        }
-                                        else -> Text(
+                                        Text(
                                             session.text,
                                             style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
                                         )
                                     }
+                                    else -> Text(
+                                        session.text,
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                                    )
                                 }
                             }
                         }
                     }
                 }
             }
-        },
-        confirmButton = {
-            when {
-                awaiting -> TextButton(onClick = onDownload) { Text(stringResource(R.string.download)) }
-                downloading -> {}
-                ready -> TextButton(onClick = onOpen, enabled = session.localPath != null) {
-                    Text(stringResource(R.string.open))
-                }
-            }
-        },
-        dismissButton = {
-            Row {
-                if (ready) {
-                    TextButton(onClick = onSave, enabled = session.localPath != null) {
-                        Text(stringResource(R.string.save_copy))
-                    }
-                }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 TextButton(
                     onClick = if (downloading) onCancel else onDismiss,
                 ) {
                     Text(stringResource(if (downloading || awaiting) R.string.cancel else R.string.close))
                 }
+                if (ready) {
+                    TextButton(onClick = onSave, enabled = session.localPath != null) {
+                        Text(stringResource(R.string.save_copy))
+                    }
+                }
+                when {
+                    awaiting -> Button(onClick = onDownload) { Text(stringResource(R.string.download)) }
+                    ready -> Button(onClick = onOpen, enabled = session.localPath != null) {
+                        Text(stringResource(R.string.open))
+                    }
+                    downloading -> Unit
+                }
             }
-        },
-    )
+        }
+    }
 }
 
 internal fun artifactLanguage(filename: String, mimeType: String): String? {

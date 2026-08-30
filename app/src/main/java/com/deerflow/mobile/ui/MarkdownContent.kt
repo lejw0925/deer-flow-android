@@ -1053,8 +1053,7 @@ private fun CitationSources(
                             1f to GeminiColors.Pink.copy(alpha = 0.06f),
                         ),
                     )
-                }
-                .padding(12.dp),
+                },
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             SourcesCardContent(sources, sourceRequesters, interactive = true)
@@ -1088,7 +1087,12 @@ private fun SourcesCardContent(
     interactive: Boolean,
 ) {
     val primary = MaterialTheme.colorScheme.primary
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(
+        // Card padding lives here so the frosted fallback, the invisible
+        // in-flow placeholder, and the glass overlay card all share one geometry.
+        modifier = Modifier.padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
         Text(
             stringResource(R.string.citation_sources, sources.size),
             style = MaterialTheme.typography.labelLarge,

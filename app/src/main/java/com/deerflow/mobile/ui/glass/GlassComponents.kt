@@ -416,6 +416,53 @@ fun GlassModalBottomSheet(
     }
 }
 
+/**
+ * Centered modal dialog rendered IN the activity composition — unlike an M3
+ * [androidx.compose.material3.AlertDialog] (its own window can never sample the
+ * backdrop), the glass surface really reflects the content behind it. Same
+ * gating as [GlassModalBottomSheet]: compose it under `if (show)`.
+ */
+@Composable
+fun GlassCenteredDialog(
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val dialogShape = RoundedCornerShape(28.dp)
+    val dialogTint = tint ?: rememberGlassTints().veil
+    val appear = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { appear.animateTo(1f, tween(200, easing = FastOutSlowInEasing)) }
+    BackHandler { onDismissRequest() }
+    Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .matchParentSize()
+                .graphicsLayer { alpha = appear.value }
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismissRequest,
+                ),
+        )
+        Box(
+            modifier
+                .align(Alignment.Center)
+                .graphicsLayer {
+                    val scale = lerp(0.92f, 1f, appear.value)
+                    scaleX = scale
+                    scaleY = scale
+                    alpha = appear.value
+                }
+                .glass(shape = dialogShape, tint = dialogTint, useLens = true)
+                .glassEdge(dialogShape),
+        ) {
+            Column(content = content)
+        }
+    }
+}
+
 /** Alert dialog with a glass panel instead of an opaque surface. */
 @Composable
 fun GlassAlertDialog(
