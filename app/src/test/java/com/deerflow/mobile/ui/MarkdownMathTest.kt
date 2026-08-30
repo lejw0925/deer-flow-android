@@ -74,26 +74,48 @@ class MarkdownMathTest {
     }
 
     @Test
-    fun keepsSpecialConversationContentOnTheCustomRenderer() {
-        assertTrue(requiresCustomMarkdownRenderer("$$\\frac{1}{2}$$"))
-        assertTrue(requiresCustomMarkdownRenderer("[Report](/mnt/user-data/report.md)"))
-        assertTrue(requiresCustomMarkdownRenderer("[citation: Docs](https://example.com/docs)"))
+    fun keepsCitationsAndSourcesHeadingsOnTheCitationPresentation() {
+        assertTrue("[citation: Docs](https://example.com/docs)".mayNeedCitationPresentation)
+        assertTrue(
+            """
+            ## Sources:
+            - [Docs](https://example.com/docs)
+            """.trimIndent().mayNeedCitationPresentation,
+        )
     }
 
     @Test
-    fun sendsStandardGfmToTheEnhancedRenderer() {
+    fun sendsStandardGfmStraightToTheEnhancedRenderer() {
         assertFalse(
-            requiresCustomMarkdownRenderer(
-                """
-                ## Status
+            """
+            ## Status
 
-                | Name | Value |
-                | --- | --- |
-                | DeerFlow | Ready |
+            | Name | Value |
+            | --- | --- |
+            | DeerFlow | Ready |
 
-                - [x] Complete
-                """.trimIndent(),
-            ),
+            - [x] Complete
+            """.trimIndent().mayNeedCitationPresentation,
         )
+    }
+
+    @Test
+    fun rebuildsBodySourceWithoutTheStrippedSourcesSection() {
+        val markdown = """
+            Summary [citation: Inline](https://example.com/inline)
+
+            ### Sources
+            - [Docs](https://example.com/docs)
+
+            ## Follow-up
+            This remains in the body.
+        """.trimIndent()
+        val presentation = citationPresentation(markdown)
+        val body = sourcesStrippedMarkdown(markdown, presentation.bodyNodes)
+
+        assertFalse(body.contains("Sources"))
+        assertFalse(body.contains("example.com/docs"))
+        assertTrue(body.contains("Summary"))
+        assertTrue(body.contains("Follow-up"))
     }
 }

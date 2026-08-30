@@ -10,9 +10,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -775,9 +777,14 @@ private fun MessageBlockView(
     when (block) {
         is MessageBlock.Markdown -> MarkdownContent(block.text, onArtifact = onArtifact, streaming = streaming)
         is MessageBlock.Code -> StreamingReveal(animate = streaming) { CodeDetail(block.code, block.language) }
-        is MessageBlock.Quote -> Row {
-            Box(Modifier.width(3.dp).height(48.dp).background(MaterialTheme.colorScheme.primary))
-            MarkdownContent(block.text, Modifier.padding(start = 12.dp), onArtifact, streaming)
+        is MessageBlock.Quote -> Row(
+            // IntrinsicSize.Min lets the accent bar stretch to the full quote height;
+            // a fixed 48.dp bar broke visually on multi-line quotes.
+            Modifier.height(IntrinsicSize.Min),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(Modifier.width(3.dp).fillMaxHeight().background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp)))
+            MarkdownContent(block.text, Modifier.weight(1f), onArtifact, streaming)
         }
         is MessageBlock.Reasoning -> FinalReasoningDisclosure(block.text)
         is MessageBlock.ToolCall -> Unit
