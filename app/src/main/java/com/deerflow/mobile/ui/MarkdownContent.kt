@@ -226,7 +226,7 @@ internal fun sourcesStrippedMarkdown(markdown: String, bodyNodes: List<Node>): S
 /** Shared extended-spans painter: per-line rounded backgrounds for inline code and citation chips. */
 private fun perLineBackgroundPainter(density: androidx.compose.ui.unit.Density) = PerLineRoundedBackgroundPainter(
     cornerRadius = with(density) { 5.dp.toSp() },
-    horizontalPadding = 3.sp,
+    horizontalInset = 2.sp,
     lineInset = 2.sp,
 )
 
@@ -327,9 +327,10 @@ private fun EnhancedMarkdownContent(
         ordered = chatBody,
         bullet = chatBody,
         list = chatBody,
-        // Inline code gets a text color that reads apart from body copy and links
-        // (links stay primary): a light gray over the tinted rounded background.
+        // Inline code: light gray text two sp below the body size, on a tinted
+        // background that insets inward and vertically centers in the line box.
         inlineCode = chatBody.copy(
+            fontSize = 14.sp,
             fontFamily = FontFamily.Monospace,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         ),
@@ -847,10 +848,12 @@ private fun EnhancedMarkdownTableRow(
                 color = LocalMarkdownColors.current.text,
                 textAlign = alignments.getOrElse(column) { TextAlign.Start },
                 onTextLayout = { cellSpans.onTextLayout(it) },
+                // drawBehind must sit INSIDE the padding: the painter draws in
+                // the text layout's coordinate space.
                 modifier = Modifier
                     .width(enhancedTableCellWidth)
-                    .drawBehind(cellSpans)
-                    .padding(LocalMarkdownDimens.current.tableCellPadding),
+                    .padding(LocalMarkdownDimens.current.tableCellPadding)
+                    .drawBehind(cellSpans),
             )
         }
     }

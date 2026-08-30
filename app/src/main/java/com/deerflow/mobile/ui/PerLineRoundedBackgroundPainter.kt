@@ -18,12 +18,13 @@ import com.mikepenz.markdown.compose.extendedspans.SpanDrawInstructions
 /**
  * Draws rounded backgrounds behind spans carrying a [SpanStyle.background] —
  * one pill PER LINE. A wrapped inline code span renders as stacked rounded
- * strips with a gap between lines instead of one merged gray block, and no
- * stray rounded corner lands on the tail of the previous line.
+ * strips with a gap between lines instead of one merged gray block. The
+ * background insets INWARD from the span bounds (no outward padding) and is
+ * vertically centered inside the line box, pairing with a reduced span font.
  */
 class PerLineRoundedBackgroundPainter(
     private val cornerRadius: TextUnit,
-    private val horizontalPadding: TextUnit = 3.sp,
+    private val horizontalInset: TextUnit = 2.sp,
     private val lineInset: TextUnit = 2.sp,
 ) : ExtendedSpanPainter() {
     private val path = Path()
@@ -69,12 +70,14 @@ class PerLineRoundedBackgroundPainter(
         val annotations = text.getStringAnnotations(TAG, 0, text.length)
         return SpanDrawInstructions {
             val radius = CornerRadius(cornerRadius.toPx())
-            val horizontalPaddingPx = horizontalPadding.toPx()
+            val horizontalInsetPx = horizontalInset.toPx()
             val insetPx = lineInset.toPx()
             annotations.forEach { annotation ->
                 val background = decodeColor(annotation.item)
                 // flatten=false: one box per line of the span, each drawn as a
-                // fully rounded pill; the vertical inset separates stacked lines.
+                // fully rounded pill inset inward from the span bounds; the
+                // vertical inset separates stacked lines and keeps the pill
+                // vertically centered in the line box.
                 layoutResult.getBoundingBoxes(
                     startOffset = annotation.start,
                     endOffset = annotation.end,
@@ -84,8 +87,8 @@ class PerLineRoundedBackgroundPainter(
                     path.addRoundRect(
                         androidx.compose.ui.geometry.RoundRect(
                             rect = box.copy(
-                                left = box.left - horizontalPaddingPx,
-                                right = box.right + horizontalPaddingPx,
+                                left = box.left + horizontalInsetPx,
+                                right = box.right - horizontalInsetPx,
                                 top = box.top + insetPx,
                                 bottom = box.bottom - insetPx,
                             ),
