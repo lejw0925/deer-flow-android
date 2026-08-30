@@ -479,10 +479,14 @@ private fun MarkdownCodeContent(
  */
 @Composable
 internal fun MarkdownCodeSurface(code: String, language: String?) {
-    val codeBackground = LocalMarkdownColors.current.codeBackground
-    val codeText = LocalMarkdownColors.current.text
-    val dividerColor = LocalMarkdownColors.current.dividerColor
-    val codeStyle = LocalMarkdownTypography.current.code
+    // Theme-derived colors on purpose: this surface also renders OUTSIDE any
+    // Markdown() composition (MessageBlock.Code via CodeDetail), where the
+    // markdown locals are absent. The values match what the markdown colors
+    // feed in, so both paths render identically.
+    val codeBackground = MaterialTheme.colorScheme.surfaceContainerHigh
+    val codeText = MaterialTheme.colorScheme.onSurface
+    val dividerColor = MaterialTheme.colorScheme.outlineVariant
+    val codeStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
     val syntaxLanguage = remember(language) { language?.let { SyntaxLanguage.getByName(it) } }
     val highlighted = remember(code, syntaxLanguage) {
         val highlights = Highlights.Builder()
