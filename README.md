@@ -121,6 +121,20 @@ DeerFlow Android 是 DeerFlow 工作区的原生 Android 客户端，而不是 W
 
 核心依赖包括 Kotlin、Jetpack Compose、Material 3、OkHttp、Retrofit、Room、DataStore、CommonMark 和 Kotlin Coroutines。数据库迁移 schema 存放在 `app/schemas/`。
 
+### 第三方库 / Third-party libraries
+
+| 库 / Library | 用途 / Purpose | 许可 / License |
+| --- | --- | --- |
+| [Kyant0/AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass) (`io.github.kyant0:backdrop:1.0.6`) | 液态玻璃渲染基座：backdrop 录制/采样、blur、vibrancy、lens（AGSL）。`ui/glass/` 的整套玻璃系统与悬浮标签栏基于它构建 | Apache-2.0 |
+| [mikepenz/multiplatform-markdown-renderer](https://github.com/mikepenz/multiplatform-markdown-renderer) (`com.mikepenz:multiplatform-markdown-renderer-m3/code:0.28.0`) | 会话 Markdown 的增强渲染（代码块、表格） | Apache-2.0 |
+| [commonmark-java](https://github.com/commonmark/commonmark-java) (`org.commonmark:commonmark:*:0.29.0`) | Markdown 解析（GFM 删除线/表格扩展）、引用来源提取 | BSD-2-Clause |
+| [RaTeX](https://github.com/erweixin/RaTeX) (`io.github.erweixin:ratex-android:0.1.13`) | 行内与块级 LaTeX 数学公式渲染 | 见上游仓库 |
+| [OkHttp](https://github.com/square/okhttp) / [Retrofit](https://github.com/square/retrofit) | Gateway HTTP 与 SSE 通信 | Apache-2.0 |
+| [AndroidX Jetpack](https://developer.android.com/jetpack)（Compose、Material 3 Expressive、Room、DataStore、Lifecycle、Navigation） | UI 框架、持久化与生命周期 | Apache-2.0 |
+| Kotlin / kotlinx.coroutines | 语言与并发 | Apache-2.0 |
+
+数据库迁移 schema 存放在 `app/schemas/`。各依赖的完整许可文本可在应用内「我的 → 关于 → 开源许可」查看。
+
 ### 环境要求
 
 - Android 8.0 及以上，最低 API 26
