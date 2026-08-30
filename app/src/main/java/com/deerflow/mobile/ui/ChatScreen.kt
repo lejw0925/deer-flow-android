@@ -26,6 +26,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -369,8 +370,9 @@ fun ChatScreen(
                 if (state.run.active && state.selectedThread != null) {
                     Box(
                         Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            // Wraps content and starts at the composer's left edge
+                            // instead of stretching across the conversation width.
+                            .padding(start = 6.dp, top = 4.dp, bottom = 4.dp)
                             .glass(
                                 shape = RoundedCornerShape(20.dp),
                                 tint = rememberGlassTints().surface,
@@ -1141,7 +1143,8 @@ internal fun TodoSummary(
     onClick: () -> Unit = {},
 ) {
     val completed = todos.count { it.status == "completed" }
-    val shape = RoundedCornerShape(8.dp)
+    // Matches the user message bubble corner radius.
+    val shape = MaterialTheme.shapes.medium
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -1206,7 +1209,8 @@ private fun TodoProgressDetails(
     modifier: Modifier = Modifier,
 ) {
     val completed = todos.count { it.status == "completed" }
-    val shape = RoundedCornerShape(8.dp)
+    // Matches the user message bubble corner radius.
+    val shape = MaterialTheme.shapes.medium
     Surface(
         color = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,
@@ -1609,6 +1613,9 @@ internal fun MessageComposer(
                         shadow = { Shadow(radius = 12.dp, color = Color.Black.copy(alpha = 0.10f)) },
                     )
                     .glassEdge(RoundedCornerShape(28.dp))
+                    // Light hairline so the floating input bar keeps a visible
+                    // boundary over bright conversation content.
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(28.dp))
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             ) {
                 AnimatedVisibility(

@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -89,6 +90,9 @@ import com.mikepenz.markdown.compose.components.MarkdownComponents
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.annotator.DefaultAnnotatorSettings
 import com.mikepenz.markdown.annotator.buildMarkdownAnnotatedString
+import com.mikepenz.markdown.compose.extendedspans.ExtendedSpans
+import com.mikepenz.markdown.compose.extendedspans.RoundedCornerSpanPainter
+import com.mikepenz.markdown.compose.extendedspans.drawBehind
 import com.mikepenz.markdown.compose.elements.MarkdownBulletList
 import com.mikepenz.markdown.compose.elements.MarkdownCheckBox
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
@@ -274,7 +278,9 @@ private fun EnhancedMarkdownContent(
     )
     // The m3 defaults size headings for full pages (h1 = displayLarge); chat bubbles
     // need the same compact scale the previous renderer used. h5/h6 drop to a muted
-    // tone so deep hierarchies stay distinguishable in a bubble.
+    // tone so deep hierarchies stay distinguishable in a bubble. Body styles share
+    // a +10% line height tuned for reading long replies in a chat bubble.
+    val chatBody = MaterialTheme.typography.bodyLarge.copy(lineHeight = 26.4.sp)
     val typography = markdownTypography(
         h1 = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
         h2 = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
@@ -292,7 +298,19 @@ private fun EnhancedMarkdownContent(
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         ),
-        quote = MaterialTheme.typography.bodyLarge,
+        text = chatBody,
+        paragraph = chatBody,
+        quote = chatBody,
+        ordered = chatBody,
+        bullet = chatBody,
+        list = chatBody,
+        // Inline code gets a text color that reads apart from body copy and links
+        // (links stay primary); the rounded background comes from the extended-spans
+        // painter wired in MarkdownInlineText.
+        inlineCode = chatBody.copy(
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.tertiary,
+        ),
         textLink = TextLinkStyles(
             style = SpanStyle(
                 color = MaterialTheme.colorScheme.primary,
@@ -310,7 +328,17 @@ private fun EnhancedMarkdownContent(
         LocalMarkdownDimens provides markdownDimens(tableCellPadding = 12.dp),
         LocalImageTransformer provides NoOpImageTransformerImpl(),
         LocalMarkdownAnnotator provides annotator,
-        LocalMarkdownExtendedSpans provides markdownExtendedSpans(),
+        LocalMarkdownExtendedSpans provides markdownExtendedSpans {
+            // Library-rendered text (headings) gets the same rounded inline-code
+            // treatment as the custom paragraph path.
+            val density = LocalDensity.current
+            ExtendedSpans(
+                RoundedCornerSpanPainter(
+                    cornerRadius = with(density) { 5.dp.toSp() },
+                    padding = RoundedCornerSpanPainter.TextPaddingValues(horizontal = 3.sp, vertical = 1.sp),
+                ),
+            )
+        },
         LocalMarkdownComponents provides components,
         LocalMarkdownAnimations provides markdownAnimations(),
     ) {
@@ -462,7 +490,7 @@ private fun MarkdownCodeSurface(code: String, language: String?) {
         }
     }
     val clipboard = LocalClipboardManager.current
-    Surface(color = codeBackground, shape = MaterialTheme.shapes.small, modifier = Modifier.fillMaxWidth()) {
+    Surface(color = codeBackground, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth()) {
         Column {
             Row(
                 Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
@@ -580,6 +608,18 @@ private fun MarkdownInlineText(content: String, children: List<ASTNode>, style: 
             linkInteractionListener = linkListener,
         )
     }
+    val density = LocalDensity.current
+    // Rounded-corner backgrounds for spans that carry one (inline code, citation
+    // chips): the painter swaps the rectangular SpanStyle.background for a drawn
+    // round rect with a little breathing room.
+    val extendedSpans = remember {
+        ExtendedSpans(
+            RoundedCornerSpanPainter(
+                cornerRadius = with(density) { 5.dp.toSp() },
+                padding = RoundedCornerSpanPainter.TextPaddingValues(horizontal = 3.sp, vertical = 1.sp),
+            ),
+        )
+    }
     val value = remember(content, children, settings, style) {
         buildAnnotatedString {
             pushStyle(style.toSpanStyle())
@@ -594,14 +634,18 @@ private fun MarkdownInlineText(content: String, children: List<ASTNode>, style: 
             firstNonWhitespace > 0 -> annotated.subSequence(firstNonWhitespace, annotated.length)
             else -> annotated
         }
-    }
-    value ?: return
-    val hasCitations = value.getStringAnnotations(CITATION_ANNOTATION, 0, value.length).isNotEmpty()
+    } ?: return
+    // extend() must see the final string (it stamps a marker at offset 0 that
+    // onTextLayout validates), so it runs after the trim above.
+    val extended = remember(value, extendedSpans) { extendedSpans.extend(value) }
+    val hasCitations = extended.getStringAnnotations(CITATION_ANNOTATION, 0, extended.length).isNotEmpty()
     val textNode: @Composable () -> Unit = {
         Text(
-            text = value,
+            text = extended,
             style = style,
             color = LocalMarkdownColors.current.text,
+            onTextLayout = { extendedSpans.onTextLayout(it) },
+            modifier = Modifier.drawBehind(extendedSpans),
         )
     }
     if (hasCitations) {
@@ -713,11 +757,11 @@ private fun EnhancedMarkdownTable(content: String, node: ASTNode, style: TextSty
     )
     val rows = node.children.filter { it.type == GFMElementTypes.HEADER || it.type == GFMElementTypes.ROW }
     Surface(
-        shape = MaterialTheme.shapes.small,
+        shape = MaterialTheme.shapes.medium,
         color = LocalMarkdownColors.current.tableBackground,
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, dividerColor, MaterialTheme.shapes.small),
+            .border(1.dp, dividerColor, MaterialTheme.shapes.medium),
     ) {
         Column(Modifier.horizontalScroll(rememberScrollState())) {
             rows.forEachIndexed { index, row ->

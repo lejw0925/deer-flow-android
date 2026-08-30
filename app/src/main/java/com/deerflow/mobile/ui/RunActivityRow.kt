@@ -3,7 +3,6 @@ package com.deerflow.mobile.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -73,7 +72,6 @@ fun RunActivityRow(
     val reconnecting = status == RunStatus.Reconnecting
     Column(
         modifier = modifier
-            .fillMaxWidth()
             .testTag(UiTagsRunActivity.RunActivity)
             .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {

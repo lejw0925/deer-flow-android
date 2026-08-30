@@ -89,6 +89,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.deerflow.mobile.R
 import com.deerflow.mobile.data.ChatMessage
 import com.deerflow.mobile.data.ChatMessageGroup
@@ -181,7 +182,12 @@ private fun MessageItem(
                 .widthIn(max = 720.dp)
                 .animateContentSize(ExpressiveMotion.spatial()),
         ) {
-            Column(Modifier.padding(if (user) 14.dp else 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+            // The assistant reply aligns horizontally with the thinking block's card
+            // edge (list padding only), so reply and thinking text share one margin.
+            Modifier.padding(if (user) PaddingValues(14.dp) else PaddingValues(vertical = 8.dp)),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
                 if (!user) {
                     Text(
                         if (message.role == MessageRole.Assistant) "DeerFlow" else stringResource(R.string.system),
@@ -191,7 +197,10 @@ private fun MessageItem(
                 }
                 if (user) {
                     SelectionContainer {
-                        Text(message.text, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            message.text,
+                            style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 26.4.sp),
+                        )
                     }
                 } else {
                     SelectionContainer {
@@ -314,7 +323,8 @@ private fun ProcessingMessageGroup(
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        shape = RoundedCornerShape(8.dp),
+        // Matches the user message bubble corner radius.
+        shape = MaterialTheme.shapes.medium,
         modifier = Modifier
             .fillMaxWidth()
             .widthIn(max = 760.dp)
@@ -662,7 +672,7 @@ private fun FinalReasoningDisclosure(text: String) {
                 modifier = Modifier.rotate(if (expanded) 180f else 0f),
             )
         }
-        if (expanded) MarkdownContent(text, Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+        if (expanded) MarkdownContent(text, Modifier.padding(vertical = 4.dp))
     }
 }
 
