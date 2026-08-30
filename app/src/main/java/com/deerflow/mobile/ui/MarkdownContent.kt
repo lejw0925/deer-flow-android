@@ -3,14 +3,10 @@ package com.deerflow.mobile.ui
 import android.view.ViewGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -52,17 +48,19 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.LinkInteractionListener
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -82,17 +80,19 @@ import com.mikepenz.markdown.compose.LocalMarkdownExtendedSpans
 import com.mikepenz.markdown.compose.LocalMarkdownPadding
 import com.mikepenz.markdown.compose.LocalMarkdownTypography
 import com.mikepenz.markdown.compose.LocalReferenceLinkHandler
+import com.mikepenz.markdown.compose.MarkdownElement
 import com.mikepenz.markdown.compose.components.CurrentComponentsBridge
 import com.mikepenz.markdown.compose.components.MarkdownComponent
-import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.components.MarkdownComponents
 import com.mikepenz.markdown.compose.components.markdownComponents
+import com.mikepenz.markdown.annotator.DefaultAnnotatorSettings
+import com.mikepenz.markdown.annotator.buildMarkdownAnnotatedString
 import com.mikepenz.markdown.compose.elements.MarkdownBulletList
+import com.mikepenz.markdown.compose.elements.MarkdownCheckBox
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
 import com.mikepenz.markdown.compose.elements.MarkdownOrderedList
 import com.mikepenz.markdown.compose.elements.material.MarkdownBasicText
-import com.mikepenz.markdown.model.DefaultMarkdownAnnotator
 import com.mikepenz.markdown.model.NoOpImageTransformerImpl
 import com.mikepenz.markdown.model.ReferenceLinkHandlerImpl
 import com.mikepenz.markdown.model.markdownAnimations
@@ -101,11 +101,9 @@ import com.mikepenz.markdown.model.markdownExtendedSpans
 import com.mikepenz.markdown.model.markdownPadding
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
-import com.mikepenz.markdown.utils.MARKDOWN_TAG_URL
-import com.mikepenz.markdown.utils.buildMarkdownAnnotatedString
+import com.mikepenz.markdown.model.markdownAnnotator
 import com.mikepenz.markdown.utils.codeSpanStyle
 import com.mikepenz.markdown.utils.getUnescapedTextInNode
-import com.mikepenz.markdown.utils.linkTextSpanStyle
 import dev.snipme.highlights.Highlights
 import dev.snipme.highlights.model.BoldHighlight
 import dev.snipme.highlights.model.ColorHighlight
@@ -131,6 +129,7 @@ import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.ast.findChildOfType
+import org.intellij.markdown.ast.getTextInNode
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
 import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.flavours.gfm.GFMTokenTypes
@@ -179,7 +178,7 @@ fun MarkdownContent(
     }
     CompositionLocalProvider(LocalCitationNavigator provides onCitationClick) {
         Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            EnhancedMarkdownContent(bodyMarkdown, Modifier, streaming, onArtifact)
+            EnhancedMarkdownContent(bodyMarkdown, Modifier, streaming, onArtifact, onCitationClick)
             presentation?.let { CitationSources(it.sources, sourceRequesters) }
         }
     }
@@ -214,11 +213,11 @@ private fun Node.sourceText(markdown: String): String {
 }
 
 /**
- * Top-level entry of the unified renderer. Mirrors the library's own dispatcher
- * (which is internal) with three differences that matter for chat: block gaps
- * come from `spacedBy` instead of a Spacer before every element — so no dead
- * space above the first line — the parse tree is remembered per content, and
- * the spacing/theme locals are fed from our design system.
+ * Top-level entry of the unified renderer. Delegates element dispatch to the
+ * library's public [MarkdownElement] and wraps it with the three things chat
+ * needs that the stock top level does not offer: block gaps via explicit
+ * spacers (heading-aware rhythm, no dead space above the first line), a parse
+ * tree remembered per content, and theme locals fed from our design system.
  */
 @Composable
 private fun EnhancedMarkdownContent(
@@ -226,6 +225,7 @@ private fun EnhancedMarkdownContent(
     modifier: Modifier,
     streaming: Boolean,
     onArtifact: (String) -> Unit,
+    onCitationClick: (String) -> Unit,
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val citationChip = SpanStyle(
@@ -233,18 +233,31 @@ private fun EnhancedMarkdownContent(
         background = primary.copy(alpha = 0.14f),
         fontWeight = FontWeight.Medium,
     )
+    val referenceLinkHandler = remember { ReferenceLinkHandlerImpl() }
+    val citationListener = remember(onCitationClick, referenceLinkHandler) {
+        LinkInteractionListener { link ->
+            val url = (link as? LinkAnnotation.Clickable)?.tag ?: return@LinkInteractionListener
+            onCitationClick(referenceLinkHandler.find(url).takeIf { it.isNotEmpty() } ?: url)
+        }
+    }
     // Inline-render hook: citation links become tinted chips that navigate to the
     // matching source row instead of opening a browser. Every other node falls
     // through to the library's default handling.
-    val annotator = remember(citationChip) {
-        DefaultMarkdownAnnotator { content, node ->
+    val annotator = remember(citationChip, citationListener) {
+        markdownAnnotator { content, node ->
             node.citationChip(content)?.let { citation ->
                 pushStringAnnotation(CITATION_ANNOTATION, citation.url)
-                pushStyle(citationChip)
-                append(' ')
-                append(citation.title)
-                append(' ')
-                pop()
+                withLink(
+                    LinkAnnotation.Clickable(
+                        tag = citation.url,
+                        styles = TextLinkStyles(citationChip),
+                        linkInteractionListener = citationListener,
+                    )
+                ) {
+                    append(' ')
+                    append(citation.title)
+                    append(' ')
+                }
                 pop()
                 true
             } ?: false
@@ -252,13 +265,9 @@ private fun EnhancedMarkdownContent(
     }
     val colors = markdownColor(
         text = MaterialTheme.colorScheme.onSurface,
-        codeText = MaterialTheme.colorScheme.onSurface,
-        inlineCodeText = MaterialTheme.colorScheme.onSurface,
-        linkText = MaterialTheme.colorScheme.primary,
         codeBackground = MaterialTheme.colorScheme.surfaceContainerHigh,
         inlineCodeBackground = MaterialTheme.colorScheme.surfaceContainerHighest,
         dividerColor = MaterialTheme.colorScheme.outlineVariant,
-        tableText = MaterialTheme.colorScheme.onSurface,
         tableBackground = MaterialTheme.colorScheme.surfaceContainerLow,
     )
     // The m3 defaults size headings for full pages (h1 = displayLarge); chat bubbles
@@ -282,10 +291,17 @@ private fun EnhancedMarkdownContent(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         ),
         quote = MaterialTheme.typography.bodyLarge,
+        textLink = TextLinkStyles(
+            style = SpanStyle(
+                color = MaterialTheme.colorScheme.primary,
+                textDecoration = TextDecoration.Underline,
+            ),
+        ),
+        table = MaterialTheme.typography.bodyMedium,
     )
     val components = if (streaming) streamingMarkdownComponents(onArtifact) else defaultMarkdownComponents(onArtifact)
     CompositionLocalProvider(
-        LocalReferenceLinkHandler provides remember { ReferenceLinkHandlerImpl() },
+        LocalReferenceLinkHandler provides referenceLinkHandler,
         LocalMarkdownColors provides colors,
         LocalMarkdownTypography provides typography,
         LocalMarkdownPadding provides markdownPadding(),
@@ -302,7 +318,18 @@ private fun EnhancedMarkdownContent(
             tree.children.forEach { node ->
                 val gap = blockGap(previousType, node.type)
                 if (gap > 0.dp) Spacer(Modifier.height(gap))
-                MarkdownFlowNode(markdown, node, components)
+                if (node.type == MarkdownElementTypes.LINK_DEFINITION) {
+                    // Reference definitions have no visual output; the library stores
+                    // them in its state layer, which this custom dispatcher bypasses.
+                    val label = node.findChildOfType(MarkdownElementTypes.LINK_LABEL)?.getUnescapedTextInNode(markdown)
+                    if (label != null) {
+                        val destination = node.findChildOfType(MarkdownElementTypes.LINK_DESTINATION)
+                            ?.getUnescapedTextInNode(markdown)
+                        referenceLinkHandler.store(label, destination)
+                    }
+                } else {
+                    MarkdownElement(node = node, components = components, content = markdown, includeSpacer = false)
+                }
                 previousType = node.type
             }
         }
@@ -324,34 +351,6 @@ private fun blockGap(previous: IElementType?, current: IElementType?): Dp {
     }
 }
 
-@Composable
-private fun ColumnScope.MarkdownFlowNode(content: String, node: ASTNode, components: MarkdownComponents) {
-    val model = MarkdownComponentModel(content, node, LocalMarkdownTypography.current)
-    when (node.type) {
-        MarkdownElementTypes.ATX_1 -> components.heading1(this, model)
-        MarkdownElementTypes.ATX_2 -> components.heading2(this, model)
-        MarkdownElementTypes.ATX_3 -> components.heading3(this, model)
-        MarkdownElementTypes.ATX_4 -> components.heading4(this, model)
-        MarkdownElementTypes.ATX_5 -> components.heading5(this, model)
-        MarkdownElementTypes.ATX_6 -> components.heading6(this, model)
-        MarkdownElementTypes.SETEXT_1 -> components.setextHeading1(this, model)
-        MarkdownElementTypes.SETEXT_2 -> components.setextHeading2(this, model)
-        MarkdownElementTypes.BLOCK_QUOTE -> components.blockQuote(this, model)
-        MarkdownElementTypes.PARAGRAPH -> components.paragraph(this, model)
-        MarkdownElementTypes.ORDERED_LIST -> components.orderedList(this, model)
-        MarkdownElementTypes.UNORDERED_LIST -> components.unorderedList(this, model)
-        MarkdownElementTypes.CODE_FENCE -> components.codeFence(this, model)
-        MarkdownElementTypes.CODE_BLOCK -> components.codeBlock(this, model)
-        MarkdownElementTypes.IMAGE -> components.image(this, model)
-        MarkdownElementTypes.LINK_DEFINITION -> components.linkDefinition(this, model)
-        MarkdownTokenTypes.HORIZONTAL_RULE -> components.horizontalRule(this, model)
-        MarkdownTokenTypes.TEXT -> components.text(this, model)
-        MarkdownTokenTypes.EOL -> components.eol(this, model)
-        GFMElementTypes.TABLE -> components.table(this, model)
-        else -> node.children.forEach { child -> MarkdownFlowNode(content, child, components) }
-    }
-}
-
 private fun defaultMarkdownComponents(onArtifact: (String) -> Unit): MarkdownComponents = markdownComponents(
     codeBlock = highlightedCodeComponent,
     codeFence = highlightedCodeComponent,
@@ -359,6 +358,7 @@ private fun defaultMarkdownComponents(onArtifact: (String) -> Unit): MarkdownCom
     paragraph = { model -> MarkdownFlowParagraph(model.content, model.node, model.typography.paragraph, onArtifact) },
     image = { model -> MarkdownMessageImageFromNode(model.content, model.node, onArtifact) },
     blockQuote = { model -> MarkdownRichQuote(model.content, model.node, model.typography.quote, onArtifact) },
+    checkbox = { model -> MarkdownTaskCheckbox(model.content, model.node) },
 )
 
 private fun streamingMarkdownComponents(onArtifact: (String) -> Unit): MarkdownComponents = markdownComponents(
@@ -380,7 +380,21 @@ private fun streamingMarkdownComponents(onArtifact: (String) -> Unit): MarkdownC
         MarkdownRichQuote(model.content, model.node, model.typography.quote, onArtifact)
     },
     image = { model -> MarkdownMessageImageFromNode(model.content, model.node, onArtifact) },
+    checkbox = { model -> MarkdownTaskCheckbox(model.content, model.node) },
 )
+
+/** Task-list marker rendered as a checkbox icon aligned with the first text line. */
+@Composable
+private fun MarkdownTaskCheckbox(content: String, node: ASTNode) {
+    val marker = node.getTextInNode(content).trim().toString()
+    val checked = marker.equals("[x]", ignoreCase = true)
+    Icon(
+        if (checked) Icons.Outlined.CheckBox else Icons.Outlined.CheckBoxOutlineBlank,
+        contentDescription = null,
+        tint = if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 3.dp).size(18.dp),
+    )
+}
 
 /** Wraps a markdown component so elements that appear mid-stream blur-fade in once. */
 private fun revealOnAppear(component: MarkdownComponent): MarkdownComponent = { model ->
@@ -389,26 +403,26 @@ private fun revealOnAppear(component: MarkdownComponent): MarkdownComponent = { 
 
 /** Renders GFM tables with full cell borders and separator-row column alignment. */
 private val borderedTableComponent: MarkdownComponent = { model ->
-    EnhancedMarkdownTable(model.content, model.node, model.typography.text)
+    EnhancedMarkdownTable(model.content, model.node, model.typography.table)
 }
 
 // region Code blocks — highlighted content with a language + copy header
 
 /** Fenced and indented code share the same chrome; both carry a language hint when present. */
 private val highlightedCodeComponent: MarkdownComponent = { model ->
-    MarkdownCodeContent(model.content, model.node) { code, language -> MarkdownCodeSurface(code, language) }
+    MarkdownCodeContent(model.content, model.node) { code, language, _ -> MarkdownCodeSurface(code, language) }
 }
 
 @Composable
 private fun MarkdownCodeContent(
     content: String,
     node: ASTNode,
-    block: @Composable (String, String?) -> Unit,
+    block: @Composable (String, String?, TextStyle) -> Unit,
 ) {
     if (node.type == MarkdownElementTypes.CODE_FENCE) {
-        MarkdownCodeFence(content, node, block)
+        MarkdownCodeFence(content, node, block = block)
     } else {
-        MarkdownCodeBlock(content, node, block)
+        MarkdownCodeBlock(content, node, block = block)
     }
 }
 
@@ -419,7 +433,7 @@ private fun MarkdownCodeContent(
 @Composable
 private fun MarkdownCodeSurface(code: String, language: String?) {
     val codeBackground = LocalMarkdownColors.current.codeBackground
-    val codeText = LocalMarkdownColors.current.codeText
+    val codeText = LocalMarkdownColors.current.text
     val dividerColor = LocalMarkdownColors.current.dividerColor
     val codeStyle = LocalMarkdownTypography.current.code
     val syntaxLanguage = remember(language) { language?.let { SyntaxLanguage.getByName(it) } }
@@ -482,50 +496,12 @@ private fun MarkdownCodeSurface(code: String, language: String?) {
 
 // endregion
 
-// region Paragraph — display math, task lists, block-split images, citation chips
-
-private val taskListPrefixRegex = Regex("^\\s*\\[( |x|X)\\]\\s+")
-
-/** True/false for a GFM task-list item paragraph (only inside list items); null otherwise. */
-private fun ASTNode.taskListState(content: String): Boolean? {
-    if (parent?.type != MarkdownElementTypes.LIST_ITEM) return null
-    val match = taskListPrefixRegex.find(content.substring(startOffset, endOffset.coerceAtMost(content.length))) ?: return null
-    return match.groupValues[1] != " "
-}
-
-/** Blanks the `[x] ` marker in place so the inline node offsets stay valid. */
-private fun ASTNode.strippedTaskContent(content: String): String {
-    val source = content.substring(startOffset, endOffset.coerceAtMost(content.length))
-    val match = taskListPrefixRegex.find(source) ?: return content
-    val start = startOffset + match.range.first
-    return content.replaceRange(start, start + match.value.length, " ".repeat(match.value.length))
-}
+// region Paragraph — display math, block-split images, citation chips
 
 @Composable
 private fun MarkdownFlowParagraph(content: String, node: ASTNode, style: TextStyle, onArtifact: (String) -> Unit) {
-    val taskState = node.taskListState(content)
-    if (taskState != null) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-            Icon(
-                if (taskState) Icons.Outlined.CheckBox else Icons.Outlined.CheckBoxOutlineBlank,
-                contentDescription = null,
-                tint = if (taskState) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 3.dp).size(18.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            Box(Modifier.weight(1f)) {
-                MarkdownParagraphBody(node.strippedTaskContent(content), node, style, onArtifact)
-            }
-        }
-        return
-    }
-    MarkdownParagraphBody(content, node, style, onArtifact)
-}
-
-@Composable
-private fun MarkdownParagraphBody(content: String, node: ASTNode, style: TextStyle, onArtifact: (String) -> Unit) {
     val raw = content.substring(node.startOffset, node.endOffset.coerceAtMost(content.length))
-    // Quote continuation markers ("| > " prefixes) would hide the math delimiters.
+    // Quote continuation markers ("> " prefixes) would hide the math delimiters.
     val source = raw.lines().joinToString(separator = "\n") { line ->
         when {
             line.startsWith("> ") -> line.removePrefix("> ")
@@ -574,18 +550,42 @@ private fun MarkdownParagraphBody(content: String, node: ASTNode, style: TextSty
 
 @Composable
 private fun MarkdownInlineText(content: String, children: List<ASTNode>, style: TextStyle, onArtifact: (String) -> Unit) {
-    val linkSpanStyle = LocalMarkdownTypography.current.linkTextSpanStyle
+    val linkStyle = LocalMarkdownTypography.current.textLink
     val codeSpanStyle = LocalMarkdownTypography.current.codeSpanStyle
     val annotator = LocalMarkdownAnnotator.current
-    val value = remember(content, children, linkSpanStyle, codeSpanStyle, annotator, style) {
+    val referenceLinkHandler = LocalReferenceLinkHandler.current
+    val uriHandler = LocalUriHandler.current
+    // Links carry native [LinkAnnotation]s: clicks resolve through the reference
+    // handler, and artifact paths route into the artifact viewer instead of a
+    // browser. Text stays selectable inside SelectionContainer.
+    val linkListener = remember(referenceLinkHandler, uriHandler, onArtifact) {
+        LinkInteractionListener { link ->
+            val url = (link as? LinkAnnotation.Url)?.url ?: return@LinkInteractionListener
+            val resolved = referenceLinkHandler.find(url).takeIf { it.isNotEmpty() } ?: url
+            if (resolved.isArtifactPath()) {
+                onArtifact(resolved)
+            } else {
+                runCatching { uriHandler.openUri(resolved) }
+            }
+        }
+    }
+    val settings = remember(linkStyle, codeSpanStyle, annotator, referenceLinkHandler, linkListener) {
+        DefaultAnnotatorSettings(
+            linkTextSpanStyle = linkStyle,
+            codeSpanStyle = codeSpanStyle,
+            annotator = annotator,
+            referenceLinkHandler = referenceLinkHandler,
+            linkInteractionListener = linkListener,
+        )
+    }
+    val value = remember(content, children, settings, style) {
         buildAnnotatedString {
             pushStyle(style.toSpanStyle())
-            buildMarkdownAnnotatedString(content, children, linkSpanStyle, codeSpanStyle, annotator)
+            buildMarkdownAnnotatedString(content = content, children = children, annotatorSettings = settings)
             pop()
         }
     }.let { annotated ->
-        // Blank task markers leave leading spaces behind; markdown paragraphs never
-        // render meaningful leading whitespace, so trim it.
+        // Markdown paragraphs never render meaningful leading whitespace, so trim it.
         val firstNonWhitespace = annotated.text.indexOfFirst { !it.isWhitespace() }
         when {
             annotated.text.isEmpty() -> null
@@ -594,47 +594,12 @@ private fun MarkdownInlineText(content: String, children: List<ASTNode>, style: 
         }
     }
     value ?: return
-    val text = MaterialTheme.colorScheme.onSurface
-    val uriHandler = LocalUriHandler.current
-    val referenceLinkHandler = LocalReferenceLinkHandler.current
-    val onCitationClick = LocalCitationNavigator.current
-    val layoutResult = remember { mutableStateOf<TextLayoutResult?>(null) }
     val hasCitations = value.getStringAnnotations(CITATION_ANNOTATION, 0, value.length).isNotEmpty()
-    val clickable = hasCitations || value.getStringAnnotations(MARKDOWN_TAG_URL, 0, value.length).isNotEmpty()
     val textNode: @Composable () -> Unit = {
         Text(
             text = value,
             style = style,
-            color = text,
-            onTextLayout = { layoutResult.value = it },
-            modifier = if (clickable) {
-                Modifier.pointerInput(value, onCitationClick, onArtifact) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown()
-                        val offset = layoutResult.value?.getOffsetForPosition(down.position) ?: return@awaitEachGesture
-                        val citation = value.getStringAnnotations(CITATION_ANNOTATION, offset, offset).firstOrNull()
-                        val url = when {
-                            citation != null -> referenceLinkHandler.find(citation.item)
-                            else -> value.getStringAnnotations(MARKDOWN_TAG_URL, offset, offset)
-                                .reversed()
-                                .firstOrNull()
-                                ?.let { referenceLinkHandler.find(it.item) }
-                        } ?: return@awaitEachGesture
-                        down.consume()
-                        val up = waitForUpOrCancellation() ?: return@awaitEachGesture
-                        up.consume()
-                        if (citation != null) {
-                            onCitationClick(url)
-                        } else if (url.isArtifactPath()) {
-                            onArtifact(url)
-                        } else {
-                            runCatching { uriHandler.openUri(url) }
-                        }
-                    }
-                }
-            } else {
-                Modifier
-            },
+            color = LocalMarkdownColors.current.text,
         )
     }
     if (hasCitations) {
@@ -738,6 +703,12 @@ private fun EnhancedMarkdownTable(content: String, node: ASTNode, style: TextSty
     if (columns == 0) return
     val alignments = remember(content, node) { tableColumnAlignments(content, node, columns) }
     val dividerColor = LocalMarkdownColors.current.dividerColor
+    val cellSettings = DefaultAnnotatorSettings(
+        linkTextSpanStyle = LocalMarkdownTypography.current.textLink,
+        codeSpanStyle = LocalMarkdownTypography.current.codeSpanStyle,
+        annotator = LocalMarkdownAnnotator.current,
+        referenceLinkHandler = LocalReferenceLinkHandler.current,
+    )
     val rows = node.children.filter { it.type == GFMElementTypes.HEADER || it.type == GFMElementTypes.ROW }
     Surface(
         shape = MaterialTheme.shapes.small,
@@ -755,6 +726,7 @@ private fun EnhancedMarkdownTable(content: String, node: ASTNode, style: TextSty
                     alignments = alignments,
                     dividerColor = dividerColor,
                     drawBottomDivider = index < rows.lastIndex,
+                    cellSettings = cellSettings,
                 )
             }
         }
@@ -769,6 +741,7 @@ private fun EnhancedMarkdownTableRow(
     alignments: List<TextAlign>,
     dividerColor: Color,
     drawBottomDivider: Boolean,
+    cellSettings: DefaultAnnotatorSettings,
 ) {
     // Draw the horizontal divider at the bottom of the row itself: the Row has a
     // determined width (sum of its cells), so drawLine spans the full table
@@ -800,9 +773,13 @@ private fun EnhancedMarkdownTableRow(
                 )
             }
             MarkdownBasicText(
-                text = content.buildMarkdownAnnotatedString(cell, style).trimCellText(),
+                text = buildAnnotatedString {
+                    pushStyle(style.toSpanStyle())
+                    buildMarkdownAnnotatedString(content = content, node = cell, annotatorSettings = cellSettings)
+                    pop()
+                }.trimCellText(),
                 style = style,
-                color = LocalMarkdownColors.current.tableText,
+                color = LocalMarkdownColors.current.text,
                 textAlign = alignments.getOrElse(column) { TextAlign.Start },
                 modifier = Modifier
                     .width(enhancedTableCellWidth)

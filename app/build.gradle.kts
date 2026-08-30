@@ -166,8 +166,8 @@ dependencies {
     implementation("org.commonmark:commonmark:0.29.0")
     implementation("org.commonmark:commonmark-ext-gfm-strikethrough:0.29.0")
     implementation("org.commonmark:commonmark-ext-gfm-tables:0.29.0")
-    implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.28.0")
-    implementation("com.mikepenz:multiplatform-markdown-renderer-code:0.28.0")
+    implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.39.0")
+    implementation("com.mikepenz:multiplatform-markdown-renderer-code:0.39.0")
     implementation("io.github.erweixin:ratex-android:0.1.13")
     ksp("androidx.room:room-compiler:2.8.4")
 
