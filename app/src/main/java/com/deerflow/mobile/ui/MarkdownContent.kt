@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -34,20 +36,29 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -67,11 +78,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.deerflow.mobile.R
+import com.deerflow.mobile.ui.glass.glass
+import com.deerflow.mobile.ui.glass.glassEdge
 import com.deerflow.mobile.ui.glass.glassFrosted
+import com.deerflow.mobile.ui.glass.rememberGlassTints
 import com.deerflow.mobile.ui.theme.GeminiColors
 import com.mikepenz.markdown.compose.LocalImageTransformer
 import com.mikepenz.markdown.compose.LocalMarkdownAnnotator
@@ -91,7 +106,6 @@ import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.annotator.DefaultAnnotatorSettings
 import com.mikepenz.markdown.annotator.buildMarkdownAnnotatedString
 import com.mikepenz.markdown.compose.extendedspans.ExtendedSpans
-import com.mikepenz.markdown.compose.extendedspans.RoundedCornerSpanPainter
 import com.mikepenz.markdown.compose.extendedspans.drawBehind
 import com.mikepenz.markdown.compose.elements.MarkdownBulletList
 import com.mikepenz.markdown.compose.elements.MarkdownCheckBox
@@ -116,6 +130,8 @@ import dev.snipme.highlights.model.ColorHighlight
 import dev.snipme.highlights.model.SyntaxLanguage
 import io.ratex.RaTeXView
 import java.net.URI
+import java.util.UUID
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.commonmark.ext.gfm.strikethrough.StrikethroughExtension
@@ -206,6 +222,13 @@ internal fun sourcesStrippedMarkdown(markdown: String, bodyNodes: List<Node>): S
     if (bodyNodes.isEmpty()) return ""
     return bodyNodes.joinToString(separator = "\n\n") { node -> node.sourceText(markdown) }
 }
+
+/** Shared extended-spans painter: per-line rounded backgrounds for inline code and citation chips. */
+private fun perLineBackgroundPainter(density: androidx.compose.ui.unit.Density) = PerLineRoundedBackgroundPainter(
+    cornerRadius = with(density) { 5.dp.toSp() },
+    horizontalPadding = 3.sp,
+    lineInset = 2.sp,
+)
 
 private fun Node.sourceText(markdown: String): String {
     val parts = mutableListOf<String>()
@@ -305,11 +328,10 @@ private fun EnhancedMarkdownContent(
         bullet = chatBody,
         list = chatBody,
         // Inline code gets a text color that reads apart from body copy and links
-        // (links stay primary); the rounded background comes from the extended-spans
-        // painter wired in MarkdownInlineText.
+        // (links stay primary): a light gray over the tinted rounded background.
         inlineCode = chatBody.copy(
             fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.tertiary,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         ),
         textLink = TextLinkStyles(
             style = SpanStyle(
@@ -332,12 +354,7 @@ private fun EnhancedMarkdownContent(
             // Library-rendered text (headings) gets the same rounded inline-code
             // treatment as the custom paragraph path.
             val density = LocalDensity.current
-            ExtendedSpans(
-                RoundedCornerSpanPainter(
-                    cornerRadius = with(density) { 5.dp.toSp() },
-                    padding = RoundedCornerSpanPainter.TextPaddingValues(horizontal = 3.sp, vertical = 1.sp),
-                ),
-            )
+            ExtendedSpans(perLineBackgroundPainter(density))
         },
         LocalMarkdownComponents provides components,
         LocalMarkdownAnimations provides markdownAnimations(),
@@ -461,7 +478,7 @@ private fun MarkdownCodeContent(
  * wrapping, under a header naming the language with a one-tap copy action.
  */
 @Composable
-private fun MarkdownCodeSurface(code: String, language: String?) {
+internal fun MarkdownCodeSurface(code: String, language: String?) {
     val codeBackground = LocalMarkdownColors.current.codeBackground
     val codeText = LocalMarkdownColors.current.text
     val dividerColor = LocalMarkdownColors.current.dividerColor
@@ -609,17 +626,10 @@ private fun MarkdownInlineText(content: String, children: List<ASTNode>, style: 
         )
     }
     val density = LocalDensity.current
-    // Rounded-corner backgrounds for spans that carry one (inline code, citation
-    // chips): the painter swaps the rectangular SpanStyle.background for a drawn
-    // round rect with a little breathing room.
-    val extendedSpans = remember {
-        ExtendedSpans(
-            RoundedCornerSpanPainter(
-                cornerRadius = with(density) { 5.dp.toSp() },
-                padding = RoundedCornerSpanPainter.TextPaddingValues(horizontal = 3.sp, vertical = 1.sp),
-            ),
-        )
-    }
+    // Per-line rounded backgrounds for spans that carry one (inline code,
+    // citation chips): wrapped spans render as one rounded strip per line with a
+    // gap between lines instead of a merged block.
+    val extendedSpans = remember { ExtendedSpans(perLineBackgroundPainter(density)) }
     val value = remember(content, children, settings, style) {
         buildAnnotatedString {
             pushStyle(style.toSpanStyle())
@@ -755,6 +765,8 @@ private fun EnhancedMarkdownTable(content: String, node: ASTNode, style: TextSty
         annotator = LocalMarkdownAnnotator.current,
         referenceLinkHandler = LocalReferenceLinkHandler.current,
     )
+    val density = LocalDensity.current
+    val cellSpans = remember(density) { ExtendedSpans(perLineBackgroundPainter(density)) }
     val rows = node.children.filter { it.type == GFMElementTypes.HEADER || it.type == GFMElementTypes.ROW }
     Surface(
         shape = MaterialTheme.shapes.medium,
@@ -773,6 +785,7 @@ private fun EnhancedMarkdownTable(content: String, node: ASTNode, style: TextSty
                     dividerColor = dividerColor,
                     drawBottomDivider = index < rows.lastIndex,
                     cellSettings = cellSettings,
+                    cellSpans = cellSpans,
                 )
             }
         }
@@ -788,6 +801,7 @@ private fun EnhancedMarkdownTableRow(
     dividerColor: Color,
     drawBottomDivider: Boolean,
     cellSettings: DefaultAnnotatorSettings,
+    cellSpans: ExtendedSpans,
 ) {
     // Draw the horizontal divider at the bottom of the row itself: the Row has a
     // determined width (sum of its cells), so drawLine spans the full table
@@ -818,17 +832,20 @@ private fun EnhancedMarkdownTableRow(
                         .background(dividerColor),
                 )
             }
+            val cellText = buildAnnotatedString {
+                pushStyle(style.toSpanStyle())
+                buildMarkdownAnnotatedString(content = content, node = cell, annotatorSettings = cellSettings)
+                pop()
+            }.trimCellText()
             MarkdownBasicText(
-                text = buildAnnotatedString {
-                    pushStyle(style.toSpanStyle())
-                    buildMarkdownAnnotatedString(content = content, node = cell, annotatorSettings = cellSettings)
-                    pop()
-                }.trimCellText(),
+                text = remember(cellText, cellSpans) { cellSpans.extend(cellText) },
                 style = style,
                 color = LocalMarkdownColors.current.text,
                 textAlign = alignments.getOrElse(column) { TextAlign.Start },
+                onTextLayout = { cellSpans.onTextLayout(it) },
                 modifier = Modifier
                     .width(enhancedTableCellWidth)
+                    .drawBehind(cellSpans)
                     .padding(LocalMarkdownDimens.current.tableCellPadding),
             )
         }
@@ -953,57 +970,160 @@ internal fun displayMathSource(source: String): String? {
         .takeIf(String::isNotEmpty)
 }
 
+/**
+ * Hosts citation source cards OUTSIDE the recorded conversation layer so they
+ * can be real backdrop-sampling liquid glass. [CitationSources] renders an
+ * invisible in-flow card that reserves the exact layout space and reports its
+ * bounds; [CitationCardOverlayHost] draws the glass card over it. Screens
+ * without a host (tests, sheets) fall back to the frosted in-flow card.
+ */
+@Stable
+class CitationCardHostState internal constructor() {
+    internal val entries = mutableStateMapOf<String, CitationCardEntry>()
+
+    internal fun put(key: String, entry: CitationCardEntry) {
+        entries[key] = entry
+    }
+
+    internal fun remove(key: String) {
+        entries.remove(key)
+    }
+}
+
+@Stable
+internal class CitationCardEntry {
+    var bounds by mutableStateOf<Rect?>(null)
+    var content: (@Composable () -> Unit)? = null
+}
+
+val LocalCitationCardHost = compositionLocalOf<CitationCardHostState?> { null }
+
+@Composable
+fun rememberCitationCardHostState(): CitationCardHostState = remember { CitationCardHostState() }
+
+/** Draws one real-glass card per registered citation entry, anchored to its in-flow placeholder. */
+@Composable
+fun CitationCardOverlayHost(state: CitationCardHostState, modifier: Modifier = Modifier) {
+    if (state.entries.isEmpty()) return
+    var overlayBounds by remember { mutableStateOf<Rect?>(null) }
+    Box(modifier.fillMaxSize().onGloballyPositioned { overlayBounds = it.boundsInRoot() }) {
+        val overlay = overlayBounds ?: return@Box
+        val density = LocalDensity.current
+        val shape = MaterialTheme.shapes.medium
+        val tints = rememberGlassTints()
+        state.entries.forEach { (_, entry) ->
+            val bounds = entry.bounds ?: return@forEach
+            val content = entry.content ?: return@forEach
+            Box(
+                Modifier
+                    .offset {
+                        IntOffset(
+                            (bounds.left - overlay.left).roundToInt(),
+                            (bounds.top - overlay.top).roundToInt(),
+                        )
+                    }
+                    .width(with(density) { bounds.width.toDp() })
+                    .glass(shape, tint = tints.veil, useLens = true)
+                    .glassEdge(shape),
+            ) {
+                content()
+            }
+        }
+    }
+}
+
 @Composable
 private fun CitationSources(
     sources: List<CitationSource>,
     sourceRequesters: Map<String, BringIntoViewRequester>,
 ) {
     if (sources.isEmpty()) return
-    val primary = MaterialTheme.colorScheme.primary
-    Column(
-        modifier = Modifier
+    val host = LocalCitationCardHost.current
+    if (host == null) {
+        // Fallback for screens without an overlay host: frosted in-flow card.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .glassFrosted(MaterialTheme.shapes.medium)
+                .drawBehind {
+                    drawRect(
+                        Brush.linearGradient(
+                            0f to GeminiColors.Blue.copy(alpha = 0.06f),
+                            0.5f to GeminiColors.Violet.copy(alpha = 0.06f),
+                            1f to GeminiColors.Pink.copy(alpha = 0.06f),
+                        ),
+                    )
+                }
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            SourcesCardContent(sources, sourceRequesters, interactive = true)
+        }
+        return
+    }
+    // Real liquid glass: an invisible in-flow copy reserves the exact space (and
+    // keeps bring-into-view working), while the overlay host draws the glass card.
+    val key = remember { UUID.randomUUID().toString() }
+    DisposableEffect(Unit) { onDispose { host.remove(key) } }
+    val entry = remember { CitationCardEntry() }
+    entry.content = { SourcesCardContent(sources, sourceRequesters, interactive = false) }
+    Box(
+        Modifier
             .fillMaxWidth()
-            .glassFrosted(MaterialTheme.shapes.medium)
-            // Faint Gemini gradient wash (same language as the glass menu panels)
-            // so the card carries the aurora's hues even though it cannot sample
-            // the backdrop: it lives inside the recorded conversation layer, where
-            // real sampling glass would self-sample and crash the RenderThread.
-            .drawBehind {
-                drawRect(
-                    Brush.linearGradient(
-                        0f to GeminiColors.Blue.copy(alpha = 0.06f),
-                        0.5f to GeminiColors.Violet.copy(alpha = 0.06f),
-                        1f to GeminiColors.Pink.copy(alpha = 0.06f),
-                    ),
-                )
+            .onGloballyPositioned { coordinates ->
+                val bounds = coordinates.boundsInRoot()
+                if (entry.bounds != bounds) entry.bounds = bounds
             }
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+            .graphicsLayer { alpha = 0f },
     ) {
+        SourcesCardContent(sources, sourceRequesters, interactive = false)
+    }
+    SideEffect { host.put(key, entry) }
+}
+
+@Composable
+private fun SourcesCardContent(
+    sources: List<CitationSource>,
+    sourceRequesters: Map<String, BringIntoViewRequester>,
+    interactive: Boolean,
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
             stringResource(R.string.citation_sources, sources.size),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         sources.forEachIndexed { index, source ->
-            val link = remember(source, primary) {
+            val link = remember(source, primary, interactive) {
                 buildAnnotatedString {
-                    withLink(
-                        LinkAnnotation.Url(
-                            url = source.url,
-                            styles = TextLinkStyles(SpanStyle(color = primary, textDecoration = TextDecoration.Underline)),
-                        )
-                    ) {
+                    val titleStyle = SpanStyle(color = primary, textDecoration = TextDecoration.Underline)
+                    if (interactive) {
+                        withLink(
+                            LinkAnnotation.Url(
+                                url = source.url,
+                                styles = TextLinkStyles(titleStyle),
+                            )
+                        ) {
+                            append(source.title)
+                        }
+                    } else {
+                        pushStyle(titleStyle)
                         append(source.title)
+                        pop()
                     }
                     append(" · ${source.domain}")
                     if (source.count > 1) append(" ×${source.count}")
                 }
             }
             Box(
-                modifier = (sourceRequesters[source.url]?.let { requester ->
-                    Modifier.bringIntoViewRequester(requester)
-                } ?: Modifier).testTag(UiTags.CitationSourcePrefix + index),
+                modifier = if (interactive) {
+                    (sourceRequesters[source.url]?.let { requester ->
+                        Modifier.bringIntoViewRequester(requester)
+                    } ?: Modifier).testTag(UiTags.CitationSourcePrefix + index)
+                } else {
+                    Modifier
+                },
             ) {
                 Text(
                     link,

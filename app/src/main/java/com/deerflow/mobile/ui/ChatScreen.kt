@@ -262,7 +262,12 @@ fun ChatScreen(
         // the top bar and composer are sibling glass overlays that sample it.
         // Glass elements must stay OUTSIDE the layerBackdrop content they sample.
         val menuHost = rememberGlassMenuHostState()
-        CompositionLocalProvider(LocalGlassBackdrop provides backdrop, LocalGlassMenuHost provides menuHost) {
+        val citationCardHost = rememberCitationCardHostState()
+        CompositionLocalProvider(
+            LocalGlassBackdrop provides backdrop,
+            LocalGlassMenuHost provides menuHost,
+            LocalCitationCardHost provides citationCardHost,
+        ) {
             var topOverlayHeightPx by remember { mutableIntStateOf(0) }
             var bottomOverlayHeightPx by remember { mutableIntStateOf(0) }
             val density = LocalDensity.current
@@ -324,6 +329,9 @@ fun ChatScreen(
                 topInset = topOverlayHeight,
                 modifier = Modifier.fillMaxSize(),
             )
+            // Real-glass citation source cards, anchored to their invisible
+            // in-flow placeholders inside the conversation.
+            CitationCardOverlayHost(citationCardHost, Modifier.fillMaxSize())
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1380,131 +1388,114 @@ internal fun ArtifactSessionDialog(
     val markdown = session.filename.endsWith(".md", ignoreCase = true) ||
         session.filename.endsWith(".markdown", ignoreCase = true)
     val language = artifactLanguage(session.filename, session.mimeType)
-    // A sheet (not an AlertDialog): sheets render in the activity composition, so
-    // the glass surface really samples the conversation/aurora backdrop instead
-    // of falling back to a translucent fill in a separate dialog window.
-    GlassModalBottomSheet(
+    GlassAlertDialog(
         onDismissRequest = {
             if (downloading) onCancel() else onDismiss()
         },
-    ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .padding(top = 6.dp, bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(
-                session.filename,
-                style = MaterialTheme.typography.titleLarge,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (session.mimeType.isNotBlank()) {
-                Text(
-                    session.mimeType,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Text(sizeLabel, style = MaterialTheme.typography.bodyMedium)
-            when {
-                awaiting -> {
-                    Text(
-                        stringResource(R.string.artifact_download_confirmation_body),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
+        title = { Text(session.filename, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (session.mimeType.isNotBlank()) {
+                    Text(session.mimeType, style = MaterialTheme.typography.bodyMedium)
                 }
-                downloading -> {
-                    Text(
-                        if (session.totalBytes == null) {
-                            stringResource(R.string.artifact_downloaded_unknown_total, downloadedLabel)
-                        } else {
-                            stringResource(R.string.artifact_downloaded_of_total, downloadedLabel, sizeLabel)
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    if (session.totalBytes == null || session.totalBytes <= 0L) {
-                        LoadingIndicator(Modifier.size(24.dp))
-                    } else {
-                        androidx.compose.material3.LinearProgressIndicator(
-                            progress = {
-                                (session.downloadedBytes.toFloat() / session.totalBytes).coerceIn(0f, 1f)
-                            },
-                            modifier = Modifier.fillMaxWidth(),
+                Text(sizeLabel, style = MaterialTheme.typography.bodyMedium)
+                when {
+                    awaiting -> {
+                        Text(
+                            stringResource(R.string.artifact_download_confirmation_body),
+                            style = MaterialTheme.typography.bodyMedium,
                         )
                     }
-                }
-                ready && session.text != null -> {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 380.dp)
-                            .verticalScroll(rememberScrollState()),
-                    ) {
-                        SelectionContainer {
-                            Column(
-                                Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                if (session.textTruncated) {
-                                    Text(
-                                        stringResource(R.string.artifact_preview_truncated),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                when {
-                                    markdown && !session.textTruncated -> MarkdownContent(session.text)
-                                    language != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    downloading -> {
+                        Text(
+                            if (session.totalBytes == null) {
+                                stringResource(R.string.artifact_downloaded_unknown_total, downloadedLabel)
+                            } else {
+                                stringResource(R.string.artifact_downloaded_of_total, downloadedLabel, sizeLabel)
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        if (session.totalBytes == null || session.totalBytes <= 0L) {
+                            LoadingIndicator(Modifier.size(24.dp))
+                        } else {
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = {
+                                    (session.downloadedBytes.toFloat() / session.totalBytes).coerceIn(0f, 1f)
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                    ready && session.text != null -> {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 420.dp)
+                                .verticalScroll(rememberScrollState()),
+                        ) {
+                            SelectionContainer {
+                                Column(
+                                    Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    if (session.textTruncated) {
                                         Text(
-                                            language,
+                                            stringResource(R.string.artifact_preview_truncated),
                                             style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.primary,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
-                                        Text(
+                                    }
+                                    when {
+                                        markdown && !session.textTruncated -> MarkdownContent(session.text)
+                                        language != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Text(
+                                                language,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.primary,
+                                            )
+                                            Text(
+                                                session.text,
+                                                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                                            )
+                                        }
+                                        else -> Text(
                                             session.text,
                                             style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
                                         )
                                     }
-                                    else -> Text(
-                                        session.text,
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                                    )
                                 }
                             }
                         }
                     }
                 }
             }
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+        },
+        confirmButton = {
+            when {
+                awaiting -> TextButton(onClick = onDownload) { Text(stringResource(R.string.download)) }
+                downloading -> {}
+                ready -> TextButton(onClick = onOpen, enabled = session.localPath != null) {
+                    Text(stringResource(R.string.open))
+                }
+            }
+        },
+        dismissButton = {
+            Row {
+                if (ready) {
+                    TextButton(onClick = onSave, enabled = session.localPath != null) {
+                        Text(stringResource(R.string.save_copy))
+                    }
+                }
                 TextButton(
                     onClick = if (downloading) onCancel else onDismiss,
                 ) {
                     Text(stringResource(if (downloading || awaiting) R.string.cancel else R.string.close))
                 }
-                if (ready) {
-                    OutlinedButton(onClick = onSave, enabled = session.localPath != null) {
-                        Text(stringResource(R.string.save_copy))
-                    }
-                }
-                when {
-                    awaiting -> Button(onClick = onDownload) { Text(stringResource(R.string.download)) }
-                    ready -> Button(onClick = onOpen, enabled = session.localPath != null) {
-                        Text(stringResource(R.string.open))
-                    }
-                    downloading -> Unit
-                }
             }
-        }
-    }
+        },
+    )
 }
 
 internal fun artifactLanguage(filename: String, mimeType: String): String? {
@@ -1613,9 +1604,6 @@ internal fun MessageComposer(
                         shadow = { Shadow(radius = 12.dp, color = Color.Black.copy(alpha = 0.10f)) },
                     )
                     .glassEdge(RoundedCornerShape(28.dp))
-                    // Light hairline so the floating input bar keeps a visible
-                    // boundary over bright conversation content.
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(28.dp))
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             ) {
                 AnimatedVisibility(
@@ -1734,6 +1722,8 @@ internal fun MessageComposer(
                             ),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                // Light gray hairline around the text field itself.
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp))
                                 .focusRequester(inputFocusRequester)
                                 .onFocusChanged { composerFocused = it.isFocused }
                                 .testTag(UiTags.ComposerInput),
@@ -1968,28 +1958,32 @@ internal fun CapabilityRow(
                         onDismissRequest = { agentSelectorExpanded = false },
                         modifier = Modifier.testTag(UiTags.AgentSelectorMenu),
                     ) {
-                        GlassMenuHeader(stringResource(R.string.agent))
-                        AgentSelectorOption(
-                            name = "lead_agent",
-                            label = "DeerFlow",
-                            description = stringResource(R.string.lead_agent_description),
-                            selected = state.composer.options.assistantId == "lead_agent",
-                            onClick = {
-                                agentSelectorExpanded = false
-                                onAgentSelected("lead_agent")
-                            },
-                        )
-                        state.capabilities.agents.customAgentsOnly().forEach { agent ->
+                        // Menu scope content renders inside a Box; without an
+                        // explicit Column every item stacks on the same spot.
+                        Column {
+                            GlassMenuHeader(stringResource(R.string.agent))
                             AgentSelectorOption(
-                                name = agent.name,
-                                label = agent.name,
-                                description = agent.description,
-                                selected = state.composer.options.assistantId == agent.name,
+                                name = "lead_agent",
+                                label = "DeerFlow",
+                                description = stringResource(R.string.lead_agent_description),
+                                selected = state.composer.options.assistantId == "lead_agent",
                                 onClick = {
                                     agentSelectorExpanded = false
-                                    onAgentSelected(agent.name)
+                                    onAgentSelected("lead_agent")
                                 },
                             )
+                            state.capabilities.agents.customAgentsOnly().forEach { agent ->
+                                AgentSelectorOption(
+                                    name = agent.name,
+                                    label = agent.name,
+                                    description = agent.description,
+                                    selected = state.composer.options.assistantId == agent.name,
+                                    onClick = {
+                                        agentSelectorExpanded = false
+                                        onAgentSelected(agent.name)
+                                    },
+                                )
+                            }
                         }
                     }
                     actions.take(inlineCount).forEach { action ->

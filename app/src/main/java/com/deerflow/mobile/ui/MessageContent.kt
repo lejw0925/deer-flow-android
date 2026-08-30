@@ -832,12 +832,9 @@ private fun MessageBlockView(
 
 @Composable
 internal fun CodeDetail(code: String, language: String? = null) {
-    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(6.dp)) {
-        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            language?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.labelMedium) }
-            Text(code, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace))
-        }
-    }
+    // Shares the markdown code-block chrome: language header, syntax
+    // highlighting, copy button, and the unified corner radius.
+    MarkdownCodeSurface(code, language)
 }
 
 @Composable
