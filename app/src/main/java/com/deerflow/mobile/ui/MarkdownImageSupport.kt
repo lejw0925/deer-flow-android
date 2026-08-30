@@ -6,6 +6,7 @@ import android.util.Base64
 import android.webkit.CookieManager
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
@@ -138,6 +139,11 @@ internal fun MarkdownMessageImage(
                 modifier = Modifier
                     .fillMaxWidth(0.9f)
                     .heightIn(max = 420.dp)
+                    .border(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                        RoundedCornerShape(12.dp),
+                    )
                     .clip(RoundedCornerShape(12.dp))
                     .clickable {
                         if (src.isArtifactPath()) onArtifact(src)
@@ -155,8 +161,13 @@ internal fun MarkdownMessageImage(
                 Modifier
                     .fillMaxWidth(0.9f)
                     .aspectRatio(16f / 10f)
+                    .border(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                        RoundedCornerShape(12.dp),
+                    )
                     .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                 contentAlignment = Alignment.Center,
             ) {
                 Text("…", color = MaterialTheme.colorScheme.onSurfaceVariant)

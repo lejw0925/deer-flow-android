@@ -21,7 +21,6 @@ import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CheckBox
@@ -70,6 +69,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.deerflow.mobile.R
+import com.deerflow.mobile.ui.glass.glassFrosted
 import com.mikepenz.markdown.compose.LocalImageTransformer
 import com.mikepenz.markdown.compose.LocalMarkdownAnnotator
 import com.mikepenz.markdown.compose.LocalMarkdownAnimations
@@ -855,7 +855,7 @@ private fun MarkdownMathBlock(latex: String) {
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 48.dp)
+                .heightIn(min = 32.dp)
                 .padding(horizontal = 8.dp, vertical = 4.dp),
         )
     }
@@ -913,12 +913,11 @@ private fun CitationSources(
     sourceRequesters: Map<String, BringIntoViewRequester>,
 ) {
     if (sources.isEmpty()) return
-    val uriHandler = LocalUriHandler.current
     val primary = MaterialTheme.colorScheme.primary
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.shapes.small)
+            .glassFrosted(MaterialTheme.shapes.medium)
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -930,11 +929,14 @@ private fun CitationSources(
         sources.forEachIndexed { index, source ->
             val link = remember(source, primary) {
                 buildAnnotatedString {
-                    pushStringAnnotation("URL", source.url)
-                    withStyle(SpanStyle(color = primary, textDecoration = TextDecoration.Underline)) {
+                    withLink(
+                        LinkAnnotation.Url(
+                            url = source.url,
+                            styles = TextLinkStyles(SpanStyle(color = primary, textDecoration = TextDecoration.Underline)),
+                        )
+                    ) {
                         append(source.title)
                     }
-                    pop()
                     append(" · ${source.domain}")
                     if (source.count > 1) append(" ×${source.count}")
                 }
@@ -944,14 +946,9 @@ private fun CitationSources(
                     Modifier.bringIntoViewRequester(requester)
                 } ?: Modifier).testTag(UiTags.CitationSourcePrefix + index),
             ) {
-                ClickableText(
-                    text = link,
+                Text(
+                    link,
                     style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
-                    onClick = { offset ->
-                        link.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { reference ->
-                            runCatching { uriHandler.openUri(reference.item) }
-                        }
-                    },
                 )
             }
         }
@@ -1085,15 +1082,6 @@ internal data class MarkdownCitationPresentation(
     val sources: List<CitationSource>,
     val sourcesSectionStripped: Boolean = false,
 )
-
-private inline fun AnnotatedString.Builder.withStyle(style: SpanStyle, block: AnnotatedString.Builder.() -> Unit) {
-    pushStyle(style)
-    try {
-        block()
-    } finally {
-        pop()
-    }
-}
 
 private fun Node.children(): Sequence<Node> = sequence {
     var child = firstChild
