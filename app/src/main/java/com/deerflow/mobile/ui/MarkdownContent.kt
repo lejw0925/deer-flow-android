@@ -45,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -70,6 +71,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.deerflow.mobile.R
 import com.deerflow.mobile.ui.glass.glassFrosted
+import com.deerflow.mobile.ui.theme.GeminiColors
 import com.mikepenz.markdown.compose.LocalImageTransformer
 import com.mikepenz.markdown.compose.LocalMarkdownAnnotator
 import com.mikepenz.markdown.compose.LocalMarkdownAnimations
@@ -918,6 +920,19 @@ private fun CitationSources(
         modifier = Modifier
             .fillMaxWidth()
             .glassFrosted(MaterialTheme.shapes.medium)
+            // Faint Gemini gradient wash (same language as the glass menu panels)
+            // so the card carries the aurora's hues even though it cannot sample
+            // the backdrop: it lives inside the recorded conversation layer, where
+            // real sampling glass would self-sample and crash the RenderThread.
+            .drawBehind {
+                drawRect(
+                    Brush.linearGradient(
+                        0f to GeminiColors.Blue.copy(alpha = 0.06f),
+                        0.5f to GeminiColors.Violet.copy(alpha = 0.06f),
+                        1f to GeminiColors.Pink.copy(alpha = 0.06f),
+                    ),
+                )
+            }
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {

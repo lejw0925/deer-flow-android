@@ -93,7 +93,7 @@ import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Button
 import androidx.compose.material3.FloatingToolbarDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -101,6 +101,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.HorizontalFloatingToolbar
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
@@ -127,7 +128,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.stringResource
@@ -1159,6 +1159,9 @@ internal fun TodoSummary(
                 .glass(
                     shape = shape,
                     useLens = true,
+                    // Heavy blur so the panel reads as frosted glass over busy
+                    // conversation text, not as a sharp lens.
+                    blurRadius = 12.dp,
                     highlight = { Highlight.Ambient },
                     shadow = { glassShadow() },
                 )
@@ -1216,6 +1219,7 @@ private fun TodoProgressDetails(
             .glass(
                 shape = shape,
                 useLens = true,
+                blurRadius = 12.dp,
                 highlight = { Highlight.Ambient },
                 shadow = { glassShadow() },
             )
@@ -1372,114 +1376,131 @@ internal fun ArtifactSessionDialog(
     val markdown = session.filename.endsWith(".md", ignoreCase = true) ||
         session.filename.endsWith(".markdown", ignoreCase = true)
     val language = artifactLanguage(session.filename, session.mimeType)
-    GlassAlertDialog(
+    // A sheet (not an AlertDialog): sheets render in the activity composition, so
+    // the glass surface really samples the conversation/aurora backdrop instead
+    // of falling back to a translucent fill in a separate dialog window.
+    GlassModalBottomSheet(
         onDismissRequest = {
             if (downloading) onCancel() else onDismiss()
         },
-        title = { Text(session.filename, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (session.mimeType.isNotBlank()) {
-                    Text(session.mimeType, style = MaterialTheme.typography.bodyMedium)
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(top = 6.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                session.filename,
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (session.mimeType.isNotBlank()) {
+                Text(
+                    session.mimeType,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(sizeLabel, style = MaterialTheme.typography.bodyMedium)
+            when {
+                awaiting -> {
+                    Text(
+                        stringResource(R.string.artifact_download_confirmation_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
                 }
-                Text(sizeLabel, style = MaterialTheme.typography.bodyMedium)
-                when {
-                    awaiting -> {
-                        Text(
-                            stringResource(R.string.artifact_download_confirmation_body),
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                    downloading -> {
-                        Text(
-                            if (session.totalBytes == null) {
-                                stringResource(R.string.artifact_downloaded_unknown_total, downloadedLabel)
-                            } else {
-                                stringResource(R.string.artifact_downloaded_of_total, downloadedLabel, sizeLabel)
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        if (session.totalBytes == null || session.totalBytes <= 0L) {
-                            LoadingIndicator(Modifier.size(24.dp))
+                downloading -> {
+                    Text(
+                        if (session.totalBytes == null) {
+                            stringResource(R.string.artifact_downloaded_unknown_total, downloadedLabel)
                         } else {
-                            androidx.compose.material3.LinearProgressIndicator(
-                                progress = {
-                                    (session.downloadedBytes.toFloat() / session.totalBytes).coerceIn(0f, 1f)
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
+                            stringResource(R.string.artifact_downloaded_of_total, downloadedLabel, sizeLabel)
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    if (session.totalBytes == null || session.totalBytes <= 0L) {
+                        LoadingIndicator(Modifier.size(24.dp))
+                    } else {
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = {
+                                (session.downloadedBytes.toFloat() / session.totalBytes).coerceIn(0f, 1f)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
-                    ready && session.text != null -> {
-                        Surface(
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 420.dp)
-                                .verticalScroll(rememberScrollState()),
-                        ) {
-                            SelectionContainer {
-                                Column(
-                                    Modifier.padding(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    if (session.textTruncated) {
+                }
+                ready && session.text != null -> {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 380.dp)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        SelectionContainer {
+                            Column(
+                                Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                if (session.textTruncated) {
+                                    Text(
+                                        stringResource(R.string.artifact_preview_truncated),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                when {
+                                    markdown && !session.textTruncated -> MarkdownContent(session.text)
+                                    language != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text(
-                                            stringResource(R.string.artifact_preview_truncated),
+                                            language,
                                             style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            color = MaterialTheme.colorScheme.primary,
                                         )
-                                    }
-                                    when {
-                                        markdown && !session.textTruncated -> MarkdownContent(session.text)
-                                        language != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Text(
-                                                language,
-                                                style = MaterialTheme.typography.labelMedium,
-                                                color = MaterialTheme.colorScheme.primary,
-                                            )
-                                            Text(
-                                                session.text,
-                                                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                                            )
-                                        }
-                                        else -> Text(
+                                        Text(
                                             session.text,
                                             style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
                                         )
                                     }
+                                    else -> Text(
+                                        session.text,
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                                    )
                                 }
                             }
                         }
                     }
                 }
             }
-        },
-        confirmButton = {
-            when {
-                awaiting -> TextButton(onClick = onDownload) { Text(stringResource(R.string.download)) }
-                downloading -> {}
-                ready -> TextButton(onClick = onOpen, enabled = session.localPath != null) {
-                    Text(stringResource(R.string.open))
-                }
-            }
-        },
-        dismissButton = {
-            Row {
-                if (ready) {
-                    TextButton(onClick = onSave, enabled = session.localPath != null) {
-                        Text(stringResource(R.string.save_copy))
-                    }
-                }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 TextButton(
                     onClick = if (downloading) onCancel else onDismiss,
                 ) {
                     Text(stringResource(if (downloading || awaiting) R.string.cancel else R.string.close))
                 }
+                if (ready) {
+                    OutlinedButton(onClick = onSave, enabled = session.localPath != null) {
+                        Text(stringResource(R.string.save_copy))
+                    }
+                }
+                when {
+                    awaiting -> Button(onClick = onDownload) { Text(stringResource(R.string.download)) }
+                    ready -> Button(onClick = onOpen, enabled = session.localPath != null) {
+                        Text(stringResource(R.string.open))
+                    }
+                    downloading -> Unit
+                }
             }
-        },
-    )
+        }
+    }
 }
 
 internal fun artifactLanguage(filename: String, mimeType: String): String? {
@@ -1814,13 +1835,9 @@ internal fun CapabilityRow(
     var agentSelectorExpanded by rememberSaveable(state.draftSessionKey) { mutableStateOf(false) }
     val capabilityHostVisible = state.showQuickCapabilities && !state.run.active
     val agentMenuVisible = agentSelectorExpanded && capabilityHostVisible
-    BackHandler(enabled = agentMenuVisible) {
-        agentSelectorExpanded = false
-    }
     LaunchedEffect(capabilityHostVisible) {
         if (!capabilityHostVisible) agentSelectorExpanded = false
     }
-    val agentMenuMaxHeight = LocalConfiguration.current.screenHeightDp.dp / 2
     val agentArrowRotation by animateFloatAsState(
         targetValue = if (agentMenuVisible) 180f else 0f,
         animationSpec = ExpressiveMotion.fastSpatial(),
@@ -1874,31 +1891,6 @@ internal fun CapabilityRow(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        AnimatedVisibility(
-            visible = agentMenuVisible,
-            enter = expandVertically(
-                animationSpec = ExpressiveMotion.fastSpatial(),
-                expandFrom = Alignment.Bottom,
-            ) + fadeIn(animationSpec = ExpressiveMotion.fastSpatial()),
-            exit = if (capabilityHostVisible) {
-                shrinkVertically(
-                    animationSpec = ExpressiveMotion.fastSpatial(),
-                    shrinkTowards = Alignment.Bottom,
-                ) + fadeOut(animationSpec = ExpressiveMotion.fastSpatial())
-            } else {
-                ExitTransition.None
-            },
-            label = "agent-selector-menu",
-        ) {
-            AgentSelectorMenu(
-                state = state,
-                maxHeight = agentMenuMaxHeight,
-                onAgentSelected = { agentId ->
-                    onAgentSelected(agentId)
-                    agentSelectorExpanded = false
-                },
-            )
-        }
         HorizontalFloatingToolbar(
             expanded = true,
             modifier = Modifier.fillMaxWidth().testTag(UiTags.QuickCapabilities),
@@ -1960,6 +1952,39 @@ internal fun CapabilityRow(
                         },
                         modifier = Modifier.testTag(UiTags.AgentSelector),
                     )
+                    // Same invocation path as the overflow menu: the panel is hosted
+                    // by the screen's GlassMenuOverlayHost, so it floats above the
+                    // composer as real backdrop-sampling liquid glass instead of
+                    // being embedded inside the composer's own glass panel.
+                    GlassDropdownMenu(
+                        expanded = agentMenuVisible,
+                        onDismissRequest = { agentSelectorExpanded = false },
+                        modifier = Modifier.testTag(UiTags.AgentSelectorMenu),
+                    ) {
+                        GlassMenuHeader(stringResource(R.string.agent))
+                        AgentSelectorOption(
+                            name = "lead_agent",
+                            label = "DeerFlow",
+                            description = stringResource(R.string.lead_agent_description),
+                            selected = state.composer.options.assistantId == "lead_agent",
+                            onClick = {
+                                agentSelectorExpanded = false
+                                onAgentSelected("lead_agent")
+                            },
+                        )
+                        state.capabilities.agents.customAgentsOnly().forEach { agent ->
+                            AgentSelectorOption(
+                                name = agent.name,
+                                label = agent.name,
+                                description = agent.description,
+                                selected = state.composer.options.assistantId == agent.name,
+                                onClick = {
+                                    agentSelectorExpanded = false
+                                    onAgentSelected(agent.name)
+                                },
+                            )
+                        }
+                    }
                     actions.take(inlineCount).forEach { action ->
                         GlassChip(
                             onClick = {
@@ -2008,89 +2033,14 @@ internal fun CapabilityRow(
 }
 
 @Composable
-private fun AgentSelectorMenu(
-    state: AppUiState,
-    maxHeight: androidx.compose.ui.unit.Dp,
-    onAgentSelected: (String) -> Unit,
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(max = maxHeight)
-            .glassFrosted(MaterialTheme.shapes.extraLarge)
-            .testTag(UiTags.AgentSelectorMenu),
-        shape = MaterialTheme.shapes.extraLarge,
-        color = Color.Transparent,
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-    ) {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = maxHeight),
-            contentPadding = PaddingValues(vertical = 8.dp),
-        ) {
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Surface(
-                        modifier = Modifier.size(32.dp),
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                Icons.Outlined.AutoAwesome,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            )
-                        }
-                    }
-                    Text(
-                        stringResource(R.string.agent),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-            }
-            item {
-                AgentSelectorOption(
-                    name = "lead_agent",
-                    label = "DeerFlow",
-                    description = stringResource(R.string.lead_agent_description),
-                    selected = state.composer.options.assistantId == "lead_agent",
-                    onClick = { onAgentSelected("lead_agent") },
-                )
-            }
-            items(state.capabilities.agents.customAgentsOnly(), key = { it.name }) { agent ->
-                AgentSelectorOption(
-                    name = agent.name,
-                    label = agent.name,
-                    description = agent.description,
-                    selected = state.composer.options.assistantId == agent.name,
-                    onClick = { onAgentSelected(agent.name) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun AgentSelectorOption(
+private fun GlassMenuScope.AgentSelectorOption(
     name: String,
     label: String,
     description: String,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    DropdownMenuItem(
+    GlassMenuItem(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(label, style = MaterialTheme.typography.titleSmall)
