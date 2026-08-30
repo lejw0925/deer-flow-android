@@ -105,8 +105,6 @@ import com.mikepenz.markdown.compose.components.MarkdownComponents
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.annotator.DefaultAnnotatorSettings
 import com.mikepenz.markdown.annotator.buildMarkdownAnnotatedString
-import com.mikepenz.markdown.compose.extendedspans.ExtendedSpans
-import com.mikepenz.markdown.compose.extendedspans.drawBehind
 import com.mikepenz.markdown.compose.elements.MarkdownBulletList
 import com.mikepenz.markdown.compose.elements.MarkdownCheckBox
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
@@ -223,13 +221,6 @@ internal fun sourcesStrippedMarkdown(markdown: String, bodyNodes: List<Node>): S
     return bodyNodes.joinToString(separator = "\n\n") { node -> node.sourceText(markdown) }
 }
 
-/** Shared extended-spans painter: per-line rounded backgrounds for inline code and citation chips. */
-private fun perLineBackgroundPainter(density: androidx.compose.ui.unit.Density) = PerLineRoundedBackgroundPainter(
-    cornerRadius = with(density) { 5.dp.toSp() },
-    horizontalInset = 2.sp,
-    lineInset = 2.sp,
-)
-
 private fun Node.sourceText(markdown: String): String {
     val parts = mutableListOf<String>()
     for (span in sourceSpans) {
@@ -327,13 +318,9 @@ private fun EnhancedMarkdownContent(
         ordered = chatBody,
         bullet = chatBody,
         list = chatBody,
-        // Inline code: light gray text two sp below the body size, on a tinted
-        // background that insets inward and vertically centers in the line box.
-        inlineCode = chatBody.copy(
-            fontSize = 14.sp,
-            fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        ),
+        // Inline code keeps the body size and color; the tinted rectangular
+        // background is all that sets it apart.
+        inlineCode = chatBody.copy(fontFamily = FontFamily.Monospace),
         textLink = TextLinkStyles(
             style = SpanStyle(
                 color = MaterialTheme.colorScheme.primary,
@@ -351,12 +338,7 @@ private fun EnhancedMarkdownContent(
         LocalMarkdownDimens provides markdownDimens(tableCellPadding = 12.dp),
         LocalImageTransformer provides NoOpImageTransformerImpl(),
         LocalMarkdownAnnotator provides annotator,
-        LocalMarkdownExtendedSpans provides markdownExtendedSpans {
-            // Library-rendered text (headings) gets the same rounded inline-code
-            // treatment as the custom paragraph path.
-            val density = LocalDensity.current
-            ExtendedSpans(perLineBackgroundPainter(density))
-        },
+        LocalMarkdownExtendedSpans provides markdownExtendedSpans(),
         LocalMarkdownComponents provides components,
         LocalMarkdownAnimations provides markdownAnimations(),
     ) {
@@ -630,11 +612,6 @@ private fun MarkdownInlineText(content: String, children: List<ASTNode>, style: 
             linkInteractionListener = linkListener,
         )
     }
-    val density = LocalDensity.current
-    // Per-line rounded backgrounds for spans that carry one (inline code,
-    // citation chips): wrapped spans render as one rounded strip per line with a
-    // gap between lines instead of a merged block.
-    val extendedSpans = remember { ExtendedSpans(perLineBackgroundPainter(density)) }
     val value = remember(content, children, settings, style) {
         buildAnnotatedString {
             pushStyle(style.toSpanStyle())
@@ -650,17 +627,12 @@ private fun MarkdownInlineText(content: String, children: List<ASTNode>, style: 
             else -> annotated
         }
     } ?: return
-    // extend() must see the final string (it stamps a marker at offset 0 that
-    // onTextLayout validates), so it runs after the trim above.
-    val extended = remember(value, extendedSpans) { extendedSpans.extend(value) }
-    val hasCitations = extended.getStringAnnotations(CITATION_ANNOTATION, 0, extended.length).isNotEmpty()
+    val hasCitations = value.getStringAnnotations(CITATION_ANNOTATION, 0, value.length).isNotEmpty()
     val textNode: @Composable () -> Unit = {
         Text(
-            text = extended,
+            text = value,
             style = style,
             color = LocalMarkdownColors.current.text,
-            onTextLayout = { extendedSpans.onTextLayout(it) },
-            modifier = Modifier.drawBehind(extendedSpans),
         )
     }
     if (hasCitations) {
@@ -770,8 +742,6 @@ private fun EnhancedMarkdownTable(content: String, node: ASTNode, style: TextSty
         annotator = LocalMarkdownAnnotator.current,
         referenceLinkHandler = LocalReferenceLinkHandler.current,
     )
-    val density = LocalDensity.current
-    val cellSpans = remember(density) { ExtendedSpans(perLineBackgroundPainter(density)) }
     val rows = node.children.filter { it.type == GFMElementTypes.HEADER || it.type == GFMElementTypes.ROW }
     Surface(
         shape = MaterialTheme.shapes.medium,
@@ -790,7 +760,6 @@ private fun EnhancedMarkdownTable(content: String, node: ASTNode, style: TextSty
                     dividerColor = dividerColor,
                     drawBottomDivider = index < rows.lastIndex,
                     cellSettings = cellSettings,
-                    cellSpans = cellSpans,
                 )
             }
         }
@@ -806,7 +775,6 @@ private fun EnhancedMarkdownTableRow(
     dividerColor: Color,
     drawBottomDivider: Boolean,
     cellSettings: DefaultAnnotatorSettings,
-    cellSpans: ExtendedSpans,
 ) {
     // Draw the horizontal divider at the bottom of the row itself: the Row has a
     // determined width (sum of its cells), so drawLine spans the full table
@@ -837,23 +805,18 @@ private fun EnhancedMarkdownTableRow(
                         .background(dividerColor),
                 )
             }
-            val cellText = buildAnnotatedString {
-                pushStyle(style.toSpanStyle())
-                buildMarkdownAnnotatedString(content = content, node = cell, annotatorSettings = cellSettings)
-                pop()
-            }.trimCellText()
             MarkdownBasicText(
-                text = remember(cellText, cellSpans) { cellSpans.extend(cellText) },
+                text = buildAnnotatedString {
+                    pushStyle(style.toSpanStyle())
+                    buildMarkdownAnnotatedString(content = content, node = cell, annotatorSettings = cellSettings)
+                    pop()
+                }.trimCellText(),
                 style = style,
                 color = LocalMarkdownColors.current.text,
                 textAlign = alignments.getOrElse(column) { TextAlign.Start },
-                onTextLayout = { cellSpans.onTextLayout(it) },
-                // drawBehind must sit INSIDE the padding: the painter draws in
-                // the text layout's coordinate space.
                 modifier = Modifier
                     .width(enhancedTableCellWidth)
-                    .padding(LocalMarkdownDimens.current.tableCellPadding)
-                    .drawBehind(cellSpans),
+                    .padding(LocalMarkdownDimens.current.tableCellPadding),
             )
         }
     }
