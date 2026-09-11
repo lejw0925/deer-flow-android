@@ -31,8 +31,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
@@ -49,7 +47,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.util.fastCoerceIn
 import androidx.compose.ui.util.lerp
-import com.deerflow.mobile.ui.theme.GeminiColors
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.roundToInt
@@ -163,17 +160,6 @@ fun GlassMenuSurface(
                 },
             )
             .glassEdge(shape)
-            .drawBehind {
-                // Faint Gemini color wash so popup menus carry the same gradient
-                // language as the aurora background.
-                drawRect(
-                    Brush.linearGradient(
-                        0f to GeminiColors.Blue.copy(alpha = 0.05f),
-                        0.5f to GeminiColors.Violet.copy(alpha = 0.05f),
-                        1f to GeminiColors.Pink.copy(alpha = 0.05f),
-                    ),
-                )
-            }
             .padding(vertical = 6.dp)
             .onGloballyPositioned { scope.containerCoordinates = it },
     ) {
