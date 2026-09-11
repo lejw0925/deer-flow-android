@@ -265,7 +265,7 @@ class DeerFlowApiStreamingTest {
                 ScriptedResponse(
                     contentType = "application/json",
                     body =
-                        """{"runs":[{"run_id":"run-1","thread_id":"thread-1","thread_title":"Release review","assistant_id":"research & review/+?#%","status":"success","model_name":"deepseek-chat","created_at":"2026-07-20T09:00:00Z","updated_at":"2026-07-20T09:00:12Z","duration_seconds":12.5,"total_tokens":4312,"message_count":8,"cost":0.012345,"error":null},{"run_id":"run-2","thread_id":"thread-2","thread_title":null,"assistant_id":null,"status":"error","model_name":null,"created_at":null,"updated_at":null,"duration_seconds":null,"total_tokens":0,"message_count":0,"cost":null,"error":"Provider unavailable"}],"has_more":false}""",
+                        """{"runs":[{"run_id":"run-1","thread_id":"thread-1","thread_title":"Release review","assistant_id":"research & review/+?#%","status":"success","model_name":"deepseek-chat","created_at":"2026-07-20T09:00:00Z","updated_at":"2026-07-20T09:00:12Z","duration_seconds":12.5,"total_tokens":4312,"message_count":8,"cost":0.012345,"error":null},{"run_id":"run-2","thread_id":"thread-2","thread_title":"Other agent","assistant_id":"other-agent","status":"success","model_name":null,"created_at":null,"updated_at":null,"duration_seconds":null,"total_tokens":0,"message_count":0,"cost":null,"error":null},{"run_id":"run-3","thread_id":"thread-3","thread_title":null,"assistant_id":"research & review/+?#%","status":"error","model_name":null,"created_at":null,"updated_at":null,"duration_seconds":null,"total_tokens":0,"message_count":0,"cost":null,"error":"Provider unavailable"}],"has_more":false}""",
                 ),
             ),
         )
@@ -274,6 +274,8 @@ class DeerFlowApiStreamingTest {
                 agentId = "research & review/+?#%",
             )
 
+            // Gateways without the assistant_id query filter return every agent's runs;
+            // the client must drop the rows that belong to other agents.
             assertEquals(2, runs.size)
             assertEquals(
                 AgentRunInfo(
@@ -293,8 +295,8 @@ class DeerFlowApiStreamingTest {
                 ),
                 runs.first(),
             )
+            assertEquals("run-3", runs.last().runId)
             assertNull(runs.last().threadTitle)
-            assertNull(runs.last().assistantId)
             assertNull(runs.last().modelName)
             assertNull(runs.last().createdAt)
             assertNull(runs.last().updatedAt)
@@ -305,6 +307,43 @@ class DeerFlowApiStreamingTest {
             assertEquals(
                 "/api/console/runs?assistant_id=research%20%26%20review%2F%2B%3F%23%25&limit=50",
                 server.requests.single().path,
+            )
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test
+    fun fillsAgentExecutionHistoryAcrossPagesWhenGatewayIgnoresAssistantFilter() = runBlocking {
+        val server = ScriptedSseServer(
+            listOf(
+                ScriptedResponse(
+                    contentType = "application/json",
+                    body =
+                        """{"runs":[{"run_id":"other-1","thread_id":"thread-other-1","assistant_id":"other-agent","status":"success"},{"run_id":"other-2","thread_id":"thread-other-2","assistant_id":"other-agent","status":"success"}],"has_more":true}""",
+                ),
+                ScriptedResponse(
+                    contentType = "application/json",
+                    body =
+                        """{"runs":[{"run_id":"target-1","thread_id":"thread-target-1","assistant_id":"target-agent","status":"success"},{"run_id":"target-2","thread_id":"thread-target-2","assistant_id":"target-agent","status":"error"}],"has_more":false}""",
+                ),
+            ),
+        )
+        try {
+            val runs = DeerFlowApi(server.url, NoopSessionCookieStore).listAgentRuns(
+                agentId = "target-agent",
+                limit = 2,
+            )
+
+            assertEquals(listOf("target-1", "target-2"), runs.map { it.runId })
+            assertEquals(2, server.requests.size)
+            assertEquals(
+                "/api/console/runs?assistant_id=target-agent&limit=2",
+                server.requests[0].path,
+            )
+            assertEquals(
+                "/api/console/runs?assistant_id=target-agent&limit=2&offset=2",
+                server.requests[1].path,
             )
         } finally {
             server.close()

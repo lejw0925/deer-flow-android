@@ -681,8 +681,24 @@ class DeerFlowApi(
         request("DELETE", "/api/agents/${pathSegment(name)}")
     }
 
-    suspend fun listAgentRuns(agentId: String, limit: Int = 50): List<AgentRunInfo> =
-        parseAgentRuns(request("GET", agentRunsPath(agentId, limit)))
+    suspend fun listAgentRuns(agentId: String, limit: Int = 50): List<AgentRunInfo> {
+        require(agentId.isNotBlank()) { "Agent id must not be blank." }
+        require(limit in 1..100) { "Agent run history limit must be between 1 and 100." }
+
+        // The current Gateway no longer applies assistant_id before pagination. Keep
+        // requesting pages until the client has enough matching runs.
+        val matchingRuns = mutableListOf<AgentRunInfo>()
+        var offset = 0
+        while (matchingRuns.size < limit) {
+            val page = parseAgentRunPage(
+                request("GET", agentRunsPath(agentId, limit, offset)),
+            )
+            page.runs.filterTo(matchingRuns) { it.assistantId == agentId }
+            if (!page.hasMore || page.runs.isEmpty()) break
+            offset += page.runs.size
+        }
+        return matchingRuns.take(limit)
+    }
 
     suspend fun createScheduledTask(title: String, prompt: String, schedule: TaskSchedule, timezone: String) {
         val body = JSONObject()
@@ -1799,9 +1815,15 @@ internal fun JSONObject.toSkillInfo() = SkillInfo(
     enabled = optBoolean("enabled"),
 )
 
-internal fun parseAgentRuns(raw: String): List<AgentRunInfo> {
-    val runs = JSONObject(raw).optJSONArray("runs") ?: JSONArray()
-    return buildList {
+private data class AgentRunPage(
+    val runs: List<AgentRunInfo>,
+    val hasMore: Boolean,
+)
+
+private fun parseAgentRunPage(raw: String): AgentRunPage {
+    val response = JSONObject(raw)
+    val runs = response.optJSONArray("runs") ?: JSONArray()
+    val parsedRuns = buildList {
         for (index in 0 until runs.length()) {
             val run = runs.optJSONObject(index) ?: continue
             add(
@@ -1823,12 +1845,22 @@ internal fun parseAgentRuns(raw: String): List<AgentRunInfo> {
             )
         }
     }
+    return AgentRunPage(
+        runs = parsedRuns,
+        hasMore = response.optBoolean("has_more", false),
+    )
 }
 
-internal fun agentRunsPath(agentId: String, limit: Int): String {
+internal fun parseAgentRuns(raw: String): List<AgentRunInfo> = parseAgentRunPage(raw).runs
+
+internal fun agentRunsPath(agentId: String, limit: Int, offset: Int = 0): String {
     require(agentId.isNotBlank()) { "Agent id must not be blank." }
     require(limit in 1..100) { "Agent run history limit must be between 1 and 100." }
-    return "/api/console/runs?assistant_id=${queryParameter(agentId)}&limit=$limit"
+    require(offset >= 0) { "Agent run history offset must not be negative." }
+    return buildString {
+        append("/api/console/runs?assistant_id=${queryParameter(agentId)}&limit=$limit")
+        if (offset > 0) append("&offset=$offset")
+    }
 }
 
 private fun queryParameter(value: String): String =
