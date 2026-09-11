@@ -59,6 +59,9 @@ class ApiException(
 internal const val MAX_ARTIFACT_DOWNLOAD_BYTES = 1024L * 1024 * 1024
 private const val MAX_ARTIFACT_ERROR_BODY_BYTES = 64 * 1024
 
+/** Page size for thread-list pagination; a full page signals that older threads may follow. */
+internal const val THREADS_PAGE_SIZE = 100
+
 private fun artifactDownloadLimitError(maxBytes: Long = MAX_ARTIFACT_DOWNLOAD_BYTES): ApiException =
     ApiException(
         413,
@@ -379,8 +382,10 @@ class DeerFlowApi(
         cookies.clear()
     }
 
-    suspend fun listThreads(): List<ThreadSummary> {
-        val response = request("POST", "/api/threads/search", """{"limit":100,"offset":0}""")
+    suspend fun listThreads(limit: Int = THREADS_PAGE_SIZE, offset: Int = 0): List<ThreadSummary> {
+        require(limit in 1..THREADS_PAGE_SIZE) { "Thread page size must be between 1 and $THREADS_PAGE_SIZE." }
+        require(offset >= 0) { "Thread page offset must not be negative." }
+        val response = request("POST", "/api/threads/search", """{"limit":$limit,"offset":$offset}""")
         val array = JSONArray(response)
         return buildList {
             for (index in 0 until array.length()) array.optJSONObject(index)?.let { add(it.toThreadSummary()) }

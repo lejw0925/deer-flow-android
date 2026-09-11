@@ -2,6 +2,9 @@ package com.deerflow.mobile.data
 
 import java.io.File
 
+internal val ThreadSummaryOrder: Comparator<ThreadSummary> =
+    compareByDescending<ThreadSummary> { it.isPinned }.thenByDescending { it.updatedAt }
+
 class ThreadRepository(
     private val api: DeerFlowApi,
     private val cache: WorkspaceCache,
@@ -13,13 +16,21 @@ class ThreadRepository(
         val pins = settings.pinnedThreads(api.serverUrl)
         val value = api.listThreads()
             .map { it.copy(isPinned = it.id in pins) }
-            .sortedWith(compareByDescending<ThreadSummary> { it.isPinned }.thenByDescending { it.updatedAt })
+            .sortedWith(ThreadSummaryOrder)
         cache.saveThreads(api.serverUrl, value)
         LoadResult(value)
     } catch (error: Exception) {
         val cached = cache.loadThreads(api.serverUrl)
         if (cached.isEmpty()) throw error
         LoadResult(cached, fromCache = true)
+    }
+
+    /** Older pages never touch the cache, which always holds the newest page. */
+    suspend fun moreThreads(limit: Int, offset: Int): List<ThreadSummary> {
+        val pins = settings.pinnedThreads(api.serverUrl)
+        return api.listThreads(limit = limit, offset = offset)
+            .map { it.copy(isPinned = it.id in pins) }
+            .sortedWith(ThreadSummaryOrder)
     }
 
     suspend fun create(assistantId: String): ThreadSummary {

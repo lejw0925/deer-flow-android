@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,12 +40,14 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -54,6 +57,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -117,6 +121,7 @@ fun WorkspaceDrawer(
     onPinThread: (ThreadSummary) -> Unit,
     onDestination: (DrawerDestination) -> Unit,
     onRefreshThreads: () -> Unit = {},
+    onLoadMoreThreads: () -> Unit = {},
     onOpenProfile: () -> Unit = {},
     drawerOpen: Boolean = false,
     backdrop: Backdrop? = null,
@@ -132,6 +137,25 @@ fun WorkspaceDrawer(
     val headerFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val filtered = state.threads.filter { query.isBlank() || it.title.contains(query, ignoreCase = true) }
+    val listState = rememberLazyListState()
+    // Web parity (chats page): the unfiltered list auto-loads older pages when
+    // its end scrolls into view; while searching it does NOT auto-paginate —
+    // an empty filtered view would keep the sentinel visible and drain the
+    // whole history — so search gets an explicit "load more" button instead.
+    val reachedListEnd by remember {
+        derivedStateOf {
+            val layout = listState.layoutInfo
+            val lastVisible = layout.visibleItemsInfo.lastOrNull()?.index ?: -1
+            layout.totalItemsCount > 0 && lastVisible >= layout.totalItemsCount - 1
+        }
+    }
+    LaunchedEffect(reachedListEnd, query, state.hasMoreThreads, state.loadingThreads, state.loadingMoreThreads) {
+        if (reachedListEnd && query.isBlank() && state.hasMoreThreads &&
+            !state.loadingThreads && !state.loadingMoreThreads
+        ) {
+            onLoadMoreThreads()
+        }
+    }
     // Records the drawer's own list so the floating bottom bar refracts the
     // threads scrolling beneath it (not the page under the drawer). The base
     // reproduces the page's aurora glow at a fixed phase: a bare background
@@ -234,6 +258,7 @@ fun WorkspaceDrawer(
                     modifier = Modifier
                         .fillMaxSize()
                         .testTag(UiTags.RecentConversationScroll),
+                    state = listState,
                     contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = bottomBarHeight + 16.dp),
                 ) {
                     item {
@@ -300,6 +325,35 @@ fun WorkspaceDrawer(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(16.dp),
                             )
+                        }
+                    }
+                    if (query.isNotBlank() && state.hasMoreThreads) {
+                        item(key = "conversation-search-load-more") {
+                            Box(
+                                Modifier.fillMaxWidth().padding(16.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                OutlinedButton(
+                                    onClick = onLoadMoreThreads,
+                                    enabled = !state.loadingMoreThreads && !state.loadingThreads,
+                                    modifier = Modifier.testTag(UiTags.ConversationSearchLoadMore),
+                                ) {
+                                    Text(
+                                        stringResource(
+                                            if (state.loadingMoreThreads) R.string.loading_more else R.string.load_more_to_search,
+                                        ),
+                                    )
+                                }
+                            }
+                        }
+                    } else if (query.isBlank() && state.loadingMoreThreads) {
+                        item(key = "conversation-loading-more") {
+                            Box(
+                                Modifier.fillMaxWidth().padding(16.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                            }
                         }
                     }
                 }

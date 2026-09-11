@@ -23,6 +23,8 @@
     <string name="recent_conversations">最近会话</string>
     <string name="no_conversations">还没有会话</string>
     <string name="no_search_results">没有匹配的会话</string>
+    <string name="load_more_to_search">加载更多以搜索更早的会话</string>
+    <string name="loading_more">正在加载…</string>
     <string name="offline_cache">离线 · 正在显示缓存内容</string>
     <string name="pin">置顶</string>
     <string name="unpin">取消置顶</string>

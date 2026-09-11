@@ -176,6 +176,7 @@ private fun CompactWorkspace(
                     onDeleteThread = viewModel::deleteThread,
                     onPinThread = viewModel::toggleThreadPinned,
                     onRefreshThreads = viewModel::refreshThreads,
+                    onLoadMoreThreads = viewModel::loadMoreThreads,
                     onOpenProfile = {
                         navigateWithDrawerExit {
                             viewModel.openWorkspaceChild(AppRoute.Profile)
@@ -273,6 +274,7 @@ private fun ExpandedWorkspace(
                     onDeleteThread = viewModel::deleteThread,
                     onPinThread = viewModel::toggleThreadPinned,
                     onRefreshThreads = viewModel::refreshThreads,
+                    onLoadMoreThreads = viewModel::loadMoreThreads,
                     onOpenProfile = { viewModel.openWorkspaceChild(AppRoute.Profile) },
                     onDestination = { destination ->
                         when (destination) {

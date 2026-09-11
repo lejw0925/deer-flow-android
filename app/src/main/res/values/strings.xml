@@ -23,6 +23,8 @@
     <string name="recent_conversations">Recent conversations</string>
     <string name="no_conversations">No conversations yet</string>
     <string name="no_search_results">No matching conversations</string>
+    <string name="load_more_to_search">Load more to search older conversations</string>
+    <string name="loading_more">Loading more…</string>
     <string name="offline_cache">Offline · showing cached content</string>
     <string name="pin">Pin</string>
     <string name="unpin">Unpin</string>

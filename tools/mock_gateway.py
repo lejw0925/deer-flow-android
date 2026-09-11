@@ -532,9 +532,12 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 "expires_in": 600,
             })
         elif path == "/api/threads/search":
-            self.read_json()
+            body = self.read_json()
+            limit = int(body.get("limit", 100))
+            offset = int(body.get("offset", 0))
             ordered = sorted(THREADS.items(), key=lambda item: item[1]["updated_at"], reverse=True)
-            self.write_json([thread_summary(thread_id, thread) for thread_id, thread in ordered])
+            page = ordered[offset:offset + limit]
+            self.write_json([thread_summary(thread_id, thread) for thread_id, thread in page])
         elif path == "/api/threads":
             self.read_json()
             thread_id = str(uuid.uuid4())

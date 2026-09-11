@@ -49,6 +49,7 @@ object UiTags {
     const val RecentConversationRefresh = "recent-conversation-refresh"
     const val NewChatButton = "new-chat-button"
     const val ConversationSearch = "conversation-search"
+    const val ConversationSearchLoadMore = "conversation-search-load-more"
     const val ChatTopBar = "chat-top-bar"
     const val ChatNavigationButton = "chat-navigation-button"
     const val ConversationOverflowButton = "conversation-overflow-button"

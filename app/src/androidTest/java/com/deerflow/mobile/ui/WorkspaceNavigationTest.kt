@@ -18,6 +18,7 @@ import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -27,6 +28,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
@@ -116,6 +118,73 @@ class WorkspaceNavigationTest {
         compose.onNodeWithTag(UiTags.ConversationSearch).assertIsNotFocused()
         compose.onNodeWithTag(UiTags.NewChatButton).performClick()
         compose.runOnIdle { assertEquals(1, newChatClicks) }
+    }
+
+    @Test
+    fun drawerSearchOffersExplicitLoadMoreForOlderConversations() {
+        var loadMoreRequests = 0
+        compose.setContent {
+            MaterialTheme {
+                WorkspaceDrawer(
+                    state = AppUiState(
+                        serverUrl = "http://10.0.2.2:2027",
+                        threads = listOf(testThread()),
+                        hasMoreThreads = true,
+                    ),
+                    onNewChat = {},
+                    onOpenThread = {},
+                    onRenameThread = { _, _ -> },
+                    onDeleteThread = {},
+                    onPinThread = {},
+                    onDestination = {},
+                    onLoadMoreThreads = { loadMoreRequests += 1 },
+                )
+            }
+        }
+
+        // Without a query there is no explicit button: browsing auto-paginates.
+        compose.onNodeWithTag(UiTags.ConversationSearchLoadMore).assertDoesNotExist()
+        // The single thread leaves the whole list visible, so the end-of-list
+        // sentinel fires once before any searching happens.
+        compose.waitUntil(timeoutMillis = 5_000) { loadMoreRequests == 1 }
+        compose.onNodeWithTag(UiTags.ConversationSearch).performTextReplacement("no-such-conversation")
+        compose.onNodeWithTag(UiTags.ConversationSearchLoadMore).assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(2, loadMoreRequests) }
+    }
+
+    @Test
+    fun drawerReachingTheEndOfTheListLoadsOlderConversations() {
+        var loadMoreRequests = 0
+        val threads = (1..40).map { index ->
+            ThreadSummary(
+                id = "thread-$index",
+                title = "Conversation $index",
+                status = "idle",
+                updatedAt = "2026-07-20T10:00:00Z",
+            )
+        }
+        compose.setContent {
+            MaterialTheme {
+                WorkspaceDrawer(
+                    state = AppUiState(
+                        serverUrl = "http://10.0.2.2:2027",
+                        threads = threads,
+                        hasMoreThreads = true,
+                    ),
+                    onNewChat = {},
+                    onOpenThread = {},
+                    onRenameThread = { _, _ -> },
+                    onDeleteThread = {},
+                    onPinThread = {},
+                    onDestination = {},
+                    onLoadMoreThreads = { loadMoreRequests += 1 },
+                )
+            }
+        }
+
+        compose.onNodeWithTag(UiTags.RecentConversationScroll)
+            .performScrollToNode(hasTestTag(UiTags.ThreadRowPrefix + "thread-40"))
+        compose.waitUntil(timeoutMillis = 5_000) { loadMoreRequests > 0 }
     }
 
     @Test

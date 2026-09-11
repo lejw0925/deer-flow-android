@@ -351,6 +351,32 @@ class DeerFlowApiStreamingTest {
     }
 
     @Test
+    fun listThreadsRequestsTheGivenPageWindow() = runBlocking {
+        val server = ScriptedSseServer(
+            listOf(
+                ScriptedResponse(
+                    contentType = "application/json",
+                    body =
+                        """[{"thread_id":"thread-3","status":"idle","updated_at":"2026-07-18T09:00:00Z","values":{"title":"Older chat"}},{"thread_id":"thread-4","status":"idle","updated_at":"2026-07-17T09:00:00Z","metadata":{"title":"Oldest chat"}}]""",
+                ),
+            ),
+        )
+        try {
+            val threads = DeerFlowApi(server.url, NoopSessionCookieStore).listThreads(limit = 2, offset = 2)
+
+            assertEquals(listOf("thread-3", "thread-4"), threads.map { it.id })
+            assertEquals("Older chat", threads.first().title)
+            assertEquals("Oldest chat", threads.last().title)
+            val request = server.requests.single()
+            assertEquals("POST", request.method)
+            assertEquals("/api/threads/search", request.path)
+            assertEquals("""{"limit":2,"offset":2}""", request.body)
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test
     fun readsPublicSsoProvidersAndBuildsAnEncodedGatewayLoginUrl() = runBlocking {
         val server = ScriptedSseServer(
             listOf(

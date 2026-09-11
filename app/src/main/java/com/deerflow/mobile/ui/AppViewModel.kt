@@ -59,8 +59,10 @@ import com.deerflow.mobile.data.SettingsStore
 import com.deerflow.mobile.data.SsoProvider
 import com.deerflow.mobile.data.TaskSchedule
 import com.deerflow.mobile.data.ThemePreference
+import com.deerflow.mobile.data.THREADS_PAGE_SIZE
 import com.deerflow.mobile.data.ThreadRepository
 import com.deerflow.mobile.data.ThreadSummary
+import com.deerflow.mobile.data.ThreadSummaryOrder
 import com.deerflow.mobile.data.UploadSource
 import com.deerflow.mobile.data.WebViewSessionCookieStore
 import com.deerflow.mobile.data.WorkspaceCache
@@ -119,6 +121,7 @@ data class AppUiState(
     val ssoLoginProvider: SsoProvider? = null,
     val checkingSsoSession: Boolean = false,
     val loadingThreads: Boolean = false,
+    val loadingMoreThreads: Boolean = false,
     val loadingChat: Boolean = false,
     val loadingCapabilities: Boolean = false,
     val loadingMcpConfig: Boolean = false,
@@ -136,6 +139,8 @@ data class AppUiState(
     val exportBusy: Boolean = false,
     val offline: Boolean = false,
     val threads: List<ThreadSummary> = emptyList(),
+    /** True while the gateway may hold threads older than the newest loaded page. */
+    val hasMoreThreads: Boolean = false,
     val activeRunThreadIds: Set<String> = emptySet(),
     val selectedThread: ThreadSummary? = null,
     val messages: List<ChatMessage> = emptyList(),
@@ -388,6 +393,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val conversationShortcuts = ConversationShortcuts(application)
     private val submissionGate = MessageSubmissionGate()
     private val threads = ThreadRepository(api, cache, settings)
+    /** Number of server-side thread rows fetched so far; drives the next page offset. */
+    private var fetchedThreadsCount = 0
     private val runs = RunRepository(api)
     private val workspace = WorkspaceRepository(api, cache)
     private val runCoordinator = RunCoordinator.get(application)
@@ -773,6 +780,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             mutableState.update { it.copy(loadingThreads = true, error = null) }
             try {
                 val result = threads.threads()
+                if (!result.fromCache) fetchedThreadsCount = result.value.size
                 mutableState.update { current ->
                     val selected = current.selectedThread?.let { active ->
                         result.value.firstOrNull { it.id == active.id } ?: active
@@ -781,6 +789,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         threads = result.value,
                         selectedThread = selected,
                         loadingThreads = false,
+                        // A full first page means the gateway may hold older threads;
+                        // a cached (offline) page cannot be paged further.
+                        hasMoreThreads = !result.fromCache && result.value.size >= THREADS_PAGE_SIZE,
                         offline = result.fromCache,
                     )
                 }
@@ -788,6 +799,38 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             } catch (error: Exception) {
                 handleAuthenticatedError(error) {
                     it.copy(loadingThreads = false, error = error.userMessage("Could not load conversations."))
+                }
+            }
+        }
+    }
+
+    fun loadMoreThreads() {
+        val snapshot = mutableState.value
+        if (snapshot.user == null || !snapshot.hasMoreThreads ||
+            snapshot.loadingThreads || snapshot.loadingMoreThreads
+        ) {
+            return
+        }
+        viewModelScope.launch {
+            mutableState.update { it.copy(loadingMoreThreads = true) }
+            try {
+                val page = threads.moreThreads(limit = THREADS_PAGE_SIZE, offset = fetchedThreadsCount)
+                fetchedThreadsCount += page.size
+                mutableState.update { current ->
+                    current.copy(
+                        threads = (current.threads + page)
+                            .distinctBy { it.id }
+                            .sortedWith(ThreadSummaryOrder),
+                        hasMoreThreads = page.size >= THREADS_PAGE_SIZE,
+                        loadingMoreThreads = false,
+                    )
+                }
+            } catch (error: Exception) {
+                handleAuthenticatedError(error) {
+                    it.copy(
+                        loadingMoreThreads = false,
+                        error = error.userMessage("Could not load older conversations."),
+                    )
                 }
             }
         }
@@ -1689,6 +1732,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 threads.delete(thread.id)
+                // The deleted server row shrinks every later page by one.
+                if (fetchedThreadsCount > 0) fetchedThreadsCount -= 1
                 mutableState.update {
                     it.copy(
                         threads = it.threads.filterNot { item -> item.id == thread.id },
@@ -1733,7 +1778,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             threads.setPinned(thread, !thread.isPinned)
             mutableState.update {
                 val updated = it.threads.map { item -> if (item.id == thread.id) item.copy(isPinned = !item.isPinned) else item }
-                    .sortedWith(compareByDescending<ThreadSummary> { item -> item.isPinned }.thenByDescending { item -> item.updatedAt })
+                    .sortedWith(ThreadSummaryOrder)
                 it.copy(threads = updated)
             }
             publishConversationShortcuts()
