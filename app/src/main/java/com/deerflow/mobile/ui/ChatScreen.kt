@@ -263,11 +263,9 @@ fun ChatScreen(
         // the top bar and composer are sibling glass overlays that sample it.
         // Glass elements must stay OUTSIDE the layerBackdrop content they sample.
         val menuHost = rememberGlassMenuHostState()
-        val citationCardHost = rememberCitationCardHostState()
         CompositionLocalProvider(
             LocalGlassBackdrop provides backdrop,
             LocalGlassMenuHost provides menuHost,
-            LocalCitationCardHost provides citationCardHost,
         ) {
             var topOverlayHeightPx by remember { mutableIntStateOf(0) }
             var bottomOverlayHeightPx by remember { mutableIntStateOf(0) }
@@ -330,9 +328,6 @@ fun ChatScreen(
                 topInset = topOverlayHeight,
                 modifier = Modifier.fillMaxSize(),
             )
-            // Real-glass citation source cards, anchored to their invisible
-            // in-flow placeholders inside the conversation.
-            CitationCardOverlayHost(citationCardHost, Modifier.fillMaxSize())
             Column(
                 modifier = Modifier
                     .fillMaxWidth()

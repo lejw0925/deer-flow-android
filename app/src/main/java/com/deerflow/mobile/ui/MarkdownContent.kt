@@ -14,8 +14,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -36,32 +34,22 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -78,15 +66,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.deerflow.mobile.R
-import com.deerflow.mobile.ui.glass.glass
-import com.deerflow.mobile.ui.glass.glassEdge
 import com.deerflow.mobile.ui.glass.glassFrosted
-import com.deerflow.mobile.ui.glass.rememberGlassTints
 import com.deerflow.mobile.ui.theme.GeminiColors
 import com.mikepenz.markdown.compose.LocalImageTransformer
 import com.mikepenz.markdown.compose.LocalMarkdownAnnotator
@@ -128,8 +112,6 @@ import dev.snipme.highlights.model.ColorHighlight
 import dev.snipme.highlights.model.SyntaxLanguage
 import io.ratex.RaTeXView
 import java.net.URI
-import java.util.UUID
-import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.commonmark.ext.gfm.strikethrough.StrikethroughExtension
@@ -940,126 +922,42 @@ internal fun displayMathSource(source: String): String? {
         .takeIf(String::isNotEmpty)
 }
 
-/**
- * Hosts citation source cards OUTSIDE the recorded conversation layer so they
- * can be real backdrop-sampling liquid glass. [CitationSources] renders an
- * invisible in-flow card that reserves the exact layout space and reports its
- * bounds; [CitationCardOverlayHost] draws the glass card over it. Screens
- * without a host (tests, sheets) fall back to the frosted in-flow card.
- */
-@Stable
-class CitationCardHostState internal constructor() {
-    internal val entries = mutableStateMapOf<String, CitationCardEntry>()
-
-    internal fun put(key: String, entry: CitationCardEntry) {
-        entries[key] = entry
-    }
-
-    internal fun remove(key: String) {
-        entries.remove(key)
-    }
-}
-
-@Stable
-internal class CitationCardEntry {
-    var bounds by mutableStateOf<Rect?>(null)
-    var content: (@Composable () -> Unit)? = null
-}
-
-val LocalCitationCardHost = compositionLocalOf<CitationCardHostState?> { null }
-
-@Composable
-fun rememberCitationCardHostState(): CitationCardHostState = remember { CitationCardHostState() }
-
-/** Draws one real-glass card per registered citation entry, anchored to its in-flow placeholder. */
-@Composable
-fun CitationCardOverlayHost(state: CitationCardHostState, modifier: Modifier = Modifier) {
-    if (state.entries.isEmpty()) return
-    var overlayBounds by remember { mutableStateOf<Rect?>(null) }
-    Box(modifier.fillMaxSize().onGloballyPositioned { overlayBounds = it.boundsInRoot() }) {
-        val overlay = overlayBounds ?: return@Box
-        val density = LocalDensity.current
-        val shape = MaterialTheme.shapes.medium
-        val tints = rememberGlassTints()
-        state.entries.forEach { (_, entry) ->
-            val bounds = entry.bounds ?: return@forEach
-            val content = entry.content ?: return@forEach
-            Box(
-                Modifier
-                    .offset {
-                        IntOffset(
-                            (bounds.left - overlay.left).roundToInt(),
-                            (bounds.top - overlay.top).roundToInt(),
-                        )
-                    }
-                    .width(with(density) { bounds.width.toDp() })
-                    .glass(shape, tint = tints.veil, useLens = true)
-                    .glassEdge(shape),
-            ) {
-                content()
-            }
-        }
-    }
-}
-
 @Composable
 private fun CitationSources(
     sources: List<CitationSource>,
     sourceRequesters: Map<String, BringIntoViewRequester>,
 ) {
     if (sources.isEmpty()) return
-    val host = LocalCitationCardHost.current
-    if (host == null) {
-        // Fallback for screens without an overlay host: frosted in-flow card.
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .glassFrosted(MaterialTheme.shapes.medium)
-                .drawBehind {
-                    drawRect(
-                        Brush.linearGradient(
-                            0f to GeminiColors.Blue.copy(alpha = 0.06f),
-                            0.5f to GeminiColors.Violet.copy(alpha = 0.06f),
-                            1f to GeminiColors.Pink.copy(alpha = 0.06f),
-                        ),
-                    )
-                },
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            SourcesCardContent(sources, sourceRequesters, interactive = true)
-        }
-        return
-    }
-    // Real liquid glass: an invisible in-flow copy reserves the exact space (and
-    // keeps bring-into-view working), while the overlay host draws the glass card.
-    val key = remember { UUID.randomUUID().toString() }
-    DisposableEffect(Unit) { onDispose { host.remove(key) } }
-    val entry = remember { CitationCardEntry() }
-    entry.content = { SourcesCardContent(sources, sourceRequesters, interactive = false) }
-    Box(
-        Modifier
+    // Frosted in-flow card: it lives inside the recorded conversation layer, so
+    // sampling glass (composer, top bar) refracts it like any other message
+    // content. Real Modifier.glass here would sample its own recorded layer and
+    // crash the RenderThread (SEGV rule in AGENTS.md).
+    Column(
+        modifier = Modifier
             .fillMaxWidth()
-            .onGloballyPositioned { coordinates ->
-                val bounds = coordinates.boundsInRoot()
-                if (entry.bounds != bounds) entry.bounds = bounds
-            }
-            .graphicsLayer { alpha = 0f },
+            .glassFrosted(MaterialTheme.shapes.medium)
+            .drawBehind {
+                drawRect(
+                    Brush.linearGradient(
+                        0f to GeminiColors.Blue.copy(alpha = 0.06f),
+                        0.5f to GeminiColors.Violet.copy(alpha = 0.06f),
+                        1f to GeminiColors.Pink.copy(alpha = 0.06f),
+                    ),
+                )
+            },
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        SourcesCardContent(sources, sourceRequesters, interactive = false)
+        SourcesCardContent(sources, sourceRequesters)
     }
-    SideEffect { host.put(key, entry) }
 }
 
 @Composable
 private fun SourcesCardContent(
     sources: List<CitationSource>,
     sourceRequesters: Map<String, BringIntoViewRequester>,
-    interactive: Boolean,
 ) {
     val primary = MaterialTheme.colorScheme.primary
     Column(
-        // Card padding lives here so the frosted fallback, the invisible
-        // in-flow placeholder, and the glass overlay card all share one geometry.
         modifier = Modifier.padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -1069,35 +967,25 @@ private fun SourcesCardContent(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         sources.forEachIndexed { index, source ->
-            val link = remember(source, primary, interactive) {
+            val link = remember(source, primary) {
                 buildAnnotatedString {
                     val titleStyle = SpanStyle(color = primary, textDecoration = TextDecoration.Underline)
-                    if (interactive) {
-                        withLink(
-                            LinkAnnotation.Url(
-                                url = source.url,
-                                styles = TextLinkStyles(titleStyle),
-                            )
-                        ) {
-                            append(source.title)
-                        }
-                    } else {
-                        pushStyle(titleStyle)
+                    withLink(
+                        LinkAnnotation.Url(
+                            url = source.url,
+                            styles = TextLinkStyles(titleStyle),
+                        )
+                    ) {
                         append(source.title)
-                        pop()
                     }
                     append(" · ${source.domain}")
                     if (source.count > 1) append(" ×${source.count}")
                 }
             }
             Box(
-                modifier = if (interactive) {
-                    (sourceRequesters[source.url]?.let { requester ->
-                        Modifier.bringIntoViewRequester(requester)
-                    } ?: Modifier).testTag(UiTags.CitationSourcePrefix + index)
-                } else {
-                    Modifier
-                },
+                modifier = (sourceRequesters[source.url]?.let { requester ->
+                    Modifier.bringIntoViewRequester(requester)
+                } ?: Modifier).testTag(UiTags.CitationSourcePrefix + index),
             ) {
                 Text(
                     link,

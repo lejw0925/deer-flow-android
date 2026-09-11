@@ -806,6 +806,21 @@ class GatewayHandler(BaseHTTPRequestHandler):
         model_unavailable = prompt.lower() == MODEL_UNAVAILABLE_PROMPT
         if model_unavailable:
             answer = "The configured LLM provider is temporarily unavailable after multiple retries."
+        citation_showcase = prompt == "Show citations"
+        if citation_showcase:
+            filler = "\n\n".join(
+                f"Supporting detail {index} keeps the conversation tall enough to scroll under the composer."
+                for index in range(1, 13)
+            )
+            answer = (
+                "Here is the cited answer. [citation: DataStore Guide](https://developer.android.com/datastore) "
+                "explains the storage flow, while [citation: Compose Docs](https://developer.android.com/compose) "
+                "covers the UI layer.\n\n"
+                f"{filler}\n\n"
+                "## Sources\n"
+                "- [citation: DataStore Guide](https://developer.android.com/topic/libraries/architecture/datastore)\n"
+                "- [citation: Compose Docs](https://developer.android.com/jetpack/compose)"
+            )
         assistant = {"type": "ai", "content": answer, "id": str(uuid.uuid4())}
         tool_result = None
         patch_sequence = prompt == "Verify stream patches"
@@ -883,7 +898,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
         answer_chunks = (
             [answer]
-            if model_unavailable
+            if model_unavailable or citation_showcase
             else [
                 "I mapped the request into a concise plan, ",
                 "checked the available workspace skills, ",
